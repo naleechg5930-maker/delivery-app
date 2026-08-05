@@ -350,7 +350,8 @@ document.getElementById('sendBtn').addEventListener('click', async ()=>{
     try{ result = await resp.json(); }catch(e){}
     if(isMilestone){
       document.getElementById('doneInfo').textContent =
-        `${pendingMode} 사진 기록됨 · ${result.recordedTime || new Date().toLocaleString('ko-KR')}`;
+        `${pendingMode} 사진 기록됨 · ${result.recordedTime || new Date().toLocaleString('ko-KR')}` +
+        (result.elapsed ? ` · 출발~도착 소요시간: ${result.elapsed}` : '');
     } else {
       document.getElementById('doneInfo').textContent =
         `${currentCompany} · ${currentBags}봉투 · ${result.deliveryTime || new Date().toLocaleString('ko-KR')}`;
