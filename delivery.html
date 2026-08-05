@@ -218,6 +218,12 @@ function onQrDetected(text){
   }
 
   if(qrScanner){ qrScanner.stop(); qrScanner.destroy(); qrScanner = null; }
+  // 혹시 destroy()로 카메라가 완전히 안 꺼졌을 경우를 대비한 안전장치
+  const scanVideoEl = document.getElementById('scanVideo');
+  if(scanVideoEl && scanVideoEl.srcObject){
+    scanVideoEl.srcObject.getTracks().forEach(t=>t.stop());
+    scanVideoEl.srcObject = null;
+  }
   currentCompany = payload.c || '업체명 미확인';
   currentBags = payload.n || '';
   document.getElementById('confirmCompany').textContent = currentCompany;
@@ -234,15 +240,21 @@ document.getElementById('rescanBtn').addEventListener('click', ()=>{
 });
 
 /* ---------- 2 -> 3. 촬영 화면 ---------- */
-document.getElementById('toCapturebtn').addEventListener('click', async ()=>{
-  showScreen('captureScreen');
+async function openCaptureCamera(){
+  // QR 스캔용 카메라가 완전히 꺼질 시간을 살짝 준 다음, 촬영용 카메라를 새로 연다
+  await new Promise(resolve => setTimeout(resolve, 350));
   try{
-    captureStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment', width:{ideal:1280}, height:{ideal:1280} } });
+    captureStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } } });
     document.getElementById('captureVideo').srcObject = captureStream;
   }catch(err){
-    alert('카메라를 열 수 없습니다: ' + err.message);
+    alert('카메라를 열 수 없습니다 (' + err.name + '): ' + err.message);
     showScreen('confirmScreen');
   }
+}
+
+document.getElementById('toCapturebtn').addEventListener('click', async ()=>{
+  showScreen('captureScreen');
+  await openCaptureCamera();
 });
 
 document.getElementById('shutterBtn').addEventListener('click', ()=>{
@@ -261,13 +273,9 @@ document.getElementById('shutterBtn').addEventListener('click', ()=>{
 /* ---------- 4. 미리보기 ---------- */
 document.getElementById('retakeBtn').addEventListener('click', async ()=>{
   showScreen('captureScreen');
-  try{
-    captureStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment', width:{ideal:1280}, height:{ideal:1280} } });
-    document.getElementById('captureVideo').srcObject = captureStream;
-  }catch(err){
-    alert('카메라를 열 수 없습니다: ' + err.message);
-  }
+  await openCaptureCamera();
 });
+
 
 document.getElementById('sendBtn').addEventListener('click', async ()=>{
   if(!gasUrl){
