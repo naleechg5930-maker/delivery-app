@@ -126,7 +126,7 @@
 
   <!-- 3. 촬영 화면 -->
   <div class="screen" id="captureScreen">
-    <video id="captureVideo" playsinline muted></video>
+    <video id="captureVideo" playsinline muted autoplay></video>
     <div class="shutter-wrap">
       <button class="shutter-btn" id="shutterBtn"></button>
     </div>
@@ -243,7 +243,9 @@ document.getElementById('rescanBtn').addEventListener('click', ()=>{
 async function openCaptureCamera(){
   try{
     captureStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } } });
-    document.getElementById('captureVideo').srcObject = captureStream;
+    const videoEl = document.getElementById('captureVideo');
+    videoEl.srcObject = captureStream;
+    videoEl.play().catch(err => console.warn('video play() 실패:', err));
   }catch(err){
     alert('카메라를 열 수 없습니다 (' + err.name + '): ' + err.message);
     showScreen('confirmScreen');
