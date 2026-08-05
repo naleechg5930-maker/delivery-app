@@ -123,14 +123,7 @@
     <button class="big primary" id="toCapturebtn" style="max-width:260px;">📸 사진 촬영하기</button>
     <button class="big ghost" id="rescanBtn" style="max-width:260px;">다시 스캔</button>
   </div>
-
-  <!-- 3. 촬영 화면 -->
-  <div class="screen" id="captureScreen">
-    <video id="captureVideo" playsinline muted autoplay></video>
-    <div class="shutter-wrap">
-      <button class="shutter-btn" id="shutterBtn"></button>
-    </div>
-  </div>
+  <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none;">
 
   <!-- 4. 미리보기/전송 화면 -->
   <div class="screen" id="previewScreen">
@@ -239,41 +232,26 @@ document.getElementById('rescanBtn').addEventListener('click', ()=>{
   document.getElementById('scanHint').style.display = 'none';
 });
 
-/* ---------- 2 -> 3. 촬영 화면 ---------- */
-async function openCaptureCamera(){
-  try{
-    captureStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } } });
-    const videoEl = document.getElementById('captureVideo');
-    videoEl.srcObject = captureStream;
-    videoEl.play().catch(err => console.warn('video play() 실패:', err));
-  }catch(err){
-    alert('카메라를 열 수 없습니다 (' + err.name + '): ' + err.message);
-    showScreen('confirmScreen');
-  }
-}
-
-document.getElementById('toCapturebtn').addEventListener('click', async ()=>{
-  showScreen('captureScreen');
-  await openCaptureCamera();
+/* ---------- 2 -> 3. 촬영 (핸드폰 기본 카메라 앱 사용) ---------- */
+document.getElementById('toCapturebtn').addEventListener('click', ()=>{
+  document.getElementById('cameraInput').click();
 });
 
-document.getElementById('shutterBtn').addEventListener('click', ()=>{
-  const video = document.getElementById('captureVideo');
-  const canvas = document.createElement('canvas');
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-  capturedDataUrl = canvas.toDataURL('image/jpeg', 0.82);
-
-  if(captureStream){ captureStream.getTracks().forEach(t=>t.stop()); captureStream = null; }
-  document.getElementById('previewImg').src = capturedDataUrl;
-  showScreen('previewScreen');
+document.getElementById('retakeBtn').addEventListener('click', ()=>{
+  document.getElementById('cameraInput').click();
 });
 
-/* ---------- 4. 미리보기 ---------- */
-document.getElementById('retakeBtn').addEventListener('click', async ()=>{
-  showScreen('captureScreen');
-  await openCaptureCamera();
+document.getElementById('cameraInput').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (evt)=>{
+    capturedDataUrl = evt.target.result;
+    document.getElementById('previewImg').src = capturedDataUrl;
+    showScreen('previewScreen');
+  };
+  reader.readAsDataURL(file);
+  e.target.value = ''; // 같은 파일을 다시 찍어도 change 이벤트가 다시 발생하도록 초기화
 });
 
 
