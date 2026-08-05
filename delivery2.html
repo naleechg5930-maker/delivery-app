@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>배송완료 확인</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qr-scanner/1.4.2/qr-scanner.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#FFFFFF; --panel:#F5F6FB; --line:#DCE0EE; --text:#171B3D; --sub:#6C7293;
+    --ok:#16A34A; --err:#DC2626; --accent:#FFB200; --accent-ink:#1A1300; --navy:#161D65;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; height:100%; background:var(--bg); color:var(--text);
+    font-family:'Pretendard','Malgun Gothic','Apple SD Gothic Neo',sans-serif;
+    -webkit-tap-highlight-color:transparent; overscroll-behavior:none;
+  }
+  #app{ display:flex; flex-direction:column; height:100vh; }
+
+  .topbar{
+    background:var(--navy); color:#fff; padding:14px 18px; font-weight:800; font-size:17px;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .topbar .gear{ font-size:20px; cursor:pointer; padding:4px; }
+
+  .screen{ flex:1; display:none; flex-direction:column; min-height:0; }
+  .screen.active{ display:flex; }
+
+  /* ---- 스캔 화면 ---- */
+  #scanScreen{ position:relative; background:#000; }
+  #scanVideo{ width:100%; height:100%; object-fit:cover; }
+  .scan-hint{
+    position:absolute; left:0; right:0; bottom:26px; text-align:center; color:#fff;
+    font-size:15px; font-weight:700; text-shadow:0 1px 4px rgba(0,0,0,0.6);
+  }
+  .scan-frame{
+    position:absolute; top:50%; left:50%; width:62vw; height:62vw; max-width:280px; max-height:280px;
+    transform:translate(-50%,-50%); border:3px solid var(--accent); border-radius:16px;
+    box-shadow:0 0 0 2000px rgba(0,0,0,0.35);
+  }
+  .start-cam-wrap{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:16px; background:#0B1220; color:#fff; padding:24px; text-align:center;
+  }
+
+  /* ---- 확인 화면 ---- */
+  #confirmScreen{ align-items:center; justify-content:center; padding:24px; gap:18px; text-align:center; }
+  .confirm-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:30px 26px;
+    width:100%; max-width:360px;
+  }
+  .confirm-card .company{ font-size:26px; font-weight:900; color:var(--navy); margin-bottom:8px; word-break:keep-all; }
+  .confirm-card .bags{ font-size:17px; font-weight:700; color:var(--sub); }
+  .confirm-card .bags b{ color:var(--accent); font-size:22px; }
+
+  /* ---- 촬영 화면 ---- */
+  #captureScreen{ position:relative; background:#000; }
+  #captureVideo{ width:100%; height:100%; object-fit:cover; }
+  .shutter-wrap{ position:absolute; left:0; right:0; bottom:30px; display:flex; justify-content:center; }
+  .shutter-btn{
+    width:76px; height:76px; border-radius:50%; background:#fff; border:6px solid rgba(255,255,255,0.5);
+  }
+
+  /* ---- 미리보기/전송 화면 ---- */
+  #previewScreen{ background:#000; position:relative; }
+  #previewImg{ width:100%; height:100%; object-fit:contain; background:#000; }
+  .preview-actions{
+    position:absolute; left:0; right:0; bottom:24px; display:flex; gap:14px; justify-content:center; padding:0 20px;
+  }
+
+  /* ---- 전송완료 화면 ---- */
+  #doneScreen{ align-items:center; justify-content:center; padding:24px; gap:14px; text-align:center; }
+  .done-check{ font-size:64px; }
+  .done-title{ font-size:22px; font-weight:900; color:var(--ok); }
+  .done-sub{ font-size:14px; color:var(--sub); }
+
+  button.big{
+    flex:1; max-width:220px; padding:16px 0; font-size:16px; font-weight:800; border-radius:14px; border:none;
+    cursor:pointer;
+  }
+  button.big.primary{ background:var(--accent); color:var(--accent-ink); }
+  button.big.ghost{ background:#fff; color:var(--text); border:1px solid var(--line); }
+  button.big:disabled{ opacity:.5; }
+
+  .settings-overlay{
+    display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:50;
+    align-items:center; justify-content:center; padding:20px;
+  }
+  .settings-overlay.show{ display:flex; }
+  .settings-card{ background:#fff; border-radius:16px; padding:22px; width:100%; max-width:380px; }
+  .settings-card h3{ margin:0 0 12px; font-size:16px; }
+  .settings-card input{
+    width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:14px; margin-bottom:14px;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="topbar">
+    <span>🚚 배송완료 확인</span>
+    <span class="gear" id="settingsBtn">⚙️</span>
+  </div>
+
+  <!-- 1. QR 스캔 화면 -->
+  <div class="screen active" id="scanScreen">
+    <div class="start-cam-wrap" id="startCamWrap">
+      <div style="font-size:40px;">📷</div>
+      <div style="font-size:15px; font-weight:700;">라벨의 QR코드를 스캔해주세요</div>
+      <button class="big primary" id="startCamBtn" style="max-width:220px;">카메라 시작</button>
+    </div>
+    <video id="scanVideo" playsinline muted style="display:none;"></video>
+    <div class="scan-frame" id="scanFrame" style="display:none;"></div>
+    <div class="scan-hint" id="scanHint" style="display:none;">QR코드를 사각형 안에 맞춰주세요</div>
+  </div>
+
+  <!-- 2. 확인 화면 -->
+  <div class="screen" id="confirmScreen">
+    <div class="confirm-card">
+      <div class="company" id="confirmCompany">-</div>
+      <div class="bags">총 <b id="confirmBags">-</b> 봉투/박스</div>
+    </div>
+    <button class="big primary" id="toCapturebtn" style="max-width:260px;">📸 사진 촬영하기</button>
+    <button class="big ghost" id="rescanBtn" style="max-width:260px;">다시 스캔</button>
+  </div>
+
+  <!-- 3. 촬영 화면 -->
+  <div class="screen" id="captureScreen">
+    <video id="captureVideo" playsinline muted></video>
+    <div class="shutter-wrap">
+      <button class="shutter-btn" id="shutterBtn"></button>
+    </div>
+  </div>
+
+  <!-- 4. 미리보기/전송 화면 -->
+  <div class="screen" id="previewScreen">
+    <img id="previewImg" alt="촬영된 사진">
+    <div class="preview-actions">
+      <button class="big ghost" id="retakeBtn">다시 찍기</button>
+      <button class="big primary" id="sendBtn">전송</button>
+    </div>
+  </div>
+
+  <!-- 5. 전송완료 화면 -->
+  <div class="screen" id="doneScreen">
+    <div class="done-check">✅</div>
+    <div class="done-title">배송완료 기록됐습니다</div>
+    <div class="done-sub" id="doneInfo">-</div>
+    <button class="big primary" id="nextBtn" style="max-width:260px;">다음 배송지 스캔</button>
+  </div>
+</div>
+
+<div class="settings-overlay" id="settingsOverlay">
+  <div class="settings-card">
+    <h3>구글시트 연동 주소 설정</h3>
+    <input type="text" id="gasUrlInput" placeholder="Apps Script 웹앱 URL (…/exec)">
+    <button class="big primary" id="saveSettingsBtn" style="width:100%; max-width:none;">저장</button>
+  </div>
+</div>
+
+<script>
+let gasUrl = localStorage.getItem('deliveryGasUrl') || '';
+let currentCompany = '';
+let currentBags = '';
+let qrScanner = null;
+let captureStream = null;
+let capturedDataUrl = '';
+
+QrScanner.WORKER_PATH = 'https://cdnjs.cloudflare.com/ajax/libs/qr-scanner/1.4.2/qr-scanner-worker.min.js';
+
+function showScreen(id){
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+/* ---------- 설정 ---------- */
+document.getElementById('settingsBtn').addEventListener('click', ()=>{
+  document.getElementById('gasUrlInput').value = gasUrl;
+  document.getElementById('settingsOverlay').classList.add('show');
+});
+document.getElementById('saveSettingsBtn').addEventListener('click', ()=>{
+  gasUrl = document.getElementById('gasUrlInput').value.trim();
+  localStorage.setItem('deliveryGasUrl', gasUrl);
+  document.getElementById('settingsOverlay').classList.remove('show');
+});
+
+/* ---------- 1. QR 스캔 ---------- */
+document.getElementById('startCamBtn').addEventListener('click', startScanning);
+
+function startScanning(){
+  const video = document.getElementById('scanVideo');
+  document.getElementById('startCamWrap').style.display = 'none';
+  video.style.display = '';
+  document.getElementById('scanFrame').style.display = '';
+  document.getElementById('scanHint').style.display = '';
+
+  qrScanner = new QrScanner(video, result => onQrDetected(result.data || result), {
+    preferredCamera: 'environment',
+    highlightScanRegion: false,
+    highlightCodeOutline: false,
+  });
+  qrScanner.start().catch(err=>{
+    alert('카메라를 시작할 수 없습니다: ' + err.message);
+  });
+}
+
+function onQrDetected(text){
+  // 디버그용: 뭐라도 읽혔으면 화면 하단에 잠깐 표시 (QR을 아예 못 읽는 건지, 형식이 다른 건지 구분하기 위함)
+  const hintEl = document.getElementById('scanHint');
+  let payload;
+  try{ payload = JSON.parse(text); }catch(err){
+    if(hintEl) hintEl.textContent = '읽음(형식 다름): ' + String(text).slice(0, 60);
+    return;
+  }
+  if(!payload || payload.t !== 'delivery'){
+    if(hintEl) hintEl.textContent = '읽음(배송 QR 아님): ' + String(text).slice(0, 60);
+    return;
+  }
+
+  if(qrScanner){ qrScanner.stop(); qrScanner.destroy(); qrScanner = null; }
+  // 혹시 destroy()로 카메라가 완전히 안 꺼졌을 경우를 대비한 안전장치
+  const scanVideoEl = document.getElementById('scanVideo');
+  if(scanVideoEl && scanVideoEl.srcObject){
+    scanVideoEl.srcObject.getTracks().forEach(t=>t.stop());
+    scanVideoEl.srcObject = null;
+  }
+  currentCompany = payload.c || '업체명 미확인';
+  currentBags = payload.n || '';
+  document.getElementById('confirmCompany').textContent = currentCompany;
+  document.getElementById('confirmBags').textContent = currentBags;
+  showScreen('confirmScreen');
+}
+
+document.getElementById('rescanBtn').addEventListener('click', ()=>{
+  showScreen('scanScreen');
+  document.getElementById('startCamWrap').style.display = 'flex';
+  document.getElementById('scanVideo').style.display = 'none';
+  document.getElementById('scanFrame').style.display = 'none';
+  document.getElementById('scanHint').style.display = 'none';
+});
+
+/* ---------- 2 -> 3. 촬영 화면 ---------- */
+async function openCaptureCamera(){
+  try{
+    captureStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } } });
+    document.getElementById('captureVideo').srcObject = captureStream;
+  }catch(err){
+    alert('카메라를 열 수 없습니다 (' + err.name + '): ' + err.message);
+    showScreen('confirmScreen');
+  }
+}
+
+document.getElementById('toCapturebtn').addEventListener('click', async ()=>{
+  showScreen('captureScreen');
+  await openCaptureCamera();
+});
+
+document.getElementById('shutterBtn').addEventListener('click', ()=>{
+  const video = document.getElementById('captureVideo');
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+  capturedDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+
+  if(captureStream){ captureStream.getTracks().forEach(t=>t.stop()); captureStream = null; }
+  document.getElementById('previewImg').src = capturedDataUrl;
+  showScreen('previewScreen');
+});
+
+/* ---------- 4. 미리보기 ---------- */
+document.getElementById('retakeBtn').addEventListener('click', async ()=>{
+  showScreen('captureScreen');
+  await openCaptureCamera();
+});
+
+
+document.getElementById('sendBtn').addEventListener('click', async ()=>{
+  if(!gasUrl){
+    alert('먼저 오른쪽 위 ⚙️ 에서 구글시트 연동 주소를 설정해주세요.');
+    return;
+  }
+  const sendBtn = document.getElementById('sendBtn');
+  sendBtn.disabled = true;
+  sendBtn.textContent = '전송 중...';
+  try{
+    const resp = await fetch(gasUrl, {
+      method:'POST',
+      body: JSON.stringify({
+        type:'delivery',
+        company: currentCompany,
+        bagCount: currentBags,
+        image: capturedDataUrl
+      })
+    });
+    let result = {};
+    try{ result = await resp.json(); }catch(e){}
+    document.getElementById('doneInfo').textContent =
+      `${currentCompany} · ${currentBags}봉투 · ${result.deliveryTime || new Date().toLocaleString('ko-KR')}`;
+    showScreen('doneScreen');
+  }catch(err){
+    alert('전송에 실패했습니다: ' + err.message);
+  }finally{
+    sendBtn.disabled = false;
+    sendBtn.textContent = '전송';
+  }
+});
+
+/* ---------- 5. 다음 배송지 ---------- */
+document.getElementById('nextBtn').addEventListener('click', ()=>{
+  capturedDataUrl = ''; currentCompany = ''; currentBags = '';
+  showScreen('scanScreen');
+  document.getElementById('startCamWrap').style.display = 'flex';
+  document.getElementById('scanVideo').style.display = 'none';
+  document.getElementById('scanFrame').style.display = 'none';
+  document.getElementById('scanHint').style.display = 'none';
+});
+
+if(!gasUrl){
+  setTimeout(()=>{ document.getElementById('settingsBtn').click(); }, 400);
+}
+</script>
+</body>
+</html>
