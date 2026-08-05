@@ -64,6 +64,7 @@
 
   /* ---- 미리보기/전송 화면 ---- */
   #previewScreen{ background:#000; position:relative; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
   #previewImg{ width:100%; height:100%; object-fit:contain; background:#000; }
   .preview-actions{
     position:absolute; left:0; right:0; bottom:24px; display:flex; gap:14px; justify-content:center; padding:0 20px;
@@ -98,12 +99,26 @@
 <body>
 <div id="app">
   <div class="topbar">
+    <span class="gear" id="homeBtn">🏠</span>
     <span>🚚 배송완료 확인</span>
     <span class="gear" id="settingsBtn">⚙️</span>
   </div>
 
+  <!-- 0. 홈 화면 (구간별 체크포인트 + 업체 배송 시작) -->
+  <div class="screen active" id="homeScreen" style="padding:20px; gap:12px; align-items:stretch;">
+    <div style="font-size:14px; font-weight:800; color:var(--sub); margin:6px 0 2px;">구간 체크포인트</div>
+    <button class="big ghost milestone-btn" data-milestone="상차전" style="max-width:none; text-align:left; justify-content:flex-start;">📦 상차전사진 (화물칸 촬영)</button>
+    <button class="big ghost milestone-btn" data-milestone="상차후" style="max-width:none; text-align:left; justify-content:flex-start;">📦 상차후사진 (화물칸 촬영)</button>
+    <button class="big ghost milestone-btn" data-milestone="출발" style="max-width:none; text-align:left; justify-content:flex-start;">🚗 출발 (계기판 촬영)</button>
+    <button class="big ghost milestone-btn" data-milestone="도착" style="max-width:none; text-align:left; justify-content:flex-start;">🅿️ 도착 (계기판 촬영)</button>
+    <button class="big ghost" id="dongdaemunEndBtn" style="max-width:none; text-align:left; justify-content:flex-start;">🏁 동대문 배송 종료</button>
+
+    <div style="font-size:14px; font-weight:800; color:var(--sub); margin:16px 0 2px;">업체 배송</div>
+    <button class="big primary" id="goToScanBtn" style="max-width:none;">📷 QR 스캔해서 배송 등록</button>
+  </div>
+
   <!-- 1. QR 스캔 화면 -->
-  <div class="screen active" id="scanScreen">
+  <div class="screen" id="scanScreen">
     <div class="start-cam-wrap" id="startCamWrap">
       <div style="font-size:40px;">📷</div>
       <div style="font-size:15px; font-weight:700;">라벨의 QR코드를 스캔해주세요</div>
@@ -132,6 +147,10 @@
       <button class="big ghost" id="retakeBtn">다시 찍기</button>
       <button class="big primary" id="sendBtn">전송</button>
     </div>
+    <div id="sendOverlay" style="display:none; position:absolute; inset:0; background:rgba(0,0,0,0.65); flex-direction:column; align-items:center; justify-content:center; gap:12px; color:#fff;">
+      <div style="width:40px; height:40px; border:4px solid rgba(255,255,255,0.3); border-top-color:#FFB200; border-radius:50%; animation:spin 0.8s linear infinite;"></div>
+      <div style="font-size:15px; font-weight:700;">전송 중입니다...</div>
+    </div>
   </div>
 
   <!-- 5. 전송완료 화면 -->
@@ -158,6 +177,7 @@ let currentBags = '';
 let qrScanner = null;
 let captureStream = null;
 let capturedDataUrl = '';
+let pendingMode = 'delivery'; // 'delivery' | '상차전' | '상차후' | '출발' | '도착'
 
 QrScanner.WORKER_PATH = 'https://cdnjs.cloudflare.com/ajax/libs/qr-scanner/1.4.2/qr-scanner-worker.min.js';
 
@@ -165,6 +185,34 @@ function showScreen(id){
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
 }
+
+/* ---------- 0. 홈 화면 ---------- */
+document.getElementById('homeBtn').addEventListener('click', ()=>{
+  showScreen('homeScreen');
+});
+document.getElementById('goToScanBtn').addEventListener('click', ()=>{
+  showScreen('scanScreen');
+});
+document.querySelectorAll('.milestone-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    pendingMode = btn.dataset.milestone;
+    document.getElementById('cameraInput').click();
+  });
+});
+document.getElementById('dongdaemunEndBtn').addEventListener('click', async ()=>{
+  if(!gasUrl){
+    alert('먼저 오른쪽 위 ⚙️ 에서 구글시트 연동 주소를 설정해주세요.');
+    return;
+  }
+  try{
+    const resp = await fetch(gasUrl, { method:'POST', body: JSON.stringify({ type:'dongdaemun_end' }) });
+    let result = {};
+    try{ result = await resp.json(); }catch(e){}
+    alert('동대문 배송 종료 기록됐습니다.\n소요시간: ' + (result.elapsed || '계산 불가 (오늘 배송 기록 없음)'));
+  }catch(err){
+    alert('기록에 실패했습니다: ' + err.message);
+  }
+});
 
 /* ---------- 설정 ---------- */
 document.getElementById('settingsBtn').addEventListener('click', ()=>{
@@ -234,6 +282,7 @@ document.getElementById('rescanBtn').addEventListener('click', ()=>{
 
 /* ---------- 2 -> 3. 촬영 (핸드폰 기본 카메라 앱 사용) ---------- */
 document.getElementById('toCapturebtn').addEventListener('click', ()=>{
+  pendingMode = 'delivery';
   document.getElementById('cameraInput').click();
 });
 
@@ -246,7 +295,7 @@ document.getElementById('cameraInput').addEventListener('change', (e)=>{
   if(!file) return;
   const reader = new FileReader();
   reader.onload = (evt)=>{
-    resizeImage(evt.target.result, 1280, 0.7).then(resizedDataUrl=>{
+    resizeImage(evt.target.result, 900, 0.55).then(resizedDataUrl=>{
       capturedDataUrl = resizedDataUrl;
       document.getElementById('previewImg').src = capturedDataUrl;
       showScreen('previewScreen');
@@ -288,34 +337,46 @@ document.getElementById('sendBtn').addEventListener('click', async ()=>{
     return;
   }
   const sendBtn = document.getElementById('sendBtn');
+  const overlay = document.getElementById('sendOverlay');
   sendBtn.disabled = true;
-  sendBtn.textContent = '전송 중...';
+  overlay.style.display = 'flex';
+  const isMilestone = pendingMode !== 'delivery';
   try{
-    const resp = await fetch(gasUrl, {
-      method:'POST',
-      body: JSON.stringify({
-        type:'delivery',
-        company: currentCompany,
-        bagCount: currentBags,
-        image: capturedDataUrl
-      })
-    });
+    const payload = isMilestone
+      ? { type:'milestone', milestoneType: pendingMode, image: capturedDataUrl }
+      : { type:'delivery', company: currentCompany, bagCount: currentBags, image: capturedDataUrl };
+    const resp = await fetch(gasUrl, { method:'POST', body: JSON.stringify(payload) });
     let result = {};
     try{ result = await resp.json(); }catch(e){}
-    document.getElementById('doneInfo').textContent =
-      `${currentCompany} · ${currentBags}봉투 · ${result.deliveryTime || new Date().toLocaleString('ko-KR')}`;
+    if(isMilestone){
+      document.getElementById('doneInfo').textContent =
+        `${pendingMode} 사진 기록됨 · ${result.recordedTime || new Date().toLocaleString('ko-KR')}`;
+    } else {
+      document.getElementById('doneInfo').textContent =
+        `${currentCompany} · ${currentBags}봉투 · ${result.deliveryTime || new Date().toLocaleString('ko-KR')}`;
+    }
     showScreen('doneScreen');
   }catch(err){
-    alert('전송에 실패했습니다: ' + err.message);
+    let hint = err.message;
+    if(String(err.message).includes('Failed to fetch')){
+      hint = 'Failed to fetch — 서버까지 요청이 안 갔어요.\n\n확인해주세요:\n1) Apps Script [배포 관리]에서 액세스 권한이 "모든 사용자"로 되어있는지\n2) ⚙️에 저장된 주소가 최신 배포 URL과 정확히 같은지\n3) 인터넷 연결 상태';
+    }
+    alert('전송에 실패했습니다.\n\n' + hint);
   }finally{
     sendBtn.disabled = false;
-    sendBtn.textContent = '전송';
+    overlay.style.display = 'none';
   }
 });
 
-/* ---------- 5. 다음 배송지 ---------- */
+/* ---------- 5. 다음 배송지 / 홈으로 ---------- */
 document.getElementById('nextBtn').addEventListener('click', ()=>{
   capturedDataUrl = ''; currentCompany = ''; currentBags = '';
+  const wasMilestone = pendingMode !== 'delivery';
+  pendingMode = 'delivery';
+  if(wasMilestone){
+    showScreen('homeScreen');
+    return;
+  }
   showScreen('scanScreen');
   document.getElementById('startCamWrap').style.display = 'flex';
   document.getElementById('scanVideo').style.display = 'none';
