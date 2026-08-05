@@ -205,9 +205,17 @@ function startScanning(){
 }
 
 function onQrDetected(text){
+  // 디버그용: 뭐라도 읽혔으면 화면 하단에 잠깐 표시 (QR을 아예 못 읽는 건지, 형식이 다른 건지 구분하기 위함)
+  const hintEl = document.getElementById('scanHint');
   let payload;
-  try{ payload = JSON.parse(text); }catch(err){ return; } // QR 형식이 다르면 무시하고 계속 스캔
-  if(!payload || payload.t !== 'delivery') return;
+  try{ payload = JSON.parse(text); }catch(err){
+    if(hintEl) hintEl.textContent = '읽음(형식 다름): ' + String(text).slice(0, 60);
+    return;
+  }
+  if(!payload || payload.t !== 'delivery'){
+    if(hintEl) hintEl.textContent = '읽음(배송 QR 아님): ' + String(text).slice(0, 60);
+    return;
+  }
 
   if(qrScanner){ qrScanner.stop(); qrScanner.destroy(); qrScanner = null; }
   currentCompany = payload.c || '업체명 미확인';
