@@ -174,6 +174,7 @@
 let gasUrl = localStorage.getItem('deliveryGasUrl') || '';
 let currentCompany = '';
 let currentBags = '';
+let currentZone = '';
 let qrScanner = null;
 let captureStream = null;
 let capturedDataUrl = '';
@@ -267,6 +268,7 @@ function onQrDetected(text){
   }
   currentCompany = payload.c || '업체명 미확인';
   currentBags = payload.n || '';
+  currentZone = payload.z || '';
   document.getElementById('confirmCompany').textContent = currentCompany;
   document.getElementById('confirmBags').textContent = currentBags;
   showScreen('confirmScreen');
@@ -295,7 +297,7 @@ document.getElementById('cameraInput').addEventListener('change', (e)=>{
   if(!file) return;
   const reader = new FileReader();
   reader.onload = (evt)=>{
-    resizeImage(evt.target.result, 900, 0.55).then(resizedDataUrl=>{
+    resizeImage(evt.target.result, 720, 0.5).then(resizedDataUrl=>{
       capturedDataUrl = resizedDataUrl;
       document.getElementById('previewImg').src = capturedDataUrl;
       showScreen('previewScreen');
@@ -331,47 +333,43 @@ function resizeImage(dataUrl, maxSize, quality){
 }
 
 
-document.getElementById('sendBtn').addEventListener('click', async ()=>{
+document.getElementById('sendBtn').addEventListener('click', ()=>{
   if(!gasUrl){
     alert('먼저 오른쪽 위 ⚙️ 에서 구글시트 연동 주소를 설정해주세요.');
     return;
   }
-  const sendBtn = document.getElementById('sendBtn');
-  const overlay = document.getElementById('sendOverlay');
-  sendBtn.disabled = true;
-  overlay.style.display = 'flex';
   const isMilestone = pendingMode !== 'delivery';
-  try{
-    const payload = isMilestone
-      ? { type:'milestone', milestoneType: pendingMode, image: capturedDataUrl }
-      : { type:'delivery', company: currentCompany, bagCount: currentBags, image: capturedDataUrl };
-    const resp = await fetch(gasUrl, { method:'POST', body: JSON.stringify(payload) });
-    let result = {};
-    try{ result = await resp.json(); }catch(e){}
-    if(isMilestone){
-      document.getElementById('doneInfo').textContent =
-        `${pendingMode} 사진 기록됨 · ${result.recordedTime || new Date().toLocaleString('ko-KR')}` +
-        (result.elapsed ? ` · 출발~도착 소요시간: ${result.elapsed}` : '');
-    } else {
-      document.getElementById('doneInfo').textContent =
-        `${currentCompany} · ${currentBags}봉투 · ${result.deliveryTime || new Date().toLocaleString('ko-KR')}`;
-    }
-    showScreen('doneScreen');
-  }catch(err){
-    let hint = err.message;
-    if(String(err.message).includes('Failed to fetch')){
-      hint = 'Failed to fetch — 서버까지 요청이 안 갔어요.\n\n확인해주세요:\n1) Apps Script [배포 관리]에서 액세스 권한이 "모든 사용자"로 되어있는지\n2) ⚙️에 저장된 주소가 최신 배포 URL과 정확히 같은지\n3) 인터넷 연결 상태';
-    }
-    alert('전송에 실패했습니다.\n\n' + hint);
-  }finally{
-    sendBtn.disabled = false;
-    overlay.style.display = 'none';
-  }
+  const payload = isMilestone
+    ? { type:'milestone', milestoneType: pendingMode, image: capturedDataUrl }
+    : { type:'delivery', company: currentCompany, zone: currentZone, bagCount: currentBags, image: capturedDataUrl };
+
+  // 서버(드라이브 업로드+시트 기록) 처리를 기다리지 않고, 화면은 바로 완료로 넘어간다.
+  // (기다리는 시간을 최대한 줄이기 위함 - 실제 업로드는 백그라운드에서 계속 진행됨)
+  const nowText = new Date().toLocaleString('ko-KR');
+  document.getElementById('doneInfo').textContent = isMilestone
+    ? `${pendingMode} 사진 전송 중... (${nowText})`
+    : `${currentCompany} · ${currentBags}봉투 · 전송 중... (${nowText})`;
+  showScreen('doneScreen');
+
+  fetch(gasUrl, { method:'POST', body: JSON.stringify(payload) })
+    .then(resp => resp.json())
+    .then(result => {
+      // 아직 완료화면에 머물러 있으면(다음 배송지로 안 넘어갔으면) 정확한 서버 시각으로 갱신
+      if(document.getElementById('doneScreen').classList.contains('active')){
+        document.getElementById('doneInfo').textContent = isMilestone
+          ? `${pendingMode} 사진 기록됨 · ${result.recordedTime || nowText}` + (result.elapsed ? ` · 소요시간: ${result.elapsed}` : '')
+          : `${currentCompany} · ${currentBags}봉투 · ${result.deliveryTime || nowText}`;
+      }
+    })
+    .catch(err => {
+      console.error('전송 실패:', err);
+      alert('방금 건 전송에 실패했을 수 있습니다: ' + err.message + '\n\n인터넷 연결 확인 후 이 화면을 다시 캡처해서 알려주세요.');
+    });
 });
 
 /* ---------- 5. 다음 배송지 / 홈으로 ---------- */
 document.getElementById('nextBtn').addEventListener('click', ()=>{
-  capturedDataUrl = ''; currentCompany = ''; currentBags = '';
+  capturedDataUrl = ''; currentCompany = ''; currentBags = ''; currentZone = '';
   const wasMilestone = pendingMode !== 'delivery';
   pendingMode = 'delivery';
   if(wasMilestone){
