@@ -133,6 +133,7 @@
   <div class="screen" id="confirmScreen">
     <div class="confirm-card">
       <div class="company" id="confirmCompany">-</div>
+      <div class="bags" id="confirmZoneWrap" style="display:none;">배송구역: <b id="confirmZone">-</b></div>
       <div class="bags">총 <b id="confirmBags">-</b> 봉투/박스</div>
     </div>
     <button class="big primary" id="toCapturebtn" style="max-width:260px;">📸 사진 촬영하기</button>
@@ -271,6 +272,13 @@ function onQrDetected(text){
   currentZone = payload.z || '';
   document.getElementById('confirmCompany').textContent = currentCompany;
   document.getElementById('confirmBags').textContent = currentBags;
+  const zoneWrap = document.getElementById('confirmZoneWrap');
+  if(currentZone){
+    document.getElementById('confirmZone').textContent = currentZone;
+    zoneWrap.style.display = '';
+  } else {
+    zoneWrap.style.display = 'none';
+  }
   showScreen('confirmScreen');
 }
 
