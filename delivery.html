@@ -157,8 +157,9 @@
   <!-- 5. 전송완료 화면 -->
   <div class="screen" id="doneScreen">
     <div class="done-check">✅</div>
-    <div class="done-title">배송완료 기록됐습니다</div>
+    <div class="done-title" id="doneTitle">배송완료 기록됐습니다</div>
     <div class="done-sub" id="doneInfo">-</div>
+    <div id="statsBlock" style="display:none; width:100%; max-width:340px; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px 18px; margin:6px 0; text-align:left; font-size:14px;"></div>
     <button class="big primary" id="nextBtn" style="max-width:260px;">다음 배송지 스캔</button>
   </div>
 </div>
@@ -357,6 +358,7 @@ document.getElementById('sendBtn').addEventListener('click', ()=>{
   document.getElementById('doneInfo').textContent = isMilestone
     ? `${pendingMode} 사진 전송 중... (${nowText})`
     : `${currentCompany} · ${currentBags}봉투 · 전송 중... (${nowText})`;
+  document.getElementById('statsBlock').style.display = 'none';
   showScreen('doneScreen');
 
   fetch(gasUrl, { method:'POST', body: JSON.stringify(payload) })
@@ -367,6 +369,10 @@ document.getElementById('sendBtn').addEventListener('click', ()=>{
         document.getElementById('doneInfo').textContent = isMilestone
           ? `${pendingMode} 사진 기록됨 · ${result.recordedTime || nowText}` + (result.elapsed ? ` · 소요시간: ${result.elapsed}` : '')
           : `${currentCompany} · ${currentBags}봉투 · ${result.deliveryTime || nowText}`;
+
+        if(isMilestone && pendingMode === '도착' && result.stats){
+          renderArrivalStats(result.stats);
+        }
       }
     })
     .catch(err => {
@@ -374,6 +380,28 @@ document.getElementById('sendBtn').addEventListener('click', ()=>{
       alert('방금 건 전송에 실패했을 수 있습니다: ' + err.message + '\n\n인터넷 연결 확인 후 이 화면을 다시 캡처해서 알려주세요.');
     });
 });
+
+// "도착" 시 서버가 계산해준 하루 통계를 화면에 정리해서 보여준다
+function renderArrivalStats(stats){
+  const block = document.getElementById('statsBlock');
+  const dd = stats.dongdaemun;
+  let html = `
+    <div style="font-weight:800; margin-bottom:8px; color:var(--navy);">📊 오늘 배송 통계</div>
+    <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>배송건수 / 봉지수</span><b>${stats.totalDeliveries}건 · ${stats.totalBags}봉</b></div>
+    <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>업체간 평균소요시간(전체)</span><b>${stats.avgBetweenAll || '-'}</b></div>
+  `;
+  if(dd){
+    html += `
+    <div style="border-top:1px dashed var(--line); margin:8px 0;"></div>
+    <div style="font-weight:800; margin-bottom:6px; color:var(--accent);">🚩 동대문 구간</div>
+    <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>동대문 총소요시간</span><b>${dd.totalElapsed || '-'}</b></div>
+    <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>동대문 업체간 평균소요시간</span><b>${dd.avgBetween || '-'}</b></div>
+    <div style="display:flex; justify-content:space-between;"><span>동대문 업체수 / 봉지수</span><b>${dd.companyCount}곳 · ${dd.bagCount}봉</b></div>
+    `;
+  }
+  block.innerHTML = html;
+  block.style.display = 'block';
+}
 
 /* ---------- 5. 다음 배송지 / 홈으로 ---------- */
 document.getElementById('nextBtn').addEventListener('click', ()=>{
