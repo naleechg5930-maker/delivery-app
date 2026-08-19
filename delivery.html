@@ -139,7 +139,7 @@
     <button class="big primary" id="toCapturebtn" style="max-width:260px;">📸 사진 촬영하기</button>
     <button class="big ghost" id="rescanBtn" style="max-width:260px;">다시 스캔</button>
   </div>
-  <input type="file" id="cameraInput" accept="image/*,android/allowCamera" style="display:none;">
+  <input type="file" id="cameraInput" accept="image/*,android/allowCamera" style="position:absolute; left:-9999px; width:1px; height:1px; opacity:0; overflow:hidden;">
 
   <!-- 4. 미리보기/전송 화면 -->
   <div class="screen" id="previewScreen">
@@ -242,21 +242,42 @@ function startScanning(){
     preferredCamera: 'environment',
     highlightScanRegion: false,
     highlightCodeOutline: false,
+    // 화면 거의 전체를 스캔 영역으로 써서, QR을 사각형 틀에 정확히 맞추지 않아도 어디 있든 잘 인식되게 함
+    calculateScanRegion: (v) => {
+      const size = Math.round(Math.min(v.videoWidth, v.videoHeight) * 0.95);
+      return {
+        x: Math.round((v.videoWidth - size) / 2),
+        y: Math.round((v.videoHeight - size) / 2),
+        width: size,
+        height: size,
+      };
+    },
   });
   qrScanner.start().catch(err=>{
     alert('카메라를 시작할 수 없습니다: ' + err.message);
   });
 }
 
+// 배송 QR 내용을 해석한다. 새 형식(DLV|업체명|배송구역|봉투수)과, 예전에 인쇄해둔
+// JSON 형식({"t":"delivery",...}) 둘 다 인식해서 예전 라벨도 계속 스캔되게 한다.
+function parseDeliveryQr(text){
+  const raw = String(text || '').trim();
+  if(raw.startsWith('DLV|')){
+    const parts = raw.split('|');
+    return { c: parts[1] || '', z: parts[2] || '', n: parts[3] || '' };
+  }
+  try{
+    const obj = JSON.parse(raw);
+    if(obj && obj.t === 'delivery') return { c: obj.c || '', z: obj.z || '', n: obj.n || '' };
+  }catch(err){ /* JSON도 아니면 배송 QR이 아닌 것 */ }
+  return null;
+}
+
 function onQrDetected(text){
   // 디버그용: 뭐라도 읽혔으면 화면 하단에 잠깐 표시 (QR을 아예 못 읽는 건지, 형식이 다른 건지 구분하기 위함)
   const hintEl = document.getElementById('scanHint');
-  let payload;
-  try{ payload = JSON.parse(text); }catch(err){
-    if(hintEl) hintEl.textContent = '읽음(형식 다름): ' + String(text).slice(0, 60);
-    return;
-  }
-  if(!payload || payload.t !== 'delivery'){
+  const payload = parseDeliveryQr(text);
+  if(!payload){
     if(hintEl) hintEl.textContent = '읽음(배송 QR 아님): ' + String(text).slice(0, 60);
     return;
   }
