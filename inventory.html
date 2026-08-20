@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>재고조사 시스템</title>
+<style>
+  :root{
+    --bg:#0f1720;
+    --panel:#16212c;
+    --panel-2:#1c2937;
+    --line:#2a3a4a;
+    --text:#e7edf3;
+    --sub:#8fa3b3;
+    --accent:#2dd4bf;
+    --accent-dim:#1a4d47;
+    --ok:#34d399;
+    --warn:#fbbf24;
+    --warn-bg:#3a2f10;
+    --bad:#f87171;
+    --bad-bg:#3a1a1a;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+    min-height:100vh;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 60px;}
+
+  /* ---------- 상단 ---------- */
+  .topbar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:14px 4px 18px;border-bottom:1px solid var(--line);margin-bottom:18px;
+  }
+  .brand{display:flex;align-items:center;gap:10px;}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent);}
+  .brand h1{font-size:17px;font-weight:700;letter-spacing:.2px;margin:0;}
+  .brand .sub{font-size:12px;color:var(--sub);margin-top:1px;}
+  .conn-status{font-size:12px;color:var(--sub);display:flex;align-items:center;gap:6px;}
+  .conn-status .pill{padding:3px 9px;border-radius:20px;background:var(--panel-2);border:1px solid var(--line);font-size:11px;}
+  .conn-status .pill.on{color:var(--ok);border-color:#1f5a45;}
+  .conn-status .pill.off{color:var(--bad);border-color:#5a2222;}
+
+  /* ---------- 연결 설정 화면 ---------- */
+  .setup-card{
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:32px;max-width:560px;margin:60px auto 0;
+  }
+  .setup-card h2{margin:0 0 6px;font-size:19px;}
+  .setup-card p{color:var(--sub);font-size:13px;line-height:1.6;margin:0 0 20px;}
+  .field label{display:block;font-size:12px;color:var(--sub);margin-bottom:6px;}
+  .field input, .field select{
+    width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--text);
+    padding:11px 12px;border-radius:8px;font-size:13px;outline:none;
+  }
+  .field input:focus, .field select:focus{border-color:var(--accent);}
+  .field{margin-bottom:14px;}
+  .row2{display:flex;gap:10px;}
+  .row2 > *{flex:1;}
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:6px;
+    background:var(--accent);color:#06201c;border:none;border-radius:8px;
+    padding:11px 18px;font-size:13px;font-weight:700;cursor:pointer;transition:opacity .15s;
+  }
+  .btn:hover{opacity:.88;}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .btn.secondary{background:var(--panel-2);color:var(--text);border:1px solid var(--line);}
+  .btn.danger{background:var(--bad-bg);color:var(--bad);border:1px solid #5a2222;}
+  .btn.block{width:100%;}
+  .btn.small{padding:7px 12px;font-size:12px;}
+
+  .sound-row{display:flex;align-items:center;justify-content:space-between;margin-top:10px;}
+  .sound-toggle{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--sub);cursor:pointer;user-select:none;}
+  .sound-toggle input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;}
+
+  .manager-input{
+    background:var(--panel-2);border:1px solid var(--line);color:var(--text);
+    padding:9px 12px;border-radius:8px;font-size:12px;outline:none;width:140px;
+  }
+  .manager-input:focus{border-color:var(--accent);}
+
+  .sound-status{font-size:11px;color:var(--sub);margin-left:8px;}
+  .sound-status.ready{color:var(--ok);}
+  .sound-status.blocked{color:var(--bad);}
+
+  /* 스캔 로그 */
+  .log-panel{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:14px 16px;margin-bottom:16px;
+  }
+  .log-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+  .log-header .title{font-size:13px;font-weight:700;color:var(--text);}
+  .log-header .count{font-size:11px;color:var(--sub);}
+  .log-list{max-height:260px;overflow-y:auto;display:flex;flex-direction:column-reverse;}
+  .log-row{
+    display:flex;align-items:center;gap:10px;padding:7px 8px;border-bottom:1px solid var(--line);
+    font-size:12px;
+  }
+  .log-row:first-child{border-bottom:none;}
+  .log-row.removed{opacity:.4;}
+  .log-row .log-time{color:var(--sub);font-family:var(--mono);font-size:11px;width:56px;flex-shrink:0;}
+  .log-row .log-raw{font-family:var(--mono);color:var(--text);flex-shrink:0;min-width:110px;}
+  .log-row .log-desc{flex:1;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .log-badge{font-size:10px;padding:2px 8px;border-radius:10px;flex-shrink:0;}
+  .log-badge.pass{background:#0f2e26;color:var(--ok);}
+  .log-badge.fail{background:var(--bad-bg);color:var(--bad);}
+  .log-badge.cancelled{background:var(--panel-2);color:var(--sub);}
+  .log-del{
+    background:none;border:1px solid var(--line);color:var(--sub);border-radius:6px;
+    width:22px;height:22px;font-size:13px;line-height:1;cursor:pointer;flex-shrink:0;
+  }
+  .log-del:hover{border-color:var(--bad);color:var(--bad);}
+  .log-empty{text-align:center;color:var(--sub);font-size:12px;padding:24px 0;}
+  .msg{font-size:12px;margin-top:12px;padding:10px 12px;border-radius:8px;line-height:1.5;}
+  .msg.error{background:var(--bad-bg);color:var(--bad);}
+  .msg.ok{background:#0f2e26;color:var(--ok);}
+
+  /* ---------- 메인 화면 ---------- */
+  .hidden{display:none !important;}
+
+  .scan-panel{
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:18px 20px;margin-bottom:16px;
+  }
+  .scan-input-row{display:flex;gap:10px;align-items:center;}
+  .scan-input-row input{
+    flex:1;background:var(--panel-2);border:2px solid var(--accent-dim);color:var(--text);
+    padding:14px 16px;border-radius:10px;font-size:18px;font-family:var(--mono);outline:none;letter-spacing:.5px;
+  }
+  .scan-input-row input:focus{border-color:var(--accent);}
+  .scan-hint{font-size:11px;color:var(--sub);margin-top:8px;}
+  .last-scan{margin-top:12px;font-size:13px;padding:10px 12px;border-radius:8px;background:var(--panel-2);display:none;}
+  .last-scan.show{display:block;}
+  .last-scan.ok{border-left:3px solid var(--ok);}
+  .last-scan.warn{border-left:3px solid var(--warn);}
+  .last-scan.bad{border-left:3px solid var(--bad);}
+  .last-scan .code{font-family:var(--mono);font-weight:700;}
+
+  .quick-add{
+    display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:12px;
+    border-top:1px dashed var(--line);opacity:.4;pointer-events:none;transition:opacity .15s;
+  }
+  .quick-add.active{opacity:1;pointer-events:auto;}
+  .quick-add-label{font-size:12px;color:var(--sub);margin-right:4px;}
+  .qa-btn{
+    background:var(--panel-2);border:1px solid var(--accent-dim);color:var(--accent);
+    border-radius:8px;padding:8px 16px;font-size:14px;font-weight:700;font-family:var(--mono);
+    cursor:pointer;transition:transform .1s, background .15s;
+  }
+  .qa-btn:hover{background:var(--accent-dim);}
+  .qa-btn:active{transform:scale(.94);}
+
+  /* 요약 카드 */
+  .summary-grid{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;
+  }
+  .stat-card{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
+  }
+  .stat-card .label{font-size:11px;color:var(--sub);margin-bottom:6px;}
+  .stat-card .value{font-size:24px;font-weight:800;font-family:var(--mono);}
+  .stat-card.accent-ok .value{color:var(--ok);}
+  .stat-card.accent-warn .value{color:var(--warn);}
+  .stat-card.accent-bad .value{color:var(--bad);}
+
+  /* 필터/툴바 */
+  .toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap;}
+  .filters{display:flex;gap:6px;flex-wrap:wrap;}
+  .chip{
+    padding:7px 13px;border-radius:20px;font-size:12px;background:var(--panel);border:1px solid var(--line);
+    color:var(--sub);cursor:pointer;user-select:none;
+  }
+  .chip.active{background:var(--accent-dim);color:var(--accent);border-color:var(--accent);}
+  .search-box input{
+    background:var(--panel);border:1px solid var(--line);color:var(--text);
+    padding:8px 12px;border-radius:20px;font-size:12px;width:200px;outline:none;
+  }
+  .actions{display:flex;gap:8px;}
+
+  /* 테이블 */
+  .table-wrap{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  }
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{
+    text-align:left;padding:11px 14px;background:var(--panel-2);color:var(--sub);
+    font-size:11px;font-weight:600;letter-spacing:.3px;border-bottom:1px solid var(--line);position:sticky;top:0;
+  }
+  tbody td{padding:10px 14px;border-bottom:1px solid var(--line);}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:var(--panel-2);}
+  td.code{font-family:var(--mono);font-weight:700;}
+  td.num{font-family:var(--mono);text-align:right;}
+  .diff-pos{color:var(--warn);font-weight:700;}
+  .diff-neg{color:var(--bad);font-weight:700;}
+  .diff-zero{color:var(--ok);}
+  .tag{font-size:10px;padding:2px 7px;border-radius:10px;background:var(--panel-2);color:var(--sub);}
+  .tag.missing{background:var(--bad-bg);color:var(--bad);}
+  .tag.over{background:var(--warn-bg);color:var(--warn);}
+  .empty-row{padding:40px;text-align:center;color:var(--sub);font-size:13px;}
+
+  .scroll-body{max-height:520px;overflow-y:auto;}
+
+  @media (max-width:760px){
+    .summary-grid{grid-template-columns:repeat(2,1fr);}
+    .search-box input{width:140px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="dot"></div>
+      <div>
+        <h1>재고조사 시스템</h1>
+        <div class="sub">바코드 스캔 실시간 재고대사</div>
+      </div>
+    </div>
+    <div class="conn-status" id="connStatus">
+      <span class="pill off" id="connPill">미연결</span>
+    </div>
+  </div>
+
+  <!-- ===== 연결 설정 화면 ===== -->
+  <div id="setupScreen" class="setup-card">
+    <h2>구글시트 연결</h2>
+    <p>Apps Script 웹 앱 URL을 입력하면 "재고현황" 탭의 현재고와 "SF코드맵"을 불러옵니다.</p>
+    <div class="field">
+      <label>Apps Script 웹 앱 URL (…/exec)</label>
+      <input type="text" id="webAppUrlInput" placeholder="https://script.google.com/macros/s/xxxx/exec">
+    </div>
+    <div class="field">
+      <label>창고 컬럼명 (선택, 비워두면 "본사창고" 또는 "합계" 자동 사용)</label>
+      <input type="text" id="warehouseColInput" placeholder="예: 본사창고">
+    </div>
+    <button class="btn block" id="connectBtn">연결하고 재고 불러오기</button>
+    <div id="setupMsg"></div>
+  </div>
+
+  <!-- ===== 메인 화면 ===== -->
+  <div id="mainScreen" class="hidden">
+
+    <div class="scan-panel">
+      <div class="scan-input-row">
+        <input type="text" id="scanInput" placeholder="바코드를 스캔하세요" autocomplete="off">
+        <button class="btn secondary" id="undoBtn" title="마지막 스캔 취소">↩ 취소</button>
+      </div>
+      <div class="sound-row">
+        <label class="sound-toggle">
+          <input type="checkbox" id="soundToggle" checked>
+          <span>스캔 음성 안내 (적합/부적합)</span>
+        </label>
+        <button class="btn secondary small" id="soundTestBtn" type="button">🔊 소리 테스트</button>
+        <span class="sound-status" id="soundStatus"></span>
+      </div>
+      <div class="scan-hint">스캐너로 찍으면 자동 입력됩니다. 마대/박스는 뒤에 붙은 숫자만큼 자동 합산되고, SF·NTA 바코드도 자동 변환됩니다. "빠른추가" 바코드(ADD1/4/5/9/10)를 찍으면 방금 스캔한 상품에 바로 수량이 더해집니다.</div>
+      <div class="last-scan" id="lastScan"></div>
+      <div class="quick-add" id="quickAdd">
+        <span class="quick-add-label" id="quickAddLabel">방금 스캔한 상품에 바로 추가:</span>
+        <button class="qa-btn" data-amt="4">+4</button>
+        <button class="qa-btn" data-amt="5">+5</button>
+        <button class="qa-btn" data-amt="9">+9</button>
+        <button class="qa-btn" data-amt="10">+10</button>
+      </div>
+    </div>
+
+    <div class="log-panel">
+      <div class="log-header">
+        <span class="title">스캔 로그</span>
+        <span class="count" id="logCount"></span>
+      </div>
+      <div class="log-list" id="logList"></div>
+    </div>
+
+    <div class="summary-grid">
+      <div class="stat-card">
+        <div class="label">총 스캔 수량</div>
+        <div class="value" id="statTotalScanned">0</div>
+      </div>
+      <div class="stat-card accent-warn">
+        <div class="label">전체 차이 수량 (스캔-재고)</div>
+        <div class="value" id="statTotalDiff">0</div>
+      </div>
+      <div class="stat-card accent-bad">
+        <div class="label">미스캔 상품</div>
+        <div class="value" id="statMissing">0</div>
+      </div>
+      <div class="stat-card accent-warn">
+        <div class="label">초과 스캔 상품</div>
+        <div class="value" id="statOver">0</div>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="filters">
+        <span class="chip active" data-filter="all">전체</span>
+        <span class="chip" data-filter="diff">차이 있는 항목만</span>
+        <span class="chip" data-filter="missing">미스캔만</span>
+        <span class="chip" data-filter="over">초과스캔만</span>
+        <span class="chip" data-filter="unknown">미등록 바코드</span>
+      </div>
+      <div class="search-box">
+        <input type="text" id="searchInput" placeholder="상품코드/품목명 검색">
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="scroll-body">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:16%">상품코드</th>
+              <th style="width:24%">품목명 / 규격</th>
+              <th style="width:12%" class="num">구글시트재고</th>
+              <th style="width:12%" class="num">스캔재고</th>
+              <th style="width:12%" class="num">차이</th>
+              <th style="width:12%">상태</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="toolbar" style="margin-top:16px;">
+      <div class="actions">
+        <button class="btn secondary" id="reloadBtn">전체 재고 새로고침</button>
+        <button class="btn secondary" id="reloadScannedBtn">스캔한 품목만 새로고침</button>
+        <button class="btn secondary" id="resetBtn">새 재고조사 시작</button>
+      </div>
+      <div class="actions">
+        <button class="btn secondary" id="downloadBtn">엑셀 다운로드</button>
+        <button class="btn secondary" id="downloadEcountBtn">이카운트 업로드용 다운로드</button>
+        <input type="text" id="managerInput" class="manager-input" placeholder="담당자명 입력">
+        <button class="btn" id="uploadBtn">구글시트에 결과 저장</button>
+      </div>
+    </div>
+    <div id="mainMsg"></div>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+(function(){
+  'use strict';
+
+  /* ===================== 전역 상태 ===================== */
+  let config = { webAppUrl: '', warehouseCol: '' };
+  let inventory = [];        // [{code,name,spec,qty}]
+  let inventoryMap = {};     // code -> item
+  let sfMap = {};            // scanCode -> {code,name}
+  let scanned = {};          // code -> 스캔누적수량 (재고목록에 있는 코드)
+  let unknown = {};          // code -> 스캔누적수량 (재고목록에 없는 코드)
+  let scanLog = [];          // [{raw, productCode, qty, type, ok, error, time}]
+  let currentFilter = 'all';
+  let searchTerm = '';
+  let lastScannedCode = null; // 빠른 추가(+1,+5,+9,+10) 대상이 되는 마지막 스캔 상품코드
+  let firstScanTime = null;   // 이번 재고조사에서 처음 바코드를 찍은 시각 (소요시간 측정용)
+  let logIdCounter = 0;
+
+  /* ===================== DOM ===================== */
+  const el = (id) => document.getElementById(id);
+  const setupScreen = el('setupScreen');
+  const mainScreen = el('mainScreen');
+  const connPill = el('connPill');
+  const webAppUrlInput = el('webAppUrlInput');
+  const warehouseColInput = el('warehouseColInput');
+  const connectBtn = el('connectBtn');
+  const setupMsg = el('setupMsg');
+  const scanInput = el('scanInput');
+  const lastScanEl = el('lastScan');
+  const tableBody = el('tableBody');
+  const mainMsg = el('mainMsg');
+  const soundToggle = el('soundToggle');
+  const soundTestBtn = el('soundTestBtn');
+  const managerInput = el('managerInput');
+  const logListEl = el('logList');
+  const logCountEl = el('logCount');
+  const soundStatusEl = el('soundStatus');
+
+  let soundEnabled = true;
+  let audioCtx = null;
+  let koreanVoice = null;
+
+  /* ===================== 사운드 / 음성 안내 ===================== */
+  function updateSoundStatus(text, cls){
+    if (!soundStatusEl) return;
+    soundStatusEl.textContent = text;
+    soundStatusEl.className = 'sound-status' + (cls ? ' ' + cls : '');
+  }
+
+  function ensureAudioCtx(){
+    if (!audioCtx){
+      try{
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }catch(err){
+        updateSoundStatus('🔇 이 브라우저는 오디오를 지원하지 않습니다', 'blocked');
+        return null;
+      }
+    }
+    if (audioCtx.state === 'suspended'){
+      audioCtx.resume().then(() => {
+        updateSoundStatus('🔊 소리 준비됨', 'ready');
+      }).catch(() => {
+        updateSoundStatus('🔇 소리가 차단되어 있어요 (아무 곳이나 클릭해보세요)', 'blocked');
+      });
+    } else if (audioCtx.state === 'running'){
+      updateSoundStatus('🔊 소리 준비됨', 'ready');
+    }
+    return audioCtx;
+  }
+
+  function pickKoreanVoice(){
+    const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+    if (!voices.length) return null;
+    const ko = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith('ko'));
+    if (!ko.length) return null;
+    // 이름에 여성을 암시하는 키워드가 있으면 우선 선택 (없으면 첫 한국어 보이스)
+    const femaleHint = ko.find(v => /female|여성|heami|yuna|jimin|dam|nari/i.test(v.name));
+    return femaleHint || ko[0];
+  }
+
+  function speak(text, { pitch = 1.3, rate = 1.05, volume = 1 } = {}){
+    if (!soundEnabled || !window.speechSynthesis) return;
+    try{
+      // 말하는 도중일 때만 끊기 (불필요한 cancel()은 크롬에서 다음 발화를 씹어먹는 버그를 유발함)
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending){
+        window.speechSynthesis.cancel();
+      }
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'ko-KR';
+      u.pitch = pitch;
+      u.rate = rate;
+      u.volume = volume;
+      if (!koreanVoice) koreanVoice = pickKoreanVoice();
+      if (koreanVoice) u.voice = koreanVoice;
+      u.onerror = () => updateSoundStatus('🔇 음성 재생 실패 (소리 테스트를 눌러보세요)', 'blocked');
+      // 크롬에서 cancel() 직후 곧바로 speak()하면 첫 발화가 씹히는 경우가 있어 살짝 지연
+      setTimeout(() => {
+        try{ window.speechSynthesis.speak(u); }catch(err){ console.error('speak 실패', err); }
+      }, 30);
+    }catch(err){ console.error('speak 실패', err); }
+  }
+
+  // 알림음: Web Audio로 생성 + 게인을 크게 걸어 최대한 크고 또렷하게 증폭
+  function playAlertTone(kind){
+    if (!soundEnabled) return;
+    const ctx = ensureAudioCtx();
+    if (!ctx) return;
+
+    const doPlay = () => {
+      try{
+        const now = ctx.currentTime;
+
+        const compressor = ctx.createDynamicsCompressor(); // 과증폭으로 인한 심한 클리핑 방지용 리미터
+        compressor.threshold.setValueAtTime(-8, now);
+        compressor.knee.setValueAtTime(0, now);
+        compressor.ratio.setValueAtTime(20, now);
+        compressor.attack.setValueAtTime(0.001, now);
+        compressor.release.setValueAtTime(0.05, now);
+        compressor.connect(ctx.destination);
+
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(kind === 'fail' ? 6 : 3, now); // 부적합은 더 크고 강하게 증폭
+        gain.connect(compressor);
+
+        const beeps = kind === 'fail'
+          ? [ {f:1600, t:0, d:0.11}, {f:1600, t:0.15, d:0.11}, {f:1600, t:0.30, d:0.16} ]  // 날카로운 3연속 경고음
+          : [ {f:1000, t:0, d:0.10}, {f:1400, t:0.12, d:0.14} ];                            // 경쾌한 2음 합격음
+
+        beeps.forEach(b => {
+          const osc = ctx.createOscillator();
+          osc.type = kind === 'fail' ? 'square' : 'sine';
+          osc.frequency.setValueAtTime(b.f, now + b.t);
+          const g2 = ctx.createGain();
+          g2.gain.setValueAtTime(0, now + b.t);
+          g2.gain.linearRampToValueAtTime(1, now + b.t + 0.005);
+          g2.gain.linearRampToValueAtTime(0, now + b.t + b.d);
+          osc.connect(g2);
+          g2.connect(gain);
+          osc.start(now + b.t);
+          osc.stop(now + b.t + b.d + 0.02);
+        });
+      }catch(err){ console.error('alert tone 실패', err); }
+    };
+
+    if (ctx.state === 'suspended'){
+      ctx.resume().then(doPlay).catch(() => updateSoundStatus('🔇 소리가 차단되어 있어요 (아무 곳이나 클릭해보세요)', 'blocked'));
+    } else {
+      doPlay();
+    }
+  }
+
+  function announceResult(pass, label){
+    if (!soundEnabled) return;
+    ensureAudioCtx();
+    playAlertTone(pass ? 'pass' : 'fail');
+    const delay = pass ? 260 : 420;
+    setTimeout(() => {
+      if (pass){
+        const text = label ? (label + ', 적합') : '적합';
+        speak(text, { pitch: 1.3, rate: 1.05, volume: 1 });
+      } else {
+        speak('부적합', { pitch: 2.0, rate: 1.15, volume: 1 });
+      }
+    }, delay);
+  }
+
+  /* ===================== 저장소 유틸 (브라우저 localStorage 사용) ===================== */
+  // 이 파일은 다운로드해서 단독으로(또는 자체 서버에) 열어 쓰는 프로그램이므로
+  // 브라우저의 localStorage에 저장합니다. 같은 브라우저로 다시 열면 자동으로 연결됩니다.
+  const STORAGE_PREFIX = 'inventory_audit_';
+  async function storageGet(key){
+    try{
+      const v = localStorage.getItem(STORAGE_PREFIX + key);
+      return v ? JSON.parse(v) : null;
+    }catch(err){ return null; }
+  }
+  async function storageSet(key, value){
+    try{ localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value)); }
+    catch(err){ console.error('storage set 실패', err); }
+  }
+
+  async function saveSession(){
+    await storageSet('session', { scanned, unknown, scanLog, firstScanTime, updatedAt: Date.now() });
+  }
+  async function loadSession(){
+    const s = await storageGet('session');
+    if (s){
+      scanned = s.scanned || {};
+      unknown = s.unknown || {};
+      scanLog = s.scanLog || [];
+      firstScanTime = s.firstScanTime || null;
+      // 예전 세션(로그에 id가 없던 시절)과의 호환 + id 충돌 방지
+      let maxId = 0;
+      scanLog.forEach(e => {
+        if (e.id === undefined) e.id = ++maxId;
+        else if (e.id > maxId) maxId = e.id;
+        if (e.removed === undefined) e.removed = false;
+      });
+      logIdCounter = maxId;
+    }
+  }
+
+  function formatElapsed(ms){
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    return [h, m, s].map(v => String(v).padStart(2, '0')).join(':');
+  }
+
+  /* ===================== 바코드 파싱 ===================== */
+  function parseBarcode(rawValue){
+    const raw = (rawValue || '').trim();
+    if (!raw) return null;
+    const code = raw.toUpperCase();
+
+    // 0) 빠른추가 커맨드 바코드: ADD1, ADD4, ADD5, ADD9, ADD10 ...
+    const addMatch = code.match(/^ADD(\d+)$/);
+    if (addMatch){
+      const amount = parseInt(addMatch[1], 10);
+      if (amount > 0){
+        return { ok:true, raw, isQuickAdd:true, amount };
+      }
+    }
+
+    // 1) SF 바코드: S + 숫자13자리 (총 14자리) -> SF코드맵 조회
+    if (/^S\d{13}$/.test(code)){
+      const mapped = sfMap[code];
+      if (mapped){
+        return { ok:true, raw, productCode: mapped.code, qty:1, type:'SF', name:mapped.name };
+      }
+      return { ok:false, raw, error:'SF코드맵에 없는 바코드입니다.' };
+    }
+
+    // 2) 일반 / 마대·박스: 앞 11자리 = 상품코드, 나머지 숫자 = 수량
+    if (code.length < 11){
+      return { ok:false, raw, error:'바코드 길이가 너무 짧습니다.' };
+    }
+    let productCode = code.slice(0, 11);
+    const rest = code.slice(11);
+    let qty = 1;
+    let type = '일반';
+    if (rest.length > 0){
+      if (!/^\d+$/.test(rest)){
+        return { ok:false, raw, error:'마대/박스 수량 형식이 올바르지 않습니다.' };
+      }
+      qty = parseInt(rest, 10);
+      if (qty <= 0){
+        return { ok:false, raw, error:'수량이 0 이하로 인식되었습니다.' };
+      }
+      type = '마대/박스(' + qty + '개)';
+    }
+
+    // 3) NTA 변환 후보 계산: NTA로 시작하는 코드의 마지막 자리가 7/8/9면 1/2/3으로 바꾼 대체코드도 함께 계산
+    //    (원본 코드가 재고목록에 있으면 그대로 쓰고, 없을 때만 이 대체코드로 한 번 더 찾아봄 — handleScan에서 처리)
+    let altProductCode = null;
+    if (/^NTA/.test(productCode)){
+      const last = productCode.slice(-1);
+      const conv = { '7':'1', '8':'2', '9':'3' };
+      if (conv[last]){
+        altProductCode = productCode.slice(0, -1) + conv[last];
+      }
+    }
+
+    return { ok:true, raw, productCode, altProductCode, qty, type };
+  }
+
+  /* ===================== 스캔 처리 ===================== */
+  function handleScan(rawValue){
+    const result = parseBarcode(rawValue);
+    if (!result) return;
+
+    ensureAudioCtx(); // 스캔할 때마다 오디오 활성화를 한 번 더 시도 (자동재생 차단 대비)
+
+    if (firstScanTime === null){
+      firstScanTime = Date.now();
+    }
+
+    if (!result.ok){
+      showLastScan('bad', '⚠ ' + result.error, result.raw);
+      scanLog.unshift({ id: ++logIdCounter, raw: result.raw, ok:false, error: result.error, time: Date.now(), removed:false });
+      announceResult(false);
+      saveSession();
+      renderLog();
+      return;
+    }
+
+    if (result.isQuickAdd){
+      addQuickQty(result.amount);
+      return;
+    }
+
+    const { productCode: scannedCode, altProductCode, qty, type, raw } = result;
+
+    // 원본 코드로 먼저 찾고, 없으면 NTA 변환 대체코드로 한 번 더 찾는다
+    let productCode = scannedCode;
+    let item = inventoryMap[scannedCode];
+    let usedAlt = false;
+    if (!item && altProductCode && inventoryMap[altProductCode]){
+      productCode = altProductCode;
+      item = inventoryMap[altProductCode];
+      usedAlt = true;
+    }
+    const displayType = type + (usedAlt ? ' · NTA변환(' + scannedCode + '→' + altProductCode + ')' : '');
+    let label = null;
+
+    if (item){
+      scanned[productCode] = (scanned[productCode] || 0) + qty;
+      label = (item.name ? item.name + ' ' : '') + (item.spec || '');
+      showLastScan('ok', displayType + ' · ' + productCode + (label.trim() ? ' — ' + label.trim() : '') + ' · +' + qty, raw);
+      const spoken = (item.spec || item.name || productCode).replace(/-/g, ' ') + ', ' + qty + '개';
+      announceResult(true, spoken);
+    } else {
+      // 원본/변환 코드 둘 다 재고목록에 없으면 실제 스캔된 원본 코드로 미등록 처리
+      unknown[scannedCode] = (unknown[scannedCode] || 0) + qty;
+      productCode = scannedCode;
+      showLastScan('warn', displayType + ' · ' + productCode + ' · 재고목록에 없는 상품코드 (+' + qty + ')', raw);
+      announceResult(false);
+    }
+
+    scanLog.unshift({
+      id: ++logIdCounter, raw, productCode, qty, type: displayType,
+      ok:true, matched: !!item, label: label ? label.trim() : null,
+      time: Date.now(), removed:false
+    });
+    lastScannedCode = productCode;
+    updateQuickAddUI();
+    saveSession();
+    renderAll();
+  }
+
+  /* ===================== 빠른 추가 (+1,+5,+9,+10) ===================== */
+  function updateQuickAddUI(){
+    const quickAdd = el('quickAdd');
+    const label = el('quickAddLabel');
+    if (lastScannedCode){
+      quickAdd.classList.add('active');
+      label.textContent = productCode_toString(lastScannedCode) + ' 에 바로 추가:';
+    } else {
+      quickAdd.classList.remove('active');
+      label.textContent = '방금 스캔한 상품에 바로 추가:';
+    }
+  }
+  function productCode_toString(code){ return code; }
+
+  function addQuickQty(amount){
+    if (!lastScannedCode) return;
+    const code = lastScannedCode;
+    const item = inventoryMap[code];
+
+    ensureAudioCtx(); // 빠른추가 바코드도 스캔이므로 오디오 재활성화 시도
+
+    if (item){
+      scanned[code] = (scanned[code] || 0) + amount;
+    } else {
+      unknown[code] = (unknown[code] || 0) + amount;
+    }
+    scanLog.unshift({
+      id: ++logIdCounter, raw:'(빠른추가)', productCode: code, qty: amount,
+      type: '빠른추가(+' + amount + ')', ok:true, matched: !!item,
+      label: item ? ((item.name ? item.name + ' ' : '') + (item.spec || '')).trim() : null,
+      time: Date.now(), removed:false
+    });
+    const label = (item ? ((item.name ? item.name + ' ' : '') + (item.spec || '')).trim() : '재고목록에 없는 상품');
+    showLastScan(item ? 'ok' : 'warn', '빠른추가 · ' + code + (label ? ' — ' + label : '') + ' · +' + amount, '(빠른추가)');
+
+    if (item){
+      const spoken = (item.spec || item.name || code).replace(/-/g, ' ') + ', ' + amount + '개 추가';
+      announceResult(true, spoken);
+    } else {
+      announceResult(false);
+    }
+
+    saveSession();
+    renderAll();
+  }
+
+  function showLastScan(kind, text, raw){
+    lastScanEl.className = 'last-scan show ' + kind;
+    lastScanEl.innerHTML = '<span class="code">' + escapeHtml(raw) + '</span> — ' + escapeHtml(text);
+  }
+
+  // 로그에서 특정 스캔 하나를 취소 (수량을 원래대로 되돌리고, 로그에는 취소됨으로 표시해서 계속 남겨둠)
+  function removeLogEntry(id){
+    const entry = scanLog.find(l => l.id === id);
+    if (!entry || entry.removed) return;
+    entry.removed = true;
+    if (entry.ok && entry.productCode){
+      if (entry.matched){
+        scanned[entry.productCode] = Math.max(0, (scanned[entry.productCode] || 0) - entry.qty);
+      } else {
+        unknown[entry.productCode] = Math.max(0, (unknown[entry.productCode] || 0) - entry.qty);
+      }
+    }
+    if (lastScannedCode === entry.productCode){
+      lastScannedCode = null;
+      updateQuickAddUI();
+    }
+    showLastScan('warn', '스캔 기록을 취소했습니다.', entry.raw);
+    saveSession();
+    renderAll();
+  }
+
+  function undoLast(){
+    const last = scanLog.find(l => l.ok && !l.removed);
+    if (!last) return;
+    removeLogEntry(last.id);
+  }
+
+  function renderLog(){
+    if (!logListEl) return;
+    const entries = scanLog.slice(0, 300); // 성능을 위해 최근 300건만 표시 (수량 계산에는 영향 없음)
+    logCountEl.textContent = '총 ' + scanLog.length + '건';
+
+    if (entries.length === 0){
+      logListEl.innerHTML = '<div class="log-empty">아직 스캔 기록이 없습니다.</div>';
+      return;
+    }
+
+    // 최신이 위로 보이도록 log-list는 column-reverse이므로, 배열을 뒤집어 넣어야 화면상 위쪽에 최신이 옴
+    const html = entries.slice().reverse().map(e => {
+      const time = new Date(e.time).toLocaleTimeString('ko-KR', { hour12:false });
+      let badge, desc;
+      if (!e.ok){
+        badge = '<span class="log-badge fail">오류</span>';
+        desc = escapeHtml(e.error || '');
+      } else {
+        const pass = e.matched;
+        badge = '<span class="log-badge ' + (pass ? 'pass' : 'fail') + '">' + (pass ? '적합' : '부적합') + '</span>';
+        desc = escapeHtml((e.label || e.productCode || '') + ' · ' + (e.type || '') + ' · +' + e.qty);
+      }
+      const removedTag = e.removed ? '<span class="log-badge cancelled">취소됨</span>' : '';
+      const delBtn = (!e.removed) ? '<button class="log-del" data-logid="' + e.id + '" title="이 스캔 취소">×</button>' : '<span style="width:22px;display:inline-block;"></span>';
+      return '<div class="log-row' + (e.removed ? ' removed' : '') + '">' +
+        '<span class="log-time">' + time + '</span>' +
+        '<span class="log-raw">' + escapeHtml(e.raw || '') + '</span>' +
+        badge + removedTag +
+        '<span class="log-desc">' + desc + '</span>' +
+        delBtn +
+        '</div>';
+    }).join('');
+    logListEl.innerHTML = html;
+  }
+
+  /* ===================== 렌더링 ===================== */
+  function buildRows(){
+    const rows = inventory.map(item => {
+      const scannedQty = scanned[item.code] || 0;
+      return {
+        code: item.code, name: item.name, spec: item.spec,
+        sheetQty: item.qty, scannedQty, diff: scannedQty - item.qty,
+        unknownRow: false
+      };
+    });
+    Object.keys(unknown).forEach(code => {
+      if (unknown[code] > 0){
+        rows.push({ code, name:'(재고목록에 없음)', spec:'', sheetQty:0, scannedQty:unknown[code], diff:unknown[code], unknownRow:true });
+      }
+    });
+    return rows;
+  }
+
+  function applyFilters(rows){
+    let out = rows;
+    if (currentFilter === 'diff') out = out.filter(r => r.diff !== 0);
+    else if (currentFilter === 'missing') out = out.filter(r => !r.unknownRow && r.sheetQty > 0 && r.scannedQty === 0);
+    else if (currentFilter === 'over') out = out.filter(r => !r.unknownRow && r.diff > 0);
+    else if (currentFilter === 'unknown') out = out.filter(r => r.unknownRow);
+
+    if (searchTerm){
+      const t = searchTerm.toLowerCase();
+      out = out.filter(r => r.code.toLowerCase().includes(t) || (r.name||'').toLowerCase().includes(t) || (r.spec||'').toLowerCase().includes(t));
+    }
+    return out;
+  }
+
+  function renderTable(){
+    const rows = applyFilters(buildRows());
+    if (rows.length === 0){
+      tableBody.innerHTML = '<tr><td colspan="6" class="empty-row">표시할 항목이 없습니다.</td></tr>';
+      return;
+    }
+    tableBody.innerHTML = rows.map(r => {
+      let diffClass = 'diff-zero', diffText = '0';
+      if (r.diff > 0){ diffClass='diff-pos'; diffText = '+' + r.diff; }
+      else if (r.diff < 0){ diffClass='diff-neg'; diffText = String(r.diff); }
+
+      let tag = '<span class="tag">정상</span>';
+      if (r.unknownRow) tag = '<span class="tag missing">미등록</span>';
+      else if (!r.unknownRow && r.sheetQty > 0 && r.scannedQty === 0) tag = '<span class="tag missing">미스캔</span>';
+      else if (r.diff > 0) tag = '<span class="tag over">초과</span>';
+      else if (r.diff < 0) tag = '<span class="tag missing">부족</span>';
+
+      return '<tr>' +
+        '<td class="code">' + escapeHtml(r.code) + '</td>' +
+        '<td>' + escapeHtml(r.name) + (r.spec ? '<br><span style="color:var(--sub);font-size:11px;">'+escapeHtml(r.spec)+'</span>' : '') + '</td>' +
+        '<td class="num">' + r.sheetQty + '</td>' +
+        '<td class="num">' + r.scannedQty + '</td>' +
+        '<td class="num ' + diffClass + '">' + diffText + '</td>' +
+        '<td>' + tag + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function renderStats(){
+    const rows = buildRows();
+    const totalScanned = rows.reduce((s,r) => s + r.scannedQty, 0);
+    const totalDiff = rows.reduce((s,r) => s + r.diff, 0);
+    const missingCount = rows.filter(r => !r.unknownRow && r.sheetQty > 0 && r.scannedQty === 0).length;
+    const overCount = rows.filter(r => !r.unknownRow && r.diff > 0).length;
+
+    el('statTotalScanned').textContent = totalScanned;
+    el('statTotalDiff').textContent = (totalDiff > 0 ? '+' : '') + totalDiff;
+    el('statMissing').textContent = missingCount;
+    el('statOver').textContent = overCount;
+  }
+
+  function renderAll(){
+    renderTable();
+    renderStats();
+    renderLog();
+  }
+
+  function escapeHtml(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  /* ===================== 구글시트 연동 ===================== */
+  async function fetchInventory(){
+    const url = new URL(config.webAppUrl);
+    url.searchParams.set('action', 'getData');
+    if (config.warehouseCol) url.searchParams.set('warehouse', config.warehouseCol);
+    const res = await fetch(url.toString());
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '재고 조회 실패');
+    inventory = data.inventory || [];
+    inventoryMap = {};
+    inventory.forEach(item => { inventoryMap[item.code] = item; });
+    sfMap = {};
+    (data.sfMap || []).forEach(row => { sfMap[row.scanCode] = { code: row.code, name: row.name }; });
+    return data;
+  }
+
+  // 지금까지 스캔한(또는 미등록으로 남은) 코드만 골라서 재고수량만 빠르게 다시 불러온다
+  async function fetchInventoryForScannedCodes(){
+    const codes = Array.from(new Set([...Object.keys(scanned), ...Object.keys(unknown)]));
+    if (codes.length === 0){
+      return { count: 0 };
+    }
+    const url = new URL(config.webAppUrl);
+    url.searchParams.set('action', 'getByCodes');
+    url.searchParams.set('codes', codes.join(','));
+    if (config.warehouseCol) url.searchParams.set('warehouse', config.warehouseCol);
+    const res = await fetch(url.toString());
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '조회 실패');
+
+    (data.items || []).forEach(item => {
+      inventoryMap[item.code] = item;
+      const idx = inventory.findIndex(x => x.code === item.code);
+      if (idx >= 0) inventory[idx] = item;
+      else inventory.push(item);
+    });
+    return { count: (data.items || []).length, requested: codes.length };
+  }
+
+  async function uploadResult(){
+    const manager = managerInput.value.trim();
+    if (!manager){
+      throw new Error('담당자명을 입력해주세요.');
+    }
+    const elapsedMs = firstScanTime ? (Date.now() - firstScanTime) : 0;
+    const elapsedText = formatElapsed(elapsedMs);
+
+    // 스캔 안 한 상품(재고목록엔 있지만 한 번도 안 찍힌 것)은 제외 - 스캔한 것만 시트에 올려서 저장 속도를 빠르게
+    const rows = buildRows().filter(r => r.scannedQty > 0).map(r => ({
+      code: r.code, name: r.name, spec: r.spec,
+      sheetQty: r.sheetQty, scannedQty: r.scannedQty, diff: r.diff
+    }));
+    if (rows.length === 0){
+      throw new Error('스캔한 품목이 없습니다.');
+    }
+    const res = await fetch(config.webAppUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'saveResult', rows, manager, elapsedText })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '저장 실패');
+    return data;
+  }
+
+  function downloadExcel(){
+    const rows = buildRows();
+    const header = ['상품코드','품목명','규격','구글시트재고','스캔재고','차이','상태'];
+    const aoa = [header].concat(rows.map(r => {
+      let status = '정상';
+      if (r.unknownRow) status = '미등록';
+      else if (r.sheetQty > 0 && r.scannedQty === 0) status = '미스캔';
+      else if (r.diff > 0) status = '초과';
+      else if (r.diff < 0) status = '부족';
+      return [r.code, r.name, r.spec, r.sheetQty, r.scannedQty, r.diff, status];
+    }));
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '재고조사결과');
+    const stamp = new Date().toISOString().slice(0,16).replace(/[-:T]/g,'');
+    XLSX.writeFile(wb, '재고조사_' + stamp + '.xlsx');
+  }
+
+  // 이카운트 "창고이동입력" 양식 그대로 다운로드 (초과/부족 있는 품목만, D/E/F는 고정값, J=품목코드, N=-차이)
+  function downloadEcountExcel(){
+    const rows = buildRows().filter(r => r.diff !== 0);
+    if (rows.length === 0){
+      showMsg(mainMsg, 'ok', '초과·부족 품목이 없어 이카운트 업로드 파일을 만들 필요가 없습니다.');
+      return;
+    }
+    const header = ['일자','순번','담당자','보내는창고','받는창고','처리방식','불량처리상태','비고',
+                     '일자','품목코드','시리얼/로트','품목명','규격','수량','적요(※불량유형)','재단번호','거래처비고','비고','생산전표생성'];
+    const aoa = [header];
+    rows.forEach(r => {
+      const line = new Array(19).fill('');
+      line[3] = '100';        // D열: 보내는창고
+      line[4] = '102';        // E열: 받는창고
+      line[5] = '7';          // F열: 처리방식
+      line[9] = r.code;       // J열: 품목코드
+      line[13] = -r.diff;     // N열: 수량 (초과는 음수, 부족은 양수)
+      aoa.push(line);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '창고이동입력');
+    const stamp = new Date().toISOString().slice(0,16).replace(/[-:T]/g,'');
+    XLSX.writeFile(wb, '이카운트_창고이동입력_' + stamp + '.xlsx');
+  }
+
+  function showMsg(target, kind, text){
+    target.innerHTML = '<div class="msg ' + kind + '">' + escapeHtml(text) + '</div>';
+  }
+
+  /* ===================== 연결 / 초기화 흐름 ===================== */
+  async function doConnect(){
+    connectBtn.disabled = true;
+    connectBtn.textContent = '연결 중...';
+    setupMsg.innerHTML = '';
+    try{
+      config.webAppUrl = webAppUrlInput.value.trim();
+      config.warehouseCol = warehouseColInput.value.trim();
+      if (!config.webAppUrl) throw new Error('웹 앱 URL을 입력해주세요.');
+      await fetchInventory();
+      await storageSet('config', config);
+      await loadSession();
+      setupScreen.classList.add('hidden');
+      mainScreen.classList.remove('hidden');
+      connPill.textContent = '연결됨 · 품목 ' + inventory.length + '개';
+      connPill.className = 'pill on';
+      renderAll();
+      scanInput.focus();
+    }catch(err){
+      showMsg(setupMsg, 'error', '연결 실패: ' + err.message);
+      connPill.textContent = '미연결';
+      connPill.className = 'pill off';
+    }finally{
+      connectBtn.disabled = false;
+      connectBtn.textContent = '연결하고 재고 불러오기';
+    }
+  }
+
+  async function reloadInventory(){
+    try{
+      await fetchInventory();
+      showMsg(mainMsg, 'ok', '재고 정보를 새로고침했습니다. (품목 ' + inventory.length + '개)');
+      renderAll();
+    }catch(err){
+      showMsg(mainMsg, 'error', '새로고침 실패: ' + err.message);
+    }
+  }
+
+  async function reloadScannedOnly(){
+    try{
+      const result = await fetchInventoryForScannedCodes();
+      if (result.count === 0 && result.requested === undefined){
+        showMsg(mainMsg, 'ok', '아직 스캔한 품목이 없습니다.');
+        return;
+      }
+      showMsg(mainMsg, 'ok', '스캔한 품목 ' + result.requested + '개 중 ' + result.count + '개 재고를 새로고침했습니다.');
+      renderAll();
+    }catch(err){
+      showMsg(mainMsg, 'error', '새로고침 실패: ' + err.message);
+    }
+  }
+
+  async function resetSession(){
+    if (!confirm('현재 스캔 기록을 모두 지우고 새 재고조사를 시작할까요?')) return;
+    scanned = {}; unknown = {}; scanLog = [];
+    lastScannedCode = null;
+    firstScanTime = null;
+    logIdCounter = 0;
+    updateQuickAddUI();
+    await saveSession();
+    lastScanEl.className = 'last-scan';
+    renderAll();
+    showMsg(mainMsg, 'ok', '새 재고조사를 시작합니다.');
+  }
+
+  /* ===================== 이벤트 바인딩 ===================== */
+  connectBtn.addEventListener('click', doConnect);
+
+  scanInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter'){
+      const v = scanInput.value;
+      scanInput.value = '';
+      handleScan(v);
+    }
+  });
+
+  el('undoBtn').addEventListener('click', undoLast);
+
+  logListEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.log-del');
+    if (!btn) return;
+    const id = Number(btn.dataset.logid);
+    removeLogEntry(id);
+  });
+
+  soundToggle.addEventListener('change', () => {
+    soundEnabled = soundToggle.checked;
+  });
+  soundTestBtn.addEventListener('click', () => {
+    ensureAudioCtx();
+    if (window.speechSynthesis) window.speechSynthesis.getVoices(); // 보이스 목록 강제 로드 트리거
+    announceResult(true, '블랙 기본 S, 3개');
+    setTimeout(() => announceResult(false), 1600);
+  });
+  // 브라우저 자동재생 제한 해제를 위해 최초 사용자 클릭/키입력 시 오디오 컨텍스트 미리 깨워둠
+  const unlockAudioOnce = () => {
+    ensureAudioCtx();
+    document.removeEventListener('click', unlockAudioOnce);
+    document.removeEventListener('keydown', unlockAudioOnce);
+  };
+  document.addEventListener('click', unlockAudioOnce);
+  document.addEventListener('keydown', unlockAudioOnce);
+  if (window.speechSynthesis){
+    window.speechSynthesis.onvoiceschanged = () => { koreanVoice = pickKoreanVoice(); };
+  }
+
+  document.querySelectorAll('.qa-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      addQuickQty(parseInt(btn.dataset.amt, 10));
+      scanInput.focus();
+    });
+  });
+  el('reloadBtn').addEventListener('click', reloadInventory);
+  el('reloadScannedBtn').addEventListener('click', reloadScannedOnly);
+  el('resetBtn').addEventListener('click', resetSession);
+  el('downloadBtn').addEventListener('click', downloadExcel);
+  el('downloadEcountBtn').addEventListener('click', downloadEcountExcel);
+  el('uploadBtn').addEventListener('click', async () => {
+    const btn = el('uploadBtn');
+    btn.disabled = true; btn.textContent = '저장 중...';
+    try{
+      const data = await uploadResult();
+      const diffMsg = data.diffTabName ? (' / 초과·부족만 모은 탭: ' + data.diffTabName) : ' (초과·부족 항목 없음)';
+      showMsg(mainMsg, 'ok', '구글시트에 저장되었습니다. 탭: ' + data.tabName + diffMsg);
+    }catch(err){
+      showMsg(mainMsg, 'error', '저장 실패: ' + err.message);
+    }finally{
+      btn.disabled = false; btn.textContent = '구글시트에 결과 저장';
+    }
+  });
+
+  document.querySelectorAll('.chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      currentFilter = chip.dataset.filter;
+      renderTable();
+    });
+  });
+
+  el('searchInput').addEventListener('input', (e) => {
+    searchTerm = e.target.value.trim();
+    renderTable();
+  });
+
+  // 스캔 입력창에 항상 포커스 유지 (다른 입력창/버튼 클릭 시 제외)
+  document.addEventListener('click', (e) => {
+    if (mainScreen.classList.contains('hidden')) return;
+    const tag = e.target.tagName;
+    if (tag === 'INPUT' || tag === 'BUTTON' || tag === 'SPAN') return;
+    scanInput.focus();
+  });
+
+  /* ===================== 초기 로드 ===================== */
+  (async function init(){
+    const savedConfig = await storageGet('config');
+    if (savedConfig && savedConfig.webAppUrl){
+      webAppUrlInput.value = savedConfig.webAppUrl;
+      warehouseColInput.value = savedConfig.warehouseCol || '';
+      config = savedConfig;
+      await doConnect();
+    }
+  })();
+
+})();
+</script>
+</body>
+</html>
