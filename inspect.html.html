@@ -1628,7 +1628,7 @@ function buildLabelPageHTML(companyName, zoneValue, bagLabelText, isLast, delive
     ? `${escapeHtml(bagLabelText)}${isLast ? ' <span class="label-star">*</span>' : ''}`
     : '';
   const qrHtml = deliveryQrPayload
-    ? `<img class="label-delivery-qr delivery-qr-img" src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&ecc=H&data=${encodeURIComponent(deliveryQrPayload)}" alt="배송 QR">`
+    ? `<img class="label-delivery-qr delivery-qr-img" src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&ecc=H&data=${encodeURIComponent(deliveryQrPayload)}" alt="배송 QR">`
     : '';
   return `
     <div class="label-content" style="margin-left:${x}mm; margin-top:${y}mm;">
