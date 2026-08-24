@@ -206,21 +206,36 @@ function renderBatchList(){
   document.getElementById('batchFinishBtn').disabled = batchList.length === 0;
 }
 
+// 화면을 어디로 이동하든, 이전 세션(다중스캔 목록/모드/전송종류)이 남아서 다음 스캔에
+// 잘못 영향을 주지 않도록 상태를 확실하게 초기화한다.
+function resetSessionState(){
+  batchMode = false;
+  batchList = [];
+  pendingMode = 'delivery';
+  currentCompany = ''; currentBags = ''; currentZone = '';
+  capturedDataUrl = '';
+  renderBatchList();
+  document.getElementById('batchPanel').style.display = 'none';
+  document.getElementById('startCamWrap').style.display = 'flex';
+  document.getElementById('scanVideo').style.display = 'none';
+  document.getElementById('scanFrame').style.display = 'none';
+  document.getElementById('scanHint').style.display = 'none';
+  if(qrScanner){ try{ qrScanner.stop(); qrScanner.destroy(); }catch(e){} qrScanner = null; }
+}
+
 /* ---------- 0. 홈 화면 ---------- */
 document.getElementById('homeBtn').addEventListener('click', ()=>{
-  batchMode = false;
+  resetSessionState();
   showScreen('homeScreen');
 });
 document.getElementById('goToScanBtn').addEventListener('click', ()=>{
-  batchMode = false;
-  document.getElementById('batchPanel').style.display = 'none';
+  resetSessionState();
   document.getElementById('scanStartLabel').textContent = '라벨의 QR코드를 스캔해주세요';
   showScreen('scanScreen');
 });
 document.getElementById('goToBatchScanBtn').addEventListener('click', ()=>{
+  resetSessionState();
   batchMode = true;
-  batchList = [];
-  renderBatchList();
   document.getElementById('batchPanel').style.display = 'block';
   document.getElementById('scanStartLabel').textContent = '이 장소에 있는 업체들의 QR을 연달아 스캔해주세요';
   showScreen('scanScreen');
@@ -492,12 +507,9 @@ function renderArrivalStats(stats){
 
 /* ---------- 5. 다음 배송지 / 홈으로 ---------- */
 document.getElementById('nextBtn').addEventListener('click', ()=>{
-  capturedDataUrl = ''; currentCompany = ''; currentBags = ''; currentZone = '';
-  const wasMilestone = pendingMode !== 'delivery';
-  pendingMode = 'delivery';
-  if(wasMilestone){
-    batchMode = false;
-    document.getElementById('batchPanel').style.display = 'none';
+  const wasContinuousDelivery = pendingMode === 'delivery';
+  resetSessionState();
+  if(!wasContinuousDelivery){
     showScreen('homeScreen');
     return;
   }
