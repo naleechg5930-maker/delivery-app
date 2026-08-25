@@ -404,6 +404,7 @@
     <input type="file" id="bagCapFileInput" accept=".xlsx,.xls,.csv">
     <label class="file-btn" for="zoneFileInput">🗺️ 배송구역 참고표 업로드</label>
     <input type="file" id="zoneFileInput" accept=".xlsx,.xls,.csv">
+    <button id="refreshTablesFromSheetBtn">🔄 구글시트에서 참고표 불러오기</button>
     <button id="soundToggle">🔊 소리 켜짐</button>
     <button id="resetBtn">↺ 검수 초기화</button>
     <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--sub); cursor:pointer; margin-left:8px;">
@@ -1213,6 +1214,41 @@ function updateGasStatus(){
   }
 }
 
+// 배송구역/봉투캐파시티 참고표를 구글시트에서 가져와서 반영한다.
+// (모든 컴퓨터가 같은 구글시트를 보게 되므로, 한 곳에서 시트만 수정하면 나머지 컴퓨터들도 이 버튼으로 최신화 가능)
+async function refreshTablesFromSheet(showAlert){
+  if(!gasWebhookUrl){
+    if(showAlert) alert('먼저 상단에서 구글시트 연동을 설정해주세요.');
+    return;
+  }
+  try{
+    const [zoneResp, capResp] = await Promise.all([
+      fetch(gasWebhookUrl + '?action=getZoneTable').then(r=>r.json()),
+      fetch(gasWebhookUrl + '?action=getCapacityTable').then(r=>r.json()),
+    ]);
+
+    let zoneCount = 0, capCount = 0;
+    if(zoneResp.ok && Array.isArray(zoneResp.list) && zoneResp.list.length){
+      buildZoneIndex(zoneResp.list);
+      idbSet('zoneLookupTable', zoneResp.list).catch(()=>{});
+      zoneCount = zoneResp.list.length;
+    }
+    if(capResp.ok && Array.isArray(capResp.list) && capResp.list.length){
+      bagCapacityTable = capResp.list;
+      idbSet('bagCapacityTable', capResp.list).catch(()=>{});
+      capCount = capResp.list.length;
+    }
+
+    if(showAlert){
+      alert(`구글시트에서 불러왔습니다.\n배송구역: ${zoneCount}건\n봉투캐파시티: ${capCount}건`);
+    }
+  }catch(err){
+    console.warn('참고표 불러오기 실패:', err);
+    if(showAlert) alert('구글시트에서 불러오는 중 오류가 발생했습니다: ' + err.message);
+  }
+}
+document.getElementById('refreshTablesFromSheetBtn').addEventListener('click', ()=> refreshTablesFromSheet(true));
+
 async function restoreGasUrl(){
   try{
     const url = await idbGet('gasWebhookUrl');
@@ -1355,7 +1391,12 @@ function fitVendorFontSize(text){
     const widthPx = measureTextWidthPx(t, mm * MM_TO_PX);
     if(widthPx <= maxWidthPx) return mm + 'mm';
   }
-  return MIN_MM + 'mm';
+
+  // 이름이 너무 길어서(예: 샘플 표시로 " S/P"까지 붙은 경우) 최소 크기(7mm)에서도 안 들어가면,
+  // 그냥 잘리게 두지 않고 실제 비율만큼 더 줄여서 무조건 한 줄 안에 다 보이게 한다.
+  const widthAtMin = measureTextWidthPx(t, MIN_MM * MM_TO_PX);
+  const scaledMm = Math.max(3, (maxWidthPx / widthAtMin) * MIN_MM);
+  return scaledMm.toFixed(1) + 'mm';
 }
 
 function escapeHtml(s){
@@ -1619,6 +1660,12 @@ function buildDeliveryQrPayload(company, zone, total){
   return `DLV|${safe(company) || '업체명 미입력'}|${safe(zone)}|${total || 1}`;
 }
 
+// 봉투가 딱 1개뿐이면 "1-1" 같은 번호를 굳이 안 보여주고 빈 칸으로 둔다
+function buildBagLabelText(total, num){
+  if(total <= 1) return '';
+  return `${total}-${num}`;
+}
+
 function buildLabelPageHTML(companyName, zoneValue, bagLabelText, isLast, deliveryQrPayload, totalBags){
   const baseName = companyName || '업체명 미입력';
   const name = currentOrderTag ? `${baseName} ${currentOrderTag}` : baseName;
@@ -1795,14 +1842,14 @@ function printCompletionLabelInner(companyName, zoneValue, container){
     bagSizes.forEach((size, idx) => {
       const num = idx + 1;
       const isLast = idx === bagSizes.length - 1; // 봉투 계산상 진짜 마지막 봉투에만 별표 (박스가 뒤에 와도 상관없음)
-      html += buildLabelPageHTML(companyName, zoneValue, `${total}-${num}`, isLast, qrPayload, total);
+      html += buildLabelPageHTML(companyName, zoneValue, buildBagLabelText(total, num), isLast, qrPayload, total);
       if(wantsPackingList){
         html += buildPackingListPageHTML(num, total, bagContentLists[idx] || []);
       }
     });
     boxScanEvents.forEach((box, idx) => {
       const num = bagSizes.length + idx + 1;
-      html += buildLabelPageHTML(companyName, zoneValue, `${total}-${num}`, false, qrPayload, total); // 박스는 별표 안 붙임
+      html += buildLabelPageHTML(companyName, zoneValue, buildBagLabelText(total, num), false, qrPayload, total); // 박스는 별표 안 붙임
       if(wantsPackingList){
         html += buildPackingListPageHTML(num, total, [box]);
       }
@@ -1992,12 +2039,12 @@ function printQueuedItem(item, btnEl){
     bagSizes.forEach((size, idx) => {
       const num = idx + 1;
       const isLast = idx === bagSizes.length - 1;
-      html += buildLabelPageHTML(company, zone, `${total}-${num}`, isLast, qrPayload, total);
+      html += buildLabelPageHTML(company, zone, buildBagLabelText(total, num), isLast, qrPayload, total);
       if(wantsPackingList) html += buildPackingListPageHTML(num, total, bagContentLists[idx] || []);
     });
     for(let i=0; i<boxCount; i++){
       const num = bagSizes.length + i + 1;
-      html += buildLabelPageHTML(company, zone, `${total}-${num}`, false, qrPayload, total);
+      html += buildLabelPageHTML(company, zone, buildBagLabelText(total, num), false, qrPayload, total);
       if(wantsPackingList) html += buildPackingListPageHTML(num, total, bagContentLists[bagSizes.length + i] || []);
     }
   }
@@ -2594,7 +2641,7 @@ function guessCompanyFromInfoRow(infoRow){
 }
 
 /* ===================== 초기화 ===================== */
-restoreGasUrl();
+restoreGasUrl().then(()=>{ if(gasWebhookUrl) refreshTablesFromSheet(false); });
 loadAliasMap(DEFAULT_ALIAS_RAW);
 (async function restoreBagCapacityTable(){
   try{
