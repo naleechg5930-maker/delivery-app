@@ -97,6 +97,15 @@
 </style>
 </head>
 <body>
+<!-- 카톡 자동발송 실패 알림 배너: 어떤 화면에 있든 위에 겹쳐서 뜬다 -->
+<div id="failNoticeOverlay" style="display:none; position:fixed; inset:0; background:rgba(10,14,30,0.55); z-index:999; align-items:center; justify-content:center;">
+  <div style="background:#161D65; color:#ECEEFB; border-radius:16px; padding:24px 26px; max-width:340px; width:85%; text-align:left;">
+    <div style="font-size:32px; text-align:center;">⚠️</div>
+    <div style="font-weight:800; font-size:16px; margin:8px 0 10px; text-align:center;">카톡 자동발송 실패</div>
+    <div id="failNoticeList" style="font-size:13px; color:#AEB4E0; max-height:180px; overflow-y:auto; margin-bottom:16px;"></div>
+    <button id="failNoticeAckBtn" style="width:100%; background:#FFB200; color:#1A1300; font-weight:800; border:none; border-radius:10px; padding:12px; font-size:14px;">확인했습니다</button>
+  </div>
+</div>
 <div id="app">
   <div class="topbar">
     <span class="gear" id="homeBtn">🏠</span>
@@ -523,6 +532,45 @@ document.getElementById('nextBtn').addEventListener('click', ()=>{
 if(!gasUrl){
   setTimeout(()=>{ document.getElementById('settingsBtn').click(); }, 400);
 }
+
+/* ===================== 카톡 자동발송 실패 알림 (어느 화면에 있든 주기적으로 확인) ===================== */
+let pendingFailRows = [];
+
+async function checkFailedSends(){
+  if(!gasUrl) return;
+  try{
+    const resp = await fetch(gasUrl + '?action=getFailedSends');
+    const result = await resp.json();
+    if(result.ok && Array.isArray(result.list) && result.list.length > 0){
+      pendingFailRows = result.list.map(item => item.row);
+      const listEl = document.getElementById('failNoticeList');
+      listEl.innerHTML = result.list
+        .map(item => `• ${item.time} — <b>${item.company}</b>`)
+        .join('<br>');
+      document.getElementById('failNoticeOverlay').style.display = 'flex';
+    }
+  }catch(err){
+    console.warn('실패 알림 확인 중 오류:', err);
+  }
+}
+
+document.getElementById('failNoticeAckBtn').addEventListener('click', async ()=>{
+  document.getElementById('failNoticeOverlay').style.display = 'none';
+  if(!gasUrl || pendingFailRows.length === 0) return;
+  try{
+    await fetch(gasUrl, {
+      method:'POST',
+      body: JSON.stringify({ type:'acknowledgeFailedSends', rows: pendingFailRows }),
+    });
+  }catch(err){
+    console.warn('실패 알림 확인 처리 중 오류:', err);
+  }
+  pendingFailRows = [];
+});
+
+// 앱을 켤 때 한 번 바로 확인 + 그 이후로는 1분마다 계속 확인 (지금 어느 화면에 있든 상관없이 동작)
+checkFailedSends();
+setInterval(checkFailedSends, 60000);
 </script>
 </body>
 </html>
