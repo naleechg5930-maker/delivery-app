@@ -545,7 +545,7 @@ async function checkFailedSends(){
       pendingFailRows = result.list.map(item => item.row);
       const listEl = document.getElementById('failNoticeList');
       listEl.innerHTML = result.list
-        .map(item => `• ${item.time} — <b>${item.company}</b>`)
+        .map(item => `• ${item.time} — <b>${item.company}</b><br>&nbsp;&nbsp;${item.reason || ''}`)
         .join('<br>');
       document.getElementById('failNoticeOverlay').style.display = 'flex';
     }
