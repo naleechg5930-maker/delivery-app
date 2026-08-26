@@ -910,7 +910,10 @@ function renderBoxItemsTable(){
 }
 
 function handleBoxNumberScan(boxNumberRaw){
-  const boxNumber = String(boxNumberRaw).trim();
+  // 스캐너에서 가끔 "12(>?" 처럼 숫자 외에 이상한 문자가 같이 찍히는 경우가 있어서,
+  // 숫자만 뽑아내서 박스번호로 사용한다.
+  const digitsOnly = String(boxNumberRaw).replace(/\D/g, '');
+  const boxNumber = digitsOnly || String(boxNumberRaw).trim();
   const candidates = packingListData.filter(p => p.boxNumber === boxNumber && !p.matched);
   const timeStr = new Date().toLocaleTimeString('ko-KR', {hour12:false});
 
