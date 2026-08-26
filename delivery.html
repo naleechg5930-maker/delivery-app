@@ -570,7 +570,7 @@ document.getElementById('failNoticeAckBtn').addEventListener('click', async ()=>
 
 // 앱을 켤 때 한 번 바로 확인 + 그 이후로는 1분마다 계속 확인 (지금 어느 화면에 있든 상관없이 동작)
 checkFailedSends();
-setInterval(checkFailedSends, 60000);
+setInterval(checkFailedSends, 5000);
 </script>
 </body>
 </html>
