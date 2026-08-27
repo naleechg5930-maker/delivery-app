@@ -77,6 +77,18 @@
   .sound-toggle{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--sub);cursor:pointer;user-select:none;}
   .sound-toggle input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;}
 
+  .multiplier-row{
+    display:flex;align-items:center;gap:10px;margin-top:10px;padding:8px 10px;
+    border-radius:8px;background:var(--panel-2);flex-wrap:wrap;
+  }
+  .multiplier-row .mr-label{font-size:12px;color:var(--sub);font-weight:600;}
+  .mr-badge{
+    background:var(--bg);border:1px solid var(--line);color:var(--text);
+    padding:5px 12px;border-radius:20px;font-size:13px;font-family:var(--mono);font-weight:700;
+  }
+  .multiplier-row.active .mr-badge{border-color:var(--warn);color:var(--warn);background:var(--warn-bg);}
+  .multiplier-row .mr-hint{font-size:10px;color:var(--sub);}
+
   .manager-input{
     background:var(--panel-2);border:1px solid var(--line);color:var(--text);
     padding:9px 12px;border-radius:8px;font-size:12px;outline:none;width:140px;
@@ -248,8 +260,17 @@
 
     <div class="scan-panel">
       <div class="scan-input-row">
-        <input type="text" id="scanInput" placeholder="바코드를 스캔하세요" autocomplete="off">
+        <input type="text" id="scanInput" placeholder="바코드를 스캔하세요 (숫자만 입력하면 수량 배수로 적용)" autocomplete="off">
         <button class="btn secondary" id="undoBtn" title="마지막 스캔 취소">↩ 취소</button>
+      </div>
+      <div class="multiplier-row" id="multiplierRow">
+        <span class="mr-label">현재 수량 배수:</span>
+        <span class="mr-badge" id="multiplierBadge">x1</span>
+        <label class="sound-toggle">
+          <input type="checkbox" id="multiplierPersistToggle">
+          <span>지속 적용</span>
+        </label>
+        <span class="mr-hint" id="multiplierHint">스캔창에 숫자만 입력 후 Enter → 그 수만큼 배수 적용. 지속 적용 체크 안 하면 다음 스캔 1번만 적용 후 자동으로 x1 복귀 (마대/박스 바코드에는 적용 안 됨)</span>
       </div>
       <div class="sound-row">
         <label class="sound-toggle">
@@ -381,6 +402,9 @@
   const soundToggle = el('soundToggle');
   const soundTestBtn = el('soundTestBtn');
   const managerInput = el('managerInput');
+  const multiplierBadge = el('multiplierBadge');
+  const multiplierPersistToggle = el('multiplierPersistToggle');
+  const multiplierRow = el('multiplierRow');
   const logListEl = el('logList');
   const logCountEl = el('logCount');
   const soundStatusEl = el('soundStatus');
@@ -468,16 +492,24 @@
         compressor.connect(ctx.destination);
 
         const gain = ctx.createGain();
-        gain.gain.setValueAtTime(kind === 'fail' ? 6 : 3, now); // 부적합은 더 크고 강하게 증폭
+        // 배수 적용된 스캔은 최대로 증폭해서 "어 이거 배수 적용됐구나"를 확실히 인지하게 함
+        const gainVal = kind === 'fail' ? 6 : (kind === 'pass_multi' ? 10 : (kind === 'multiplier_set' ? 2.5 : 3));
+        gain.gain.setValueAtTime(gainVal, now);
         gain.connect(compressor);
 
         const beeps = kind === 'fail'
-          ? [ {f:1600, t:0, d:0.11}, {f:1600, t:0.15, d:0.11}, {f:1600, t:0.30, d:0.16} ]  // 날카로운 3연속 경고음
-          : [ {f:1000, t:0, d:0.10}, {f:1400, t:0.12, d:0.14} ];                            // 경쾌한 2음 합격음
+          ? [ {f:1600, t:0, d:0.11}, {f:1600, t:0.15, d:0.11}, {f:1600, t:0.30, d:0.16} ]     // 날카로운 3연속 경고음
+          : kind === 'pass_multi'
+          ? [ {f:900, t:0, d:0.09}, {f:1300, t:0.11, d:0.09}, {f:1800, t:0.22, d:0.18} ]       // 상승하는 3연속 강조음 (배수 적용)
+          : kind === 'multiplier_set'
+          ? [ {f:700, t:0, d:0.07} ]                                                          // 짧은 단음 (배수 설정 확인용)
+          : [ {f:1000, t:0, d:0.10}, {f:1400, t:0.12, d:0.14} ];                               // 경쾌한 2음 합격음
+
+        const oscType = kind === 'fail' ? 'square' : (kind === 'pass_multi' ? 'sawtooth' : (kind === 'multiplier_set' ? 'triangle' : 'sine'));
 
         beeps.forEach(b => {
           const osc = ctx.createOscillator();
-          osc.type = kind === 'fail' ? 'square' : 'sine';
+          osc.type = oscType;
           osc.frequency.setValueAtTime(b.f, now + b.t);
           const g2 = ctx.createGain();
           g2.gain.setValueAtTime(0, now + b.t);
@@ -498,17 +530,22 @@
     }
   }
 
-  function announceResult(pass, label){
+  // status: 'pass' | 'pass_multi' | 'fail' (호환을 위해 true/false도 허용: true='pass', false='fail')
+  function announceResult(status, label){
     if (!soundEnabled) return;
+    const kind = status === true ? 'pass' : status === false ? 'fail' : status;
     ensureAudioCtx();
-    playAlertTone(pass ? 'pass' : 'fail');
-    const delay = pass ? 260 : 420;
+    playAlertTone(kind);
+    const delay = kind === 'fail' ? 420 : (kind === 'pass_multi' ? 340 : 260);
     setTimeout(() => {
-      if (pass){
+      if (kind === 'fail'){
+        speak('부적합', { pitch: 2.0, rate: 1.15, volume: 1 });
+      } else if (kind === 'pass_multi'){
+        const text = label ? (label + ', 적합') : '적합';
+        speak(text, { pitch: 1.6, rate: 1.0, volume: 1 }); // 배수 적용 시 톤을 다르게 해서 구분
+      } else {
         const text = label ? (label + ', 적합') : '적합';
         speak(text, { pitch: 1.3, rate: 1.05, volume: 1 });
-      } else {
-        speak('부적합', { pitch: 2.0, rate: 1.15, volume: 1 });
       }
     }, delay);
   }
@@ -616,10 +653,19 @@
 
   /* ===================== 스캔 처리 ===================== */
   function handleScan(rawValue){
-    const result = parseBarcode(rawValue);
-    if (!result) return;
+    const raw0 = (rawValue || '').trim();
+    if (!raw0) return;
 
     ensureAudioCtx(); // 스캔할 때마다 오디오 활성화를 한 번 더 시도 (자동재생 차단 대비)
+
+    // 바코드가 아니라 순수 숫자(1~3자리)만 입력한 경우 -> 배수 설정 명령으로 처리
+    if (isMultiplierCommand(raw0)){
+      handleMultiplierCommand(raw0);
+      return;
+    }
+
+    const result = parseBarcode(raw0);
+    if (!result) return;
 
     if (firstScanTime === null){
       firstScanTime = Date.now();
@@ -628,7 +674,7 @@
     if (!result.ok){
       showLastScan('bad', '⚠ ' + result.error, result.raw);
       scanLog.unshift({ id: ++logIdCounter, raw: result.raw, ok:false, error: result.error, time: Date.now(), removed:false });
-      announceResult(false);
+      announceResult('fail');
       saveSession();
       renderLog();
       return;
@@ -640,6 +686,7 @@
     }
 
     const { productCode: scannedCode, altProductCode, qty, type, raw } = result;
+    const isBox = type.indexOf('마대/박스') === 0; // 마대/박스는 바코드 자체 수량을 절대값으로 사용, 배수 미적용
 
     // 원본 코드로 먼저 찾고, 없으면 NTA 변환 대체코드로 한 번 더 찾는다
     let productCode = scannedCode;
@@ -653,29 +700,92 @@
     const displayType = type + (usedAlt ? ' · NTA변환(' + scannedCode + '→' + altProductCode + ')' : '');
     let label = null;
 
+    // 수량 배수 적용 (마대/박스 제외)
+    let effectiveQty = qty;
+    let multiplierApplied = false;
+    if (!isBox){
+      const multiplier = getCurrentMultiplier();
+      if (multiplier !== 1){
+        effectiveQty = qty * multiplier;
+        multiplierApplied = true;
+      }
+    }
+
     if (item){
-      scanned[productCode] = (scanned[productCode] || 0) + qty;
+      scanned[productCode] = (scanned[productCode] || 0) + effectiveQty;
       label = (item.name ? item.name + ' ' : '') + (item.spec || '');
-      showLastScan('ok', displayType + ' · ' + productCode + (label.trim() ? ' — ' + label.trim() : '') + ' · +' + qty, raw);
-      const spoken = (item.spec || item.name || productCode).replace(/-/g, ' ') + ', ' + qty + '개';
-      announceResult(true, spoken);
+      showLastScan('ok', displayType + ' · ' + productCode + (label.trim() ? ' — ' + label.trim() : '') + ' · +' + effectiveQty, raw);
+      const spoken = (item.spec || item.name || productCode).replace(/-/g, ' ') + ', ' + effectiveQty + '개';
+      announceResult(multiplierApplied ? 'pass_multi' : 'pass', spoken);
     } else {
       // 원본/변환 코드 둘 다 재고목록에 없으면 실제 스캔된 원본 코드로 미등록 처리
-      unknown[scannedCode] = (unknown[scannedCode] || 0) + qty;
+      unknown[scannedCode] = (unknown[scannedCode] || 0) + effectiveQty;
       productCode = scannedCode;
-      showLastScan('warn', displayType + ' · ' + productCode + ' · 재고목록에 없는 상품코드 (+' + qty + ')', raw);
-      announceResult(false);
+      showLastScan('warn', displayType + ' · ' + productCode + ' · 재고목록에 없는 상품코드 (+' + effectiveQty + ')', raw);
+      announceResult('fail');
     }
 
     scanLog.unshift({
-      id: ++logIdCounter, raw, productCode, qty, type: displayType,
+      id: ++logIdCounter, raw, productCode, qty: effectiveQty, type: displayType + (multiplierApplied ? ' · 배수x' + getCurrentMultiplier() : ''),
       ok:true, matched: !!item, label: label ? label.trim() : null,
       time: Date.now(), removed:false
     });
     lastScannedCode = productCode;
     updateQuickAddUI();
+
+    // 1회성 모드면 배수를 한 번 쓰고 자동으로 1로 복귀 (마대/박스라 배수를 안 썼으면 유지)
+    if (!isBox && !multiplierPersistToggle.checked){
+      resetMultiplierInput();
+    }
+
     saveSession();
     renderAll();
+  }
+
+  /* ===================== 스캔 수량 배수 (1회성 / 지속 적용) ===================== */
+  let currentMultiplier = 1;
+
+  function getCurrentMultiplier(){
+    return currentMultiplier;
+  }
+  function resetMultiplierInput(){
+    currentMultiplier = 1;
+    updateMultiplierRowStyle();
+  }
+  function updateMultiplierRowStyle(){
+    multiplierBadge.textContent = 'x' + currentMultiplier;
+    multiplierRow.classList.toggle('active', currentMultiplier !== 1);
+  }
+
+  // 스캔창에 숫자만 입력했을 때 (바코드가 아니라 배수 설정 명령으로 인식)
+  function isMultiplierCommand(raw){
+    return /^\d{1,3}$/.test(raw);
+  }
+
+  function handleMultiplierCommand(raw){
+    const n = parseInt(raw, 10);
+    if (!n || n <= 0){
+      showLastScan('bad', '⚠ 배수는 1 이상의 숫자여야 합니다.', raw);
+      return;
+    }
+    currentMultiplier = n;
+    updateMultiplierRowStyle();
+    const persistTxt = multiplierPersistToggle.checked ? '지속 적용' : '다음 스캔 1회 적용';
+    showLastScan('warn', '수량 배수 x' + n + ' 설정 (' + persistTxt + ')', raw);
+    scanLog.unshift({
+      id: ++logIdCounter, raw, ok:true, type:'배수설정(x' + n + ')', qty:0, productCode:null,
+      matched:true, label:null, time: Date.now(), removed:false
+    });
+    announceMultiplierSet(n);
+    saveSession();
+    renderLog();
+  }
+
+  function announceMultiplierSet(n){
+    if (!soundEnabled) return;
+    ensureAudioCtx();
+    playAlertTone('multiplier_set');
+    setTimeout(() => speak('배수 ' + n + ' 설정', { pitch: 1.2, rate: 1.1, volume: 1 }), 180);
   }
 
   /* ===================== 빠른 추가 (+1,+5,+9,+10) ===================== */
@@ -924,7 +1034,8 @@
     // 스캔 안 한 상품(재고목록엔 있지만 한 번도 안 찍힌 것)은 제외 - 스캔한 것만 시트에 올려서 저장 속도를 빠르게
     const rows = buildRows().filter(r => r.scannedQty > 0).map(r => ({
       code: r.code, name: r.name, spec: r.spec,
-      sheetQty: r.sheetQty, scannedQty: r.scannedQty, diff: r.diff
+      sheetQty: r.sheetQty, scannedQty: r.scannedQty, diff: r.diff,
+      matched: !r.unknownRow // 재고목록에 실제 등록된 코드인지 (false면 이카운트 탭에서 제외)
     }));
     if (rows.length === 0){
       throw new Error('스캔한 품목이 없습니다.');
@@ -1045,6 +1156,8 @@
     lastScannedCode = null;
     firstScanTime = null;
     logIdCounter = 0;
+    multiplierPersistToggle.checked = false;
+    resetMultiplierInput();
     updateQuickAddUI();
     await saveSession();
     lastScanEl.className = 'last-scan';
@@ -1075,11 +1188,19 @@
   soundToggle.addEventListener('change', () => {
     soundEnabled = soundToggle.checked;
   });
+
+  multiplierPersistToggle.addEventListener('change', () => {
+    // 지속 적용을 끄면 안전을 위해 즉시 x1로 되돌림 (의도치 않게 계속 곱해지는 사고 방지)
+    if (!multiplierPersistToggle.checked){
+      resetMultiplierInput();
+    }
+  });
   soundTestBtn.addEventListener('click', () => {
     ensureAudioCtx();
     if (window.speechSynthesis) window.speechSynthesis.getVoices(); // 보이스 목록 강제 로드 트리거
-    announceResult(true, '블랙 기본 S, 3개');
-    setTimeout(() => announceResult(false), 1600);
+    announceResult('pass', '블랙 기본 S, 3개');
+    setTimeout(() => announceResult('pass_multi', '블랙 기본 S, 15개'), 1600);
+    setTimeout(() => announceResult('fail'), 3400);
   });
   // 브라우저 자동재생 제한 해제를 위해 최초 사용자 클릭/키입력 시 오디오 컨텍스트 미리 깨워둠
   const unlockAudioOnce = () => {
