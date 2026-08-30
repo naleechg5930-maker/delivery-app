@@ -318,6 +318,8 @@
   #pasteArea:focus{border-color:var(--accent);}
   .paste-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;}
   button.primary{background:var(--accent);color:var(--accent-ink);border:none;}
+  .picking-menu-tab{background:var(--panel2); color:var(--text);}
+  .picking-menu-tab.active{background:var(--accent); color:var(--accent-ink); font-weight:800;}
   button.ghost{background:transparent;border:1px solid var(--line);}
   button.danger{background:var(--err);color:#fff;border:none;}
   .map-desc{font-size:12.5px;color:var(--sub);margin-bottom:8px;}
@@ -396,8 +398,6 @@
     <button id="pasteOpenBtn">📋 화면에서 붙여넣기</button>
     <label class="file-btn" for="fileInput">📂 엑셀 업로드(.xlsx)</label>
     <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
-    <label class="file-btn" for="stockMoveFileInput">🏭 재고이동 엑셀 업로드</label>
-    <input type="file" id="stockMoveFileInput" accept=".xlsx,.xls,.csv">
     <label class="file-btn" for="aliasFileInput">🏷️ SF 바코드 매핑</label>
     <input type="file" id="aliasFileInput" accept=".xlsx,.xls,.csv">
     <label class="file-btn" for="bagCapFileInput">📦 봉투캐파시티표 업로드</label>
@@ -413,6 +413,7 @@
       <input type="checkbox" id="noPrinterToggle"> 이 컴퓨터엔 프린터 없음(대기열로 보내기)
     </label>
     <button id="printQueueBtn">🖨️ 인쇄 대기열</button>
+    <button id="pickingMenuBtn">🔧 재고 수정 메뉴</button>
   </div>
 </div>
 
@@ -491,6 +492,12 @@
     </div>
   </div>
 
+  <!-- 피킹존 재입고 필요 목록 (전표 조회 시 갱신, 계속 남아있음) -->
+  <div id="pickingReloadPanel" style="display:none; background:#FEF2F2; border:2px solid #DC2626; border-radius:12px; padding:14px 16px;">
+    <h2 style="margin:0 0 8px; color:#DC2626; font-size:15px;">📦 재입고 필요</h2>
+    <div id="pickingReloadList" style="display:flex; flex-direction:column; gap:6px;"></div>
+  </div>
+
   <div style="display:flex;flex-direction:column;gap:14px;">
     <div class="split-row">
       <div class="table-panel">
@@ -562,13 +569,52 @@
   </div>
 </div>
 
-<!-- 피킹존 재입고 알림 -->
-<div class="overlay" id="pickingAlertOverlay">
-  <div class="complete-card" style="background:#DC2626;">
-    <div class="big-icon">📦⚠️</div>
-    <h2>피킹존 재입고 필요</h2>
-    <div id="pickingAlertList" style="text-align:left; background:rgba(0,0,0,0.15); border-radius:10px; padding:14px 16px; margin:14px 0; font-size:14px; line-height:1.7;"></div>
-    <button id="closePickingAlert">확인, 적재존에서 채워올게요</button>
+<!-- 피킹존 재입고 알림 토스트 (3초만 떴다가 자동으로 사라짐) -->
+<div id="pickingToast" style="display:none; position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:998; background:#DC2626; color:#fff; border-radius:12px; padding:14px 20px; box-shadow:0 8px 24px rgba(0,0,0,0.3); max-width:520px; text-align:left;">
+  <div style="font-weight:800; margin-bottom:6px;">📦⚠️ 재입고 필요 (<span id="pickingToastCount">0</span>건)</div>
+  <div id="pickingToastList" style="font-size:13px; line-height:1.6;"></div>
+</div>
+
+<!-- 재고 수정 메뉴 (상시, 품번 검색해서 불량/오입고 수정) -->
+<div class="overlay" id="pickingMenuOverlay">
+  <div class="paste-card" style="max-width:480px;">
+    <h2 style="margin-top:0;">🔧 피킹존 재고 수정</h2>
+
+    <div style="display:flex; gap:8px; margin-bottom:16px;">
+      <button id="pickingMenuTabDefect" class="picking-menu-tab active" style="flex:1;">불량/파손</button>
+      <button id="pickingMenuTabMisdelivery" class="picking-menu-tab" style="flex:1;">오입고</button>
+      <button id="pickingMenuTabSearch" class="picking-menu-tab" style="flex:1;">현재수량 조회</button>
+    </div>
+
+    <!-- 불량/파손 -->
+    <div id="pickingMenuPaneDefect">
+      <label style="font-size:13px; color:var(--sub);">품번</label>
+      <input type="text" id="defectCodeInput" placeholder="정확한 품번(11자리)" style="width:100%; padding:10px; margin:6px 0 12px; border-radius:8px; border:1px solid var(--line);">
+      <label style="font-size:13px; color:var(--sub);">빠진 개수 (불량/파손 등)</label>
+      <input type="number" id="defectQtyInput" placeholder="예: 3" style="width:100%; padding:10px; margin:6px 0 16px; border-radius:8px; border:1px solid var(--line);">
+      <button id="defectSubmitBtn" style="width:100%; background:var(--accent); color:var(--accent-ink); font-weight:800; padding:12px;">반영하기</button>
+    </div>
+
+    <!-- 오입고 -->
+    <div id="pickingMenuPaneMisdelivery" style="display:none;">
+      <label style="font-size:13px; color:var(--sub);">원래 품번 (라벨상 품번)</label>
+      <input type="text" id="misdeliveryWrongInput" placeholder="예: NTA8000A111" style="width:100%; padding:10px; margin:6px 0 12px; border-radius:8px; border:1px solid var(--line);">
+      <label style="font-size:13px; color:var(--sub);">실제 품번 (진짜로 들어있던 품번)</label>
+      <input type="text" id="misdeliveryActualInput" placeholder="예: NTA8000A113" style="width:100%; padding:10px; margin:6px 0 12px; border-radius:8px; border:1px solid var(--line);">
+      <label style="font-size:13px; color:var(--sub);">수량</label>
+      <input type="number" id="misdeliveryQtyInput" placeholder="예: 5" style="width:100%; padding:10px; margin:6px 0 16px; border-radius:8px; border:1px solid var(--line);">
+      <button id="misdeliverySubmitBtn" style="width:100%; background:var(--accent); color:var(--accent-ink); font-weight:800; padding:12px;">반영하기</button>
+    </div>
+
+    <!-- 현재수량 조회 -->
+    <div id="pickingMenuPaneSearch" style="display:none;">
+      <label style="font-size:13px; color:var(--sub);">품번</label>
+      <input type="text" id="searchQtyCodeInput" placeholder="정확한 품번(11자리)" style="width:100%; padding:10px; margin:6px 0 12px; border-radius:8px; border:1px solid var(--line);">
+      <button id="searchQtyBtn" style="width:100%; background:var(--accent); color:var(--accent-ink); font-weight:800; padding:12px;">조회하기</button>
+      <div id="searchQtyResult" style="margin-top:14px; font-size:14px;"></div>
+    </div>
+
+    <button id="closePickingMenu" style="width:100%; margin-top:14px;">닫기</button>
   </div>
 </div>
 
@@ -1444,19 +1490,146 @@ async function restoreGasUrl(){
 // 전표 QR 스캔 시 호출: Apps Script에 "판매현황"에서 이 전표 데이터를 찾아달라고 요청해서
 // 응답으로 받은 소매처/품목코드/품목명/수량으로 주문 목록을 통째로 채워넣는다.
 // 피킹존 재입고 알림을 화면에 눈에 띄게 띄운다 (소리+음성 포함)
-function showPickingAlerts(alerts){
-  const listEl = document.getElementById('pickingAlertList');
-  listEl.innerHTML = alerts.map(a =>
-    `<div>📦 <b>${escapeHtml(a.code)}</b>${a.name ? ' (' + escapeHtml(a.name) + ')' : ''} — 적재존에서 <b>${a.threshold}개씩 ${a.timesCrossed}회</b> 채워주세요 (누적 ${a.newCount}개)</div>`
-  ).join('');
-  document.getElementById('pickingAlertOverlay').classList.add('show');
-  playErrSound();
-  const codesSpoken = alerts.map(a => a.code).join(', ');
-  speakKorean(`피킹존 재입고 필요. ${codesSpoken}`);
+let pickingToastTimer = null;
+
+// 새 전표 조회할 때마다 "재입고 필요" 목록을 통째로 비운다 (그 전표에서 새로 뜬 것만 다시 채워짐)
+function resetPickingReloadPanel(){
+  document.getElementById('pickingReloadList').innerHTML = '';
+  document.getElementById('pickingReloadPanel').style.display = 'none';
 }
-document.getElementById('closePickingAlert').addEventListener('click', ()=>{
-  document.getElementById('pickingAlertOverlay').classList.remove('show');
+
+function renderPickingReloadItem(alert){
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex; justify-content:space-between; align-items:center; background:#fff; padding:8px 10px; border-radius:8px; font-size:13px;';
+  row.innerHTML = `<span>📦 <b>${escapeHtml(alert.code)}</b>${alert.name ? ' (' + escapeHtml(alert.name) + ')' : ''} — 기준 ${alert.threshold}개로 자동 채움</span>`;
+  const fixBtn = document.createElement('button');
+  fixBtn.textContent = '✏️ 수정';
+  fixBtn.style.cssText = 'flex-shrink:0; margin-left:10px; font-size:12px; padding:6px 10px;';
+  fixBtn.addEventListener('click', async ()=>{
+    const actual = prompt(`${alert.code} — 실제로 몇 개 채우셨어요? (기준 ${alert.threshold}개)`, alert.threshold);
+    if(actual === null) return;
+    const actualQty = Number(actual);
+    if(isNaN(actualQty) || actualQty < 0){ alert('숫자를 정확히 입력해주세요.'); return; }
+    try{
+      const resp = await fetch(gasWebhookUrl, {
+        method:'POST',
+        body: JSON.stringify({ type:'confirmPickingRefill', code: alert.code, actualQty: actualQty }),
+      });
+      const result = await resp.json();
+      if(result.ok){
+        row.querySelector('span').innerHTML = `📦 <b>${escapeHtml(alert.code)}</b> — 수정 완료 (${actualQty}개)`;
+        fixBtn.disabled = true;
+        fixBtn.textContent = '✅';
+      }else{
+        alert('수정 중 오류: ' + (result.error || '알 수 없는 오류'));
+      }
+    }catch(err){
+      alert('수정 중 네트워크 오류: ' + err.message);
+    }
+  });
+  row.appendChild(fixBtn);
+  return row;
+}
+
+// 피킹존 재입고 알림: 3초짜리 토스트(소리+음성) + 계속 남아있는 목록에 추가
+function showPickingAlerts(alerts){
+  if(!alerts || alerts.length === 0) return;
+
+  // 토스트 (3초 후 자동으로 사라짐)
+  document.getElementById('pickingToastCount').textContent = alerts.length;
+  document.getElementById('pickingToastList').innerHTML = alerts.map(a =>
+    `• ${escapeHtml(a.code)}${a.name ? ' (' + escapeHtml(a.name) + ')' : ''}`
+  ).join('<br>');
+  const toast = document.getElementById('pickingToast');
+  toast.style.display = 'block';
+  if(pickingToastTimer) clearTimeout(pickingToastTimer);
+  pickingToastTimer = setTimeout(()=>{ toast.style.display = 'none'; }, 3000);
+
+  playErrSound();
+  speakKorean(alerts.length > 3 ? `재입고 필요 ${alerts.length}건` : `재입고 필요. ${alerts.map(a=>a.code).join(', ')}`);
+
+  // 지속 목록에 추가
+  const listEl = document.getElementById('pickingReloadList');
+  alerts.forEach(a => listEl.appendChild(renderPickingReloadItem(a)));
+  document.getElementById('pickingReloadPanel').style.display = 'block';
+}
+
+/* ===================== 재고 수정 메뉴 (상시) ===================== */
+document.getElementById('pickingMenuBtn').addEventListener('click', ()=>{
+  document.getElementById('pickingMenuOverlay').classList.add('show');
+});
+document.getElementById('closePickingMenu').addEventListener('click', ()=>{
+  document.getElementById('pickingMenuOverlay').classList.remove('show');
   focusInput();
+});
+
+function switchPickingMenuTab(tab){
+  ['Defect','Misdelivery','Search'].forEach(name=>{
+    document.getElementById('pickingMenuPane'+name).style.display = (name===tab) ? 'block' : 'none';
+    document.getElementById('pickingMenuTab'+name).classList.toggle('active', name===tab);
+  });
+}
+document.getElementById('pickingMenuTabDefect').addEventListener('click', ()=> switchPickingMenuTab('Defect'));
+document.getElementById('pickingMenuTabMisdelivery').addEventListener('click', ()=> switchPickingMenuTab('Misdelivery'));
+document.getElementById('pickingMenuTabSearch').addEventListener('click', ()=> switchPickingMenuTab('Search'));
+
+document.getElementById('defectSubmitBtn').addEventListener('click', async ()=>{
+  const code = document.getElementById('defectCodeInput').value.trim();
+  const qty = Number(document.getElementById('defectQtyInput').value);
+  if(!code || !qty || qty <= 0){ alert('품번과 빠진 개수를 정확히 입력해주세요.'); return; }
+  try{
+    const resp = await fetch(gasWebhookUrl, { method:'POST', body: JSON.stringify({ type:'adjustPickingDefect', code, missingQty: qty }) });
+    const result = await resp.json();
+    if(result.ok){
+      alert(`반영 완료!\n${code}: ${result.oldCount}개 → ${result.newCount}개`);
+      document.getElementById('defectCodeInput').value = '';
+      document.getElementById('defectQtyInput').value = '';
+    }else{
+      alert('오류: ' + (result.error || '알 수 없는 오류'));
+    }
+  }catch(err){ alert('네트워크 오류: ' + err.message); }
+});
+
+document.getElementById('misdeliverySubmitBtn').addEventListener('click', async ()=>{
+  const wrongCode = document.getElementById('misdeliveryWrongInput').value.trim();
+  const actualCode = document.getElementById('misdeliveryActualInput').value.trim();
+  const qty = Number(document.getElementById('misdeliveryQtyInput').value);
+  if(!wrongCode || !actualCode || !qty || qty <= 0){ alert('원래품번/실제품번/수량을 정확히 입력해주세요.'); return; }
+  try{
+    const resp = await fetch(gasWebhookUrl, { method:'POST', body: JSON.stringify({ type:'fixPickingMisdelivery', wrongCode, actualCode, qty }) });
+    const result = await resp.json();
+    if(result.ok){
+      let msg = '반영 완료!\n';
+      msg += result.wrongCodeApplied ? `${wrongCode}: ${result.wrongOldCount} → ${result.wrongNewCount}\n` : `${wrongCode}: 대상 아님(무시됨)\n`;
+      msg += result.actualCodeApplied ? `${actualCode}: ${result.actualOldCount} → ${result.actualNewCount}` : `${actualCode}: 대상 아님(무시됨)`;
+      alert(msg);
+      document.getElementById('misdeliveryWrongInput').value = '';
+      document.getElementById('misdeliveryActualInput').value = '';
+      document.getElementById('misdeliveryQtyInput').value = '';
+    }else{
+      alert('오류: ' + (result.error || '알 수 없는 오류'));
+    }
+  }catch(err){ alert('네트워크 오류: ' + err.message); }
+});
+
+document.getElementById('searchQtyBtn').addEventListener('click', async ()=>{
+  const code = document.getElementById('searchQtyCodeInput').value.trim();
+  const resultEl = document.getElementById('searchQtyResult');
+  if(!code){ resultEl.textContent = '품번을 입력해주세요.'; return; }
+  resultEl.textContent = '조회 중...';
+  try{
+    const resp = await fetch(gasWebhookUrl + '?action=getPickingCurrentQty&code=' + encodeURIComponent(code));
+    const result = await resp.json();
+    if(!result.ok){
+      resultEl.textContent = '오류: ' + (result.error || '알 수 없는 오류');
+    }else if(!result.registered){
+      resultEl.textContent = result.message;
+    }else{
+      resultEl.innerHTML = `<b>${escapeHtml(result.code)}</b><br>현재수량: <b>${result.currentQty}개</b> (기준 ${result.threshold}개)`;
+    }
+  }catch(err){
+    resultEl.textContent = '네트워크 오류: ' + err.message;
+  }
 });
 
 async function processDocumentLookup(raw){
@@ -1465,6 +1638,7 @@ async function processDocumentLookup(raw){
     focusInput();
     return;
   }
+  resetPickingReloadPanel(); // 새 전표 조회 시작하면 이전 재입고 목록은 비운다
   showBanner('idle', '전표 조회중...', raw, '판매현황에서 찾는 중입니다...', '🔎');
   try{
     const res = await fetch(gasWebhookUrl + '?lookup=' + encodeURIComponent(raw));
@@ -2365,87 +2539,6 @@ document.getElementById('fileInput').addEventListener('change', function(e){
       autofillZoneIfEmpty();
       currentOrderTag = (hasPriceColumn && anyRowChecked && !anyPricePresent) ? 'S/P' : '';
       updateOrderTagBadge();
-
-      focusInput();
-    }catch(err){
-      alert('파일을 읽는 중 오류가 발생했습니다: ' + err.message);
-    }
-  };
-  reader.readAsArrayBuffer(file);
-});
-
-/* ===================== 재고이동 엑셀 업로드 (입고창고=업체명, B열=품목코드, C열=품목명[규격], D열=수량) ===================== */
-document.getElementById('stockMoveFileInput').addEventListener('change', function(e){
-  const file = e.target.files[0];
-  if(!file) return;
-  const reader = new FileReader();
-  reader.onload = function(evt){
-    try{
-      const data = new Uint8Array(evt.target.result);
-      const wb = XLSX.read(data, {type:'array'});
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:''});
-
-      // "입고창고" 라고 적힌 줄에서 콜론(:) 뒤의 텍스트를 업체명으로 사용
-      let destWarehouse = '';
-      let docKey = '';
-      for(let r=0; r<Math.min(rows.length, 10); r++){
-        const cell = String(rows[r][0] || '');
-        if(cell.includes('전표번호')){
-          const m = cell.match(/전표번호\s*[:：]\s*(.+)/);
-          if(m) docKey = m[1].trim();
-        }
-        if(cell.includes('입고창고')){
-          const m = cell.match(/입고창고\s*[:：]\s*(.+)/);
-          if(m) destWarehouse = m[1].trim();
-        }
-      }
-
-      // "품목코드" 헤더가 있는 행을 찾아 B/C/D열(품목코드/품목명[규격]/수량) 위치를 확인
-      let headerRowIdx = -1, colCode=-1, colName=-1, colQty=-1;
-      for(let r=0; r<Math.min(rows.length, 15); r++){
-        const row = rows[r].map(v=>String(v).trim());
-        const ci = row.indexOf('품목코드');
-        if(ci !== -1){
-          headerRowIdx = r;
-          colCode = ci;
-          colName = ci + 1;   // 품목명[규격명] (품목코드 바로 다음 열)
-          colQty = row.indexOf('수량');
-          break;
-        }
-      }
-      if(headerRowIdx === -1){
-        alert('업로드한 파일에서 "품목코드" 헤더를 찾지 못했습니다. 재고이동 양식(ESM003E 등)과 같은 파일인지 확인해주세요.');
-        return;
-      }
-
-      const agg = {}; const order = [];
-      for(let r=headerRowIdx+1; r<rows.length; r++){
-        const row = rows[r];
-        const code = row[colCode];
-        const qtyRaw = colQty!==-1 ? row[colQty] : '';
-        if(!code || String(code).trim()==='') continue;
-        const qty = parseQtyValue(qtyRaw);
-        if(!qty || isNaN(qty) || qty<=0) continue;
-        const c = String(code).trim();
-        const nameRaw = colName!==-1 ? String(row[colName]||'') : '';
-        const { name, spec } = splitNameSpec(nameRaw, false, '');
-        if(agg[c]){ agg[c].qty += qty; }
-        else { agg[c] = {code:c, name, spec, qty}; order.push(c); }
-      }
-      const list = order.map(c=>agg[c]);
-      if(list.length === 0){
-        alert('유효한 품목 데이터를 찾지 못했습니다.');
-        return;
-      }
-      loadItems(list);
-      currentDocumentKey = docKey;
-      okCount = 0; errCount = 0; logList.innerHTML = '';
-      updateMiniStats();
-      if(destWarehouse) document.getElementById('companyNameInput').value = destWarehouse;
-      autofillZoneIfEmpty();
-      document.getElementById('orderInfo').innerHTML =
-        `<b>재고이동 전표로 불러온 주문서</b> · <b>입고창고:</b> ${destWarehouse || '-'} · <b>품목수:</b> ${list.length}개`;
 
       focusInput();
     }catch(err){
