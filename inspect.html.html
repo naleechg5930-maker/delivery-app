@@ -447,6 +447,16 @@
       <input type="text" id="scanInput" placeholder="여기를 클릭 후 바코드를 스캔하세요" autocomplete="off">
     </div>
 
+    <div style="display:flex; align-items:center; gap:10px; margin-top:2px;">
+      <button id="bundleModeBtn" style="flex:1; padding:10px; font-size:14px; font-weight:800; background:#fff; color:var(--accent); border:2px solid var(--accent);">📦 묶음처리</button>
+      <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--sub); cursor:pointer; white-space:nowrap;">
+        <input type="checkbox" id="bundleContinuousToggle"> 연속
+      </label>
+    </div>
+    <div id="bundleModeIndicator" style="display:none; background:#DC2626; color:#fff; font-weight:800; text-align:center; padding:8px; border-radius:8px;">
+      📦 묶음처리 모드 켜짐 — 다음 스캔은 묶음수량으로 처리됩니다
+    </div>
+
     <div class="log-panel">
       <h2>스캔 로그</h2>
       <div class="log-list" id="logList"></div>
@@ -627,6 +637,54 @@ const DEFAULT_ZONE_LOOKUP = [{"zone": "G", "name": "(주)더샵스토리", "reta
 
 const DEFAULT_BAG_CAPACITY_TABLE = [{"prefix": "NTA8000", "cap8": 40, "cap7": 30, "cap5": 7}, {"prefix": "NTA8001", "cap8": 40, "cap7": 30, "cap5": 7}, {"prefix": "NTA8002", "cap8": 40, "cap7": 30, "cap5": 7}, {"prefix": "NTA8003", "cap8": 40, "cap7": 30, "cap5": 7}, {"prefix": "NTA8004", "cap8": 40, "cap7": 30, "cap5": 7}, {"prefix": "NTA8005", "cap8": 40, "cap7": 30, "cap5": 7}, {"prefix": "NTA8006", "cap8": 60, "cap7": 40, "cap5": 10}, {"prefix": "NTA8007", "cap8": 60, "cap7": 40, "cap5": 10}, {"prefix": "NTA8008", "cap8": 60, "cap7": 40, "cap5": 10}, {"prefix": "NTA8009", "cap8": 60, "cap7": 40, "cap5": 10}, {"prefix": "NTA8010", "cap8": 60, "cap7": 40, "cap5": 10}, {"prefix": "NTA8011", "cap8": 60, "cap7": 40, "cap5": 10}, {"prefix": "NTA8012", "cap8": 60, "cap7": 40, "cap5": 10}, {"prefix": "NTA8012XX3X", "cap8": 60, "cap7": 40, "cap5": 10}, {"prefix": "NTA8013", "cap8": 35, "cap7": 25, "cap5": 7}, {"prefix": "NTA8014", "cap8": 35, "cap7": 25, "cap5": 7}, {"prefix": "NTA8015", "cap8": 35, "cap7": 25, "cap5": 7}, {"prefix": "NTA8016", "cap8": 25, "cap7": 20, "cap5": 5}, {"prefix": "NTA8017", "cap8": 25, "cap7": 20, "cap5": 5}, {"prefix": "NTA8018", "cap8": 25, "cap7": 20, "cap5": 5}, {"prefix": "NTA8019", "cap8": 25, "cap7": 20, "cap5": 5}, {"prefix": "NTA8020", "cap8": 50, "cap7": 30, "cap5": 10}, {"prefix": "NTA8021", "cap8": 50, "cap7": 30, "cap5": 10}, {"prefix": "NTA8022", "cap8": 50, "cap7": 30, "cap5": 10}, {"prefix": "NTA8023", "cap8": 50, "cap7": 30, "cap5": 10}, {"prefix": "NTA8024", "cap8": 50, "cap7": 30, "cap5": 10}, {"prefix": "NTA8025", "cap8": 50, "cap7": 30, "cap5": 10}, {"prefix": "NTA8026", "cap8": 50, "cap7": 30, "cap5": 10}, {"prefix": "NTA8027", "cap8": 35, "cap7": 27, "cap5": 7}, {"prefix": "NTA8028", "cap8": 35, "cap7": 27, "cap5": 7}, {"prefix": "NTA8029", "cap8": 35, "cap7": 27, "cap5": 7}, {"prefix": "NTA8030", "cap8": 35, "cap7": 27, "cap5": 7}, {"prefix": "NTA8031", "cap8": 35, "cap7": 27, "cap5": 7}, {"prefix": "NTA8032", "cap8": 35, "cap7": 27, "cap5": 7}, {"prefix": "NTA8033", "cap8": 35, "cap7": 27, "cap5": 7}, {"prefix": "NTA8034", "cap8": 35, "cap7": 27, "cap5": 7}, {"prefix": "NTA8035", "cap8": 35, "cap7": 27, "cap5": 7}, {"prefix": "NTA8036", "cap8": 35, "cap7": 27, "cap5": 7}, {"prefix": "TTA", "cap8": 120, "cap7": 120, "cap5": 20}, {"prefix": "LPA", "cap8": 80, "cap7": 80, "cap5": 7}, {"prefix": "SFA", "cap8": 80, "cap7": 80, "cap5": 7}];
 let bagCapacityTable = DEFAULT_BAG_CAPACITY_TABLE.slice(); // 업로드하면 이 값이 갱신됨
+
+/* ===================== 묶음처리(비닐 패킹) 수량표 ===================== */
+// 표에 없는 품번은 기본 10개로 처리, 표에 등록된 품번은 그 숫자 우선
+const DEFAULT_BUNDLE_QUANTITY_TABLE = [];
+let bundleQuantityTable = DEFAULT_BUNDLE_QUANTITY_TABLE.slice();
+let bundleModeActive = false; // 다음 스캔에 묶음수량을 적용할지 여부
+
+function updateBundleModeUI(){
+  const btn = document.getElementById('bundleModeBtn');
+  const indicator = document.getElementById('bundleModeIndicator');
+  if(bundleModeActive){
+    btn.textContent = '📦 묶음처리 (켜짐)';
+    btn.style.background = '#DC2626';
+    btn.style.color = '#fff';
+    btn.style.border = '2px solid #DC2626';
+    indicator.style.display = 'block';
+  } else {
+    btn.textContent = '📦 묶음처리';
+    btn.style.background = '#fff';
+    btn.style.color = 'var(--accent)';
+    btn.style.border = '2px solid var(--accent)';
+    indicator.style.display = 'none';
+  }
+}
+document.getElementById('bundleModeBtn').addEventListener('click', ()=>{
+  bundleModeActive = !bundleModeActive;
+  updateBundleModeUI();
+});
+// "연속" 체크를 끄는 순간, 지금 켜져있던 묶음모드도 같이 꺼준다 (헷갈리지 않게)
+document.getElementById('bundleContinuousToggle').addEventListener('change', function(){
+  if(!this.checked && bundleModeActive){
+    bundleModeActive = false;
+    updateBundleModeUI();
+  }
+});
+const BUNDLE_DEFAULT_QTY = 10;
+
+function findBundleQty(code){
+  const upper = String(code || '').toUpperCase();
+  let best = null;
+  bundleQuantityTable.forEach(row=>{
+    const p = String(row.prefix || '').toUpperCase();
+    if(p && upper.startsWith(p)){
+      if(!best || p.length > best.prefix.length) best = row;
+    }
+  });
+  return best ? Number(best.qty) || BUNDLE_DEFAULT_QTY : BUNDLE_DEFAULT_QTY;
+}
 
 let items = [];       // {code, name, spec, orderQty, scannedQty, cap5, cap7, cap8}
 let codeIndex = {};   // code -> item ref
@@ -958,8 +1016,8 @@ function processScan(rawCode){
   const item = codeIndex[code];
   const now = new Date();
   const timeStr = now.toLocaleTimeString('ko-KR', {hour12:false});
-  const bulkTag = bulkQty > 1 ? ` [박스/마대 수량 ${bulkQty}]` : '';
-  const displayCode = (viaAlias ? `${codeForLookup} → ${code}` : code) + bulkTag;
+  let bulkTag = bulkQty > 1 ? ` [박스/마대 수량 ${bulkQty}]` : '';
+  let displayCode = (viaAlias ? `${codeForLookup} → ${code}` : code) + bulkTag;
 
   if(!item){
     errCount++;
@@ -973,6 +1031,20 @@ function processScan(rawCode){
   lastScannedItem = item;
   showQuickAdd(item);
 
+  // 묶음처리 모드가 켜져있고, 이미 박스/마대 수량이 붙어서 온 스캔이 아니면(중복 적용 방지),
+  // 묶음수량표에서 이 품목의 묶음 개수를 찾아서 그만큼 한 번에 처리한다.
+  let bundleApplied = false;
+  if(bundleModeActive && bulkQty === 1){
+    bulkQty = findBundleQty(code);
+    bundleApplied = true;
+    if(!document.getElementById('bundleContinuousToggle').checked){
+      bundleModeActive = false;
+      updateBundleModeUI();
+    }
+    bulkTag = ` [묶음처리 ${bulkQty}개]`;
+    displayCode = (viaAlias ? `${codeForLookup} → ${code}` : code) + bulkTag;
+  }
+
   const remaining = item.orderQty - item.scannedQty;
 
   if(remaining <= 0){
@@ -980,6 +1052,7 @@ function processScan(rawCode){
     showBanner('err', '오피킹', displayCode, `${item.name} / ${item.spec} — 주문 수량(${item.orderQty}개)을 초과 스캔했습니다`, '⚠️');
     addLog(timeStr, displayCode, false, `초과 스캔 (${item.scannedQty}/${item.orderQty})`);
     playErrSound();
+    speakKorean(`${bulkQty}개 과송`);
     updateMiniStats();
     return;
   }
@@ -1017,6 +1090,7 @@ function processScan(rawCode){
     showBanner('err', '오피킹', displayCode, `${item.name} / ${item.spec} — 남은 수량 ${remaining}개인데 ${bulkQty}개가 스캔됐습니다 (초과 ${overBy}개)`, '⚠️');
     addLog(timeStr, displayCode, false, `박스 수량 ${bulkQty} 스캔 → ${remaining}개만 반영, ${overBy}개 초과`);
     playErrSound();
+    speakKorean(`${overBy}개 과송`);
     if(bagsFilled > 0) announceBagFilled();
   }
 
@@ -1222,12 +1296,13 @@ async function refreshTablesFromSheet(showAlert){
     return;
   }
   try{
-    const [zoneResp, capResp] = await Promise.all([
+    const [zoneResp, capResp, bundleResp] = await Promise.all([
       fetch(gasWebhookUrl + '?action=getZoneTable').then(r=>r.json()),
       fetch(gasWebhookUrl + '?action=getCapacityTable').then(r=>r.json()),
+      fetch(gasWebhookUrl + '?action=getBundleQuantityTable').then(r=>r.json()),
     ]);
 
-    let zoneCount = 0, capCount = 0;
+    let zoneCount = 0, capCount = 0, bundleCount = 0;
     if(zoneResp.ok && Array.isArray(zoneResp.list) && zoneResp.list.length){
       buildZoneIndex(zoneResp.list);
       idbSet('zoneLookupTable', zoneResp.list).catch(()=>{});
@@ -1238,9 +1313,14 @@ async function refreshTablesFromSheet(showAlert){
       idbSet('bagCapacityTable', capResp.list).catch(()=>{});
       capCount = capResp.list.length;
     }
+    if(bundleResp.ok && Array.isArray(bundleResp.list)){
+      bundleQuantityTable = bundleResp.list;
+      idbSet('bundleQuantityTable', bundleResp.list).catch(()=>{});
+      bundleCount = bundleResp.list.length;
+    }
 
     if(showAlert){
-      alert(`구글시트에서 불러왔습니다.\n배송구역: ${zoneCount}건\n봉투캐파시티: ${capCount}건`);
+      alert(`구글시트에서 불러왔습니다.\n배송구역: ${zoneCount}건\n봉투캐파시티: ${capCount}건\n묶음수량표: ${bundleCount}건 (표에 없는 품번은 기본 ${BUNDLE_DEFAULT_QTY}개로 처리됩니다)`);
     }
   }catch(err){
     console.warn('참고표 불러오기 실패:', err);
@@ -2648,6 +2728,12 @@ loadAliasMap(DEFAULT_ALIAS_RAW);
     const saved = await idbGet('bagCapacityTable');
     if(saved && Array.isArray(saved) && saved.length) bagCapacityTable = saved;
   }catch(err){ /* 저장된 값 없음 - 기본 내장표 유지 */ }
+})();
+(async function restoreBundleQuantityTable(){
+  try{
+    const saved = await idbGet('bundleQuantityTable');
+    if(saved && Array.isArray(saved)) bundleQuantityTable = saved;
+  }catch(err){ /* 저장된 값 없음 - 빈 표(기본 10개)로 유지 */ }
 })();
 (async function restoreZoneLookupTable(){
   try{
