@@ -311,10 +311,25 @@ function startScanning(){
   });
 }
 
-// 배송 QR 내용을 해석한다. 새 형식(DLV|업체명|배송구역|봉투수)과, 예전에 인쇄해둔
-// JSON 형식({"t":"delivery",...}) 둘 다 인식해서 예전 라벨도 계속 스캔되게 한다.
-function parseDeliveryQr(text){
+// 배송 QR 내용을 해석한다. 짧은코드 형식(Q:AB12CD, 구글시트에서 실제 정보를 찾아옴),
+// 예전 형식(DLV|업체명|배송구역|봉투수), 더 예전 JSON 형식({"t":"delivery",...}) 셋 다 인식해서
+// 예전에 인쇄해둔 라벨도 계속 스캔되게 한다.
+async function parseDeliveryQr(text){
   const raw = String(text || '').trim();
+
+  if(raw.startsWith('Q:')){
+    const code = raw.slice(2).trim();
+    if(!code || !gasUrl) return null;
+    try{
+      const resp = await fetch(gasUrl + '?action=lookupQrMapping&code=' + encodeURIComponent(code));
+      const result = await resp.json();
+      if(result.ok) return { c: result.company || '', z: result.zone || '', n: result.total || '' };
+    }catch(err){
+      console.warn('QR 코드 조회 중 오류:', err);
+    }
+    return null;
+  }
+
   if(raw.startsWith('DLV|')){
     const parts = raw.split('|');
     return { c: parts[1] || '', z: parts[2] || '', n: parts[3] || '' };
@@ -326,12 +341,24 @@ function parseDeliveryQr(text){
   return null;
 }
 
-function onQrDetected(text){
+let qrLookupInProgress = false; // 짧은코드 조회 중에 같은 프레임이 또 스캔되어 중복 처리되는 걸 방지
+
+async function onQrDetected(text){
+  if(qrLookupInProgress) return;
   // 디버그용: 뭐라도 읽혔으면 화면 하단에 잠깐 표시 (QR을 아예 못 읽는 건지, 형식이 다른 건지 구분하기 위함)
   const hintEl = document.getElementById('scanHint');
-  const payload = parseDeliveryQr(text);
+  const raw = String(text || '').trim();
+
+  if(raw.startsWith('Q:')){
+    qrLookupInProgress = true;
+    if(hintEl) hintEl.textContent = '확인 중...';
+  }
+
+  const payload = await parseDeliveryQr(raw);
+  qrLookupInProgress = false;
+
   if(!payload){
-    if(hintEl) hintEl.textContent = '읽음(배송 QR 아님): ' + String(text).slice(0, 60);
+    if(hintEl) hintEl.textContent = '읽음(배송 QR 아님): ' + raw.slice(0, 60);
     return;
   }
 
