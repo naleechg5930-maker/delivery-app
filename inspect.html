@@ -404,6 +404,8 @@
     <input type="file" id="bagCapFileInput" accept=".xlsx,.xls,.csv">
     <label class="file-btn" for="zoneFileInput">🗺️ 배송구역 참고표 업로드</label>
     <input type="file" id="zoneFileInput" accept=".xlsx,.xls,.csv">
+    <label class="file-btn" for="returnFileInput">🔄 반품(창고이동) 처리</label>
+    <input type="file" id="returnFileInput" accept=".xlsx,.xls,.csv">
     <button id="refreshTablesFromSheetBtn">🔄 구글시트에서 참고표 불러오기</button>
     <button id="soundToggle">🔊 소리 켜짐</button>
     <button id="resetBtn">↺ 검수 초기화</button>
@@ -1300,6 +1302,93 @@ function updateGasStatus(){
 
 // 배송구역/봉투캐파시티 참고표를 구글시트에서 가져와서 반영한다.
 // (모든 컴퓨터가 같은 구글시트를 보게 되므로, 한 곳에서 시트만 수정하면 나머지 컴퓨터들도 이 버튼으로 최신화 가능)
+/* ===================== 반품(창고이동) 처리 ===================== */
+document.getElementById('returnFileInput').addEventListener('change', function(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  if(!gasWebhookUrl){
+    alert('먼저 상단에서 구글시트 연동을 설정해주세요.');
+    e.target.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = async function(evt){
+    try{
+      const data = new Uint8Array(evt.target.result);
+      const wb = XLSX.read(data, {type:'array'});
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:''});
+
+      // "품목코드"라는 글자가 들어간 헤더 행을 찾는다
+      let headerRowIdx = -1, codeCol = -1, qtyCol = -1;
+      for(let r=0; r<Math.min(rows.length, 20); r++){
+        const idx = rows[r].findIndex(cell => String(cell).replace(/\s/g,'') === '품목코드');
+        if(idx !== -1){
+          headerRowIdx = r;
+          codeCol = idx;
+          qtyCol = rows[r].findIndex(cell => String(cell).replace(/\s/g,'') === '수량');
+          break;
+        }
+      }
+      if(headerRowIdx === -1 || qtyCol === -1){
+        alert('"품목코드"/"수량" 열을 찾지 못했습니다. 반품(창고이동) 양식 형식이 맞는지 확인해주세요.');
+        return;
+      }
+
+      const items = [];
+      for(let r=headerRowIdx+1; r<rows.length; r++){
+        const code = String(rows[r][codeCol] || '').trim();
+        const qty = Number(rows[r][qtyCol]) || 0;
+        if(!code || qty <= 0) continue;
+        items.push({ code, qty });
+      }
+
+      if(items.length === 0){
+        alert('유효한 반품 항목을 찾지 못했습니다.');
+        return;
+      }
+
+      if(!confirm(`${items.length}개 품목의 반품을 처리하시겠습니까?\n(피킹대상품번에 등록된 품목만 카운터에 반영되고, 나머지는 무시됩니다)`)){
+        return;
+      }
+
+      const allAlerts = [];
+      let appliedCount = 0, ignoredCount = 0;
+
+      for(const item of items){
+        try{
+          const resp = await fetch(gasWebhookUrl, {
+            method:'POST',
+            body: JSON.stringify({ type:'returnToPicking', code: item.code, qty: item.qty }),
+          });
+          const result = await resp.json();
+          if(result.ok && result.ignored){
+            ignoredCount++;
+          } else if(result.ok){
+            appliedCount++;
+            if(result.timesCrossed > 0){
+              allAlerts.push({ code: result.code, name: item.name || '', timesCrossed: result.timesCrossed, newCount: result.newCount, threshold: result.threshold });
+            }
+          }
+        }catch(err){
+          console.warn('반품 처리 중 오류 (' + item.code + '):', err);
+        }
+      }
+
+      alert(`반품 처리 완료!\n반영됨: ${appliedCount}건\n대상 아님(무시됨): ${ignoredCount}건`);
+
+      if(allAlerts.length > 0){
+        showPickingAlerts(allAlerts);
+      }
+    }catch(err){
+      alert('반품 파일을 읽는 중 오류가 발생했습니다: ' + err.message);
+    }finally{
+      e.target.value = '';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+});
+
 async function refreshTablesFromSheet(showAlert){
   if(!gasWebhookUrl){
     if(showAlert) alert('먼저 상단에서 구글시트 연동을 설정해주세요.');
