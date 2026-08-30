@@ -493,7 +493,7 @@
   </div>
 
   <!-- 피킹존 재입고 필요 목록 (전표 조회 시 갱신, 계속 남아있음) -->
-  <div id="pickingReloadPanel" style="display:none; background:#FEF2F2; border:2px solid #DC2626; border-radius:12px; padding:14px 16px;">
+  <div id="pickingReloadPanel" style="display:none; flex-shrink:0; max-height:130px; overflow-y:auto; background:#FEF2F2; border:2px solid #DC2626; border-radius:12px; padding:14px 16px;">
     <h2 style="margin:0 0 8px; color:#DC2626; font-size:15px;">📦 재입고 필요</h2>
     <div id="pickingReloadList" style="display:flex; flex-direction:column; gap:6px;"></div>
   </div>
@@ -1119,17 +1119,25 @@ function processScan(rawCode){
     item.scannedQty += bulkQty;
     okCount += bulkQty;
     let bagsFilled = 0;
-    if(bulkQty > 1 && !bundleApplied){
+    let bundleBreakdown = null;
+    if(bundleApplied){
+      // 묶음처리 스캔: 캐파시티 안에 들어가면 무조건 1봉투, 넘으면 캐파시티 단위로 나눔(그 내역을 화면에 보여줌)
+      const result = addBundleToBags(item, bulkQty);
+      bagsFilled = result.bagsFilled;
+      bundleBreakdown = result.breakdown;
+    } else if(bulkQty > 1){
       // 박스/마대는 이미 포장된 채로 그대로 출고되므로, 봉투 재포장 계산에는 넣지 않고 따로 기록한다
-      // (묶음처리로 적용된 수량은 실제 박스가 아니라 그냥 빠른 입력 방법이라, 정상적인 캐파시티 계산을 그대로 태워야 함)
       boxScanEvents.push({ code: item.code, name: item.name, spec: item.spec, qty: bulkQty });
     } else {
       scanSequence.push({ code: item.code, qty: bulkQty });
       bagsFilled = addToLiveBag(item, bulkQty);
     }
     const done = item.scannedQty >= item.orderQty;
-    showBanner('ok', '정상피킹', displayCode, `${item.name} / ${item.spec}  (${item.scannedQty}/${item.orderQty})`, '✅');
-    addLog(timeStr, displayCode, true, done ? '해당 품번 완료' : `${item.scannedQty}/${item.orderQty}`);
+    const bundleNote = (bundleBreakdown && bundleBreakdown.length > 1)
+      ? ` — 묶음 ${bulkQty}개가 캐파시티를 넘어서 ${bundleBreakdown.join('+')}개로 ${bundleBreakdown.length}봉투에 나뉘어 담겼습니다`
+      : '';
+    showBanner('ok', '정상피킹', displayCode, `${item.name} / ${item.spec}  (${item.scannedQty}/${item.orderQty})${bundleNote}`, '✅');
+    addLog(timeStr, displayCode, true, (done ? '해당 품번 완료' : `${item.scannedQty}/${item.orderQty}`) + bundleNote);
     playOkSound();
     if(bagsFilled > 0) announceBagFilled();
   } else {
@@ -1139,7 +1147,10 @@ function processScan(rawCode){
     errCount += overBy;
     let bagsFilled = 0;
     if(remaining > 0){
-      if(bulkQty > 1 && !bundleApplied){
+      if(bundleApplied){
+        addBundleToBags(item, remaining);
+        bagsFilled = 1;
+      } else if(bulkQty > 1){
         boxScanEvents.push({ code: item.code, name: item.name, spec: item.spec, qty: remaining });
       } else {
         scanSequence.push({ code: item.code, qty: remaining });
@@ -1826,6 +1837,29 @@ function allItemsHaveCapacity(){
     const cap = resolveItemCapacity(it);
     return cap.cap5 > 0 || cap.cap7 > 0 || cap.cap8 > 0;
   });
+}
+
+// 묶음처리로 한 번에 스캔된 수량을 봉투에 담는다.
+// - 캐파시티 안에 들어가면(또는 캐파시티 정보 자체가 없으면) 무조건 통째로 1봉투
+// - 캐파시티를 넘으면, 그 캐파시티 단위로 나눠서 여러 봉투로 (나뉜 개수를 breakdown으로 반환해서 화면에 보여줄 수 있게 함)
+function addBundleToBags(item, qty){
+  const capObj = resolveItemCapacity(item);
+  const cap = capObj.cap8 || capObj.cap7 || capObj.cap5 || 0;
+
+  if(cap <= 0 || qty <= cap){
+    boxScanEvents.push({ code:item.code, name:item.name, spec:item.spec, qty:qty });
+    return { bagsFilled: 1, breakdown: [qty] };
+  }
+
+  const breakdown = [];
+  let remaining = qty;
+  while(remaining > 0){
+    const chunk = Math.min(cap, remaining);
+    breakdown.push(chunk);
+    boxScanEvents.push({ code:item.code, name:item.name, spec:item.spec, qty:chunk });
+    remaining -= chunk;
+  }
+  return { bagsFilled: breakdown.length, breakdown: breakdown };
 }
 
 // 스캔 순서(scanSequence)대로 봉투를 채워나가며, 봉투가 총 몇 개 필요한지 계산한다.
