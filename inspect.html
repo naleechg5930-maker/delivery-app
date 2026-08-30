@@ -1119,8 +1119,9 @@ function processScan(rawCode){
     item.scannedQty += bulkQty;
     okCount += bulkQty;
     let bagsFilled = 0;
-    if(bulkQty > 1){
+    if(bulkQty > 1 && !bundleApplied){
       // 박스/마대는 이미 포장된 채로 그대로 출고되므로, 봉투 재포장 계산에는 넣지 않고 따로 기록한다
+      // (묶음처리로 적용된 수량은 실제 박스가 아니라 그냥 빠른 입력 방법이라, 정상적인 캐파시티 계산을 그대로 태워야 함)
       boxScanEvents.push({ code: item.code, name: item.name, spec: item.spec, qty: bulkQty });
     } else {
       scanSequence.push({ code: item.code, qty: bulkQty });
@@ -1138,7 +1139,7 @@ function processScan(rawCode){
     errCount += overBy;
     let bagsFilled = 0;
     if(remaining > 0){
-      if(bulkQty > 1){
+      if(bulkQty > 1 && !bundleApplied){
         boxScanEvents.push({ code: item.code, name: item.name, spec: item.spec, qty: remaining });
       } else {
         scanSequence.push({ code: item.code, qty: remaining });
