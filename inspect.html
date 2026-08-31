@@ -1159,7 +1159,7 @@ function processScan(rawCode){
 
   if(!item){
     errCount++;
-    errorSkuDetails.push({ code, qty: 1 });
+    errorSkuDetails.push({ code, qty: 1, type: '미등록품번' });
     showBanner('err', '오피킹', displayCode, '주문서에 없는 품번입니다', '❌');
     addLog(timeStr, displayCode, false, '미등록 품번');
     playErrSound();
@@ -1188,7 +1188,7 @@ function processScan(rawCode){
 
   if(remaining <= 0){
     errCount += bulkQty;
-    errorSkuDetails.push({ code: item.code, qty: bulkQty });
+    errorSkuDetails.push({ code: item.code, qty: bulkQty, type: '초과스캔(완료됨)' });
     showBanner('err', '오피킹', displayCode, `${item.name} / ${item.spec} — 주문 수량(${item.orderQty}개)을 초과 스캔했습니다`, '⚠️');
     addLog(timeStr, displayCode, false, `초과 스캔 (${item.scannedQty}/${item.orderQty})`);
     playErrSound();
@@ -1227,7 +1227,7 @@ function processScan(rawCode){
     item.scannedQty = item.orderQty;
     okCount += remaining;
     errCount += overBy;
-    errorSkuDetails.push({ code: item.code, qty: overBy });
+    errorSkuDetails.push({ code: item.code, qty: overBy, type: '초과스캔(부분초과)' });
     let bagsFilled = 0;
     if(remaining > 0){
       if(bundleApplied){
@@ -1278,7 +1278,7 @@ function adjustLastScanned(amount){
 
   if(remaining <= 0){
     errCount += amount;
-    errorSkuDetails.push({ code: item.code, qty: amount });
+    errorSkuDetails.push({ code: item.code, qty: amount, type: '수량버튼(완료됨)' });
     showBanner('err', '오피킹', item.code, `${item.name} / ${item.spec} — 이미 주문 수량(${item.orderQty}개)을 모두 채웠습니다`, '⚠️');
     addLog(timeStr, item.code, false, `수량버튼 +${amount} 시도 → 이미 완료된 품목`);
     playErrSound();
@@ -1297,7 +1297,7 @@ function adjustLastScanned(amount){
     item.scannedQty = item.orderQty;
     okCount += remaining;
     errCount += overBy;
-    errorSkuDetails.push({ code: item.code, qty: overBy });
+    errorSkuDetails.push({ code: item.code, qty: overBy, type: '수량버튼(부분초과)' });
     let bagsFilled = 0;
     if(remaining > 0){
       scanSequence.push({ code: item.code, qty: remaining });
