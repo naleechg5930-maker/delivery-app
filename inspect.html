@@ -1669,7 +1669,10 @@ async function processDocumentLookup(raw){
     okCount = 0; errCount = 0;
     logList.innerHTML = '';
     updateMiniStats();
-    if(data.company) document.getElementById('companyNameInput').value = data.company;
+    if(data.company){
+      const companyDisplay = data.arrivalGuaranteed ? `${data.company} (도착보장)` : data.company;
+      document.getElementById('companyNameInput').value = companyDisplay;
+    }
     // 소매처 참고표(거래처등록 마스터) 매칭을 우선시하고, 못 찾으면 판매현황 시트의 배송구역을 대신 사용
     const zoneFromLookup = guessZoneForCompany(data.company);
     document.getElementById('deliveryZoneInput').value = zoneFromLookup || '';
