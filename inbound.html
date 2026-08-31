@@ -502,7 +502,9 @@ scanInput.addEventListener('keydown', (e)=>{
     if(boxMode){
       // 순수 숫자 몇 자리(박스번호 형식)로 찍히면, 지금 품목 스캔을 기다리던 중이어도
       // 그 박스는 포기하고 곧바로 새 박스번호로 넘어간다 (바코드 손상 등으로 막혔을 때 탈출용)
-      const looksLikeBoxNumber = /^\d{1,4}$/.test(raw);
+      // 스캐너가 가끔 숫자 외에 잡음 문자를 같이 찍는 경우가 있어서, 숫자만 뽑아서 판단한다.
+      const digitsOnly = raw.replace(/\D/g, '');
+      const looksLikeBoxNumber = digitsOnly.length >= 1 && digitsOnly.length <= 4 && raw.length <= 8;
       if(awaitingItemScanFor && looksLikeBoxNumber){
         awaitingItemScanFor = null;
         currentBoxNumber = null;
