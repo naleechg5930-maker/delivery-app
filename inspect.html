@@ -1112,6 +1112,14 @@ scanInput.addEventListener('keydown', (e)=>{
         addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), 'WK:'+workerCode, true, `작업 시작 (${workerName})`);
         playOkSound();
         speakKorean(`${workerName}님 작업 시작`);
+        // 서버에도 즉시 "시작" 기록을 남긴다 (이 화면이 나중에 다른 전표로 덮어써져도,
+        // 완료 시점에 전표번호로 이 시작기록을 찾아서 정확한 소요시간을 계산할 수 있게 하기 위함)
+        if(gasWebhookUrl && currentDocumentKey){
+          fetch(gasWebhookUrl, {
+            method:'POST',
+            body: JSON.stringify({ type:'startWork', documentKey: currentDocumentKey, worker: workerName }),
+          }).catch(err => console.warn('작업 시작 기록 전송 실패:', err));
+        }
       } else {
         showBanner('err', '알 수 없는 작업자 QR', raw, 'WORKER_CODE_MAP에 등록되지 않은 코드입니다', '❌');
         playErrSound();
