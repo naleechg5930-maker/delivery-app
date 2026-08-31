@@ -1155,8 +1155,10 @@ function processScan(rawCode){
   let bulkQty = 1;
   const directTry = resolveScannedCode(scannedRaw);
 
-  if(!codeIndex[directTry.resolved] && scannedRaw.length > PRODUCT_CODE_LEN){
-    // 전체로는 못 찾았고 11자리보다 길면, 박스/마대 바코드(품번 11자리 + 수량)일 수 있으니 다시 시도
+  if(!bundleModeActive && !codeIndex[directTry.resolved] && scannedRaw.length > PRODUCT_CODE_LEN){
+    // 묶음처리 모드가 꺼져있을 때만 박스/마대(품번 11자리 + 수량) 자동 해석을 시도한다.
+    // (묶음처리 모드가 켜져있으면, 사용자가 명시적으로 "이건 묶음이다"라고 지정한 것이므로
+    // 박스/마대로 잘못 오인해서 캐파시티 계산을 건너뛰는 일이 없도록 이 자동 해석을 건너뛴다)
     const possibleCode = scannedRaw.slice(0, PRODUCT_CODE_LEN);
     const qtyPart = scannedRaw.slice(PRODUCT_CODE_LEN).replace(/\D/g, '');
     const parsedQty = parseInt(qtyPart, 10);
