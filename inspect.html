@@ -758,7 +758,7 @@ let soundOn = true;
 let audioCtx = null;
 
 function loadItems(rawList){
-  items = rawList.map(it => ({
+  const parsed = rawList.map(it => ({
     code: String(it.code).trim(),
     name: it.name || '',
     spec: it.spec || '',
@@ -768,6 +768,29 @@ function loadItems(rawList){
     cap7: Number(it.cap7) || 0,
     cap8: Number(it.cap8) || 0
   })).filter(it => it.code && it.orderQty > 0);
+
+  // 같은 품번이 여러 줄(예: 수량 10개 + 수량 2개)로 따로 들어오는 경우가 있어서,
+  // 그대로 두면 codeIndex가 마지막 줄만 가리키게 되어 앞 줄이 영영 안 찍히는 문제가 생긴다.
+  // 그래서 같은 품번은 여기서 미리 하나로 합쳐서(수량을 더해서) 관리한다.
+  const merged = {};
+  const order = [];
+  parsed.forEach(it => {
+    const key = it.code.toUpperCase();
+    if(merged[key]){
+      merged[key].orderQty += it.orderQty;
+      // 이름/규격은 보통 같겠지만, 혹시 비어있던 쪽이 있으면 채워준다
+      if(!merged[key].name && it.name) merged[key].name = it.name;
+      if(!merged[key].spec && it.spec) merged[key].spec = it.spec;
+      merged[key].cap5 = merged[key].cap5 || it.cap5;
+      merged[key].cap7 = merged[key].cap7 || it.cap7;
+      merged[key].cap8 = merged[key].cap8 || it.cap8;
+    } else {
+      merged[key] = it;
+      order.push(key);
+    }
+  });
+  items = order.map(key => merged[key]);
+
   codeIndex = {};
   items.forEach(it => codeIndex[it.code.toUpperCase()] = it);
   lastScannedItem = null;
@@ -1024,15 +1047,52 @@ scanInput.addEventListener('blur', ()=> setTimeout(focusInput, 150));
 document.addEventListener('click', focusInput);
 focusInput();
 
+// 한/영키가 한글 상태로 되어있을 때 스캔되면, 바코드 내용이 한글로 잘못 찍혀 들어온다.
+// 두벌식 자판은 영문 키와 1:1로 대응되므로, 한글 조합을 분해해서 원래 눌렀을 영문 키로 되돌린다.
+const HANGUL_CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+const HANGUL_JUNG = ['ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ','ㅚ','ㅛ','ㅜ','ㅝ','ㅞ','ㅟ','ㅠ','ㅡ','ㅢ','ㅣ'];
+const HANGUL_JONG = ['', 'ㄱ','ㄲ','ㄳ','ㄴ','ㄵ','ㄶ','ㄷ','ㄹ','ㄺ','ㄻ','ㄼ','ㄽ','ㄾ','ㄿ','ㅀ','ㅁ','ㅂ','ㅄ','ㅅ','ㅆ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+const HANGUL_KEY_MAP = {
+  'ㄱ':'r','ㄲ':'R','ㄴ':'s','ㄷ':'e','ㄸ':'E','ㄹ':'f','ㅁ':'a','ㅂ':'q','ㅃ':'Q','ㅅ':'t','ㅆ':'T','ㅇ':'d','ㅈ':'w','ㅉ':'W','ㅊ':'c','ㅋ':'z','ㅌ':'x','ㅍ':'v','ㅎ':'g',
+  'ㅏ':'k','ㅐ':'o','ㅑ':'i','ㅒ':'O','ㅓ':'j','ㅔ':'p','ㅕ':'u','ㅖ':'P','ㅗ':'h','ㅘ':'hk','ㅙ':'ho','ㅚ':'hl','ㅛ':'y','ㅜ':'n','ㅝ':'nj','ㅞ':'np','ㅟ':'nl','ㅠ':'b','ㅡ':'m','ㅢ':'ml','ㅣ':'l',
+  'ㄳ':'rt','ㄵ':'sw','ㄶ':'sg','ㄺ':'rf','ㄻ':'fa','ㄼ':'fq','ㄽ':'ft','ㄾ':'fx','ㄿ':'fv','ㅀ':'fg','ㅄ':'qt',
+};
+function hangulToEnglish(str){
+  let result = '';
+  for(const ch of str){
+    const code = ch.codePointAt(0);
+    if(code >= 0xAC00 && code <= 0xD7A3){
+      const offset = code - 0xAC00;
+      const choIdx = Math.floor(offset / (21*28));
+      const jungIdx = Math.floor((offset % (21*28)) / 28);
+      const jongIdx = offset % 28;
+      result += HANGUL_KEY_MAP[HANGUL_CHO[choIdx]] || '';
+      result += HANGUL_KEY_MAP[HANGUL_JUNG[jungIdx]] || '';
+      if(jongIdx > 0) result += HANGUL_KEY_MAP[HANGUL_JONG[jongIdx]] || '';
+    } else if(HANGUL_KEY_MAP[ch]){
+      result += HANGUL_KEY_MAP[ch]; // 조합 안 된 낱자(자음/모음 하나)도 변환
+    } else {
+      result += ch; // 이미 영문/숫자/기호면 그대로 둠
+    }
+  }
+  return result;
+}
+// 문자열에 한글(완성형 또는 낱자)이 하나라도 섞여있는지 확인
+function containsHangul(str){
+  return /[\u3131-\u318E\uAC00-\uD7A3]/.test(str);
+}
+
 // 마우스 없이 바코드/QR로 방금 스캔한 상품에 수량을 추가할 수 있는 액션 코드
 const QTY_ACTION_CODES = { 'PLUS4': 4, 'PLUS5': 5, 'PLUS9': 9, 'PLUS10': 10 };
 
 scanInput.addEventListener('keydown', (e)=>{
   if(e.key === 'Enter'){
     e.preventDefault();
-    const raw = scanInput.value.trim();
+    let raw = scanInput.value.trim();
     scanInput.value = '';
     if(!raw) return;
+    // 한/영키가 한글로 되어있어서 엉뚱하게 한글로 찍혔으면, 영문으로 자동 변환해서 처리한다
+    if(containsHangul(raw)) raw = hangulToEnglish(raw);
     const actionAmt = QTY_ACTION_CODES[raw.toUpperCase()];
     if(actionAmt){
       adjustLastScanned(actionAmt);
