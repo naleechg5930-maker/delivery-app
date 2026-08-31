@@ -1098,11 +1098,12 @@ scanInput.addEventListener('keydown', (e)=>{
     scanInput.value = '';
     if(!raw) return;
 
-    // 작업자 QR("WK:이름")은 의도적으로 한글이 들어있으므로, 한글→영문 변환보다 먼저 확인한다
     // 작업자 QR("WK:숫자")은 스캐너가 한글을 직접 보내면 깨지는 문제가 있어서, 숫자 코드로만 받고
     // 실제 이름은 여기(WORKER_CODE_MAP)에서 찾아온다.
-    if(raw.startsWith('WK:')){
-      const workerCode = raw.slice(3).trim();
+    // 콜론(:) 자리에 스캐너가 다른 비슷한 문자를 보내는 경우가 있어서, 정규식으로 느슨하게 확인한다.
+    const workerMatch = raw.match(/^WK[^0-9]*(\d+)$/i);
+    if(workerMatch){
+      const workerCode = workerMatch[1];
       const workerName = WORKER_CODE_MAP[workerCode];
       if(workerName){
         currentWorker = workerName;
