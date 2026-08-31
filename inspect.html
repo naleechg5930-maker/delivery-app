@@ -753,6 +753,8 @@ let inspectionStartTime = null; // 검수 시작 시각 (주문서를 불러온 
 let currentOrderTag = ''; // '' (단가 있음, 표시 없음) | 'S/P' (단가 없음, 샘플 표시)
 let currentDocumentKey = ''; // 전표번호 (QR 조회로 불러온 경우만 값이 있음, 그 외엔 빈 값)
 let currentWorker = ''; // 작업자 QR을 찍으면 채워짐 (전표 찍고 그다음에 찍는 방식)
+// 작업자 QR 코드(숫자) -> 실제 이름. QR엔 한글 대신 이 숫자만 들어있어서 스캐너가 깨질 일이 없다.
+const WORKER_CODE_MAP = { '1': '최희강', '2': '이시안', '3': '김태형', '4': '오영삼' };
 let errLogEntries = [];         // 오피킹 상세 로그 (구글시트에 함께 기록)
 let errorSkuDetails = [];       // 오출고(오피킹) 발생한 품번별 수량 (SKU-유형별 집계용, {code, qty} 배열)
 
@@ -1097,15 +1099,21 @@ scanInput.addEventListener('keydown', (e)=>{
     if(!raw) return;
 
     // 작업자 QR("WK:이름")은 의도적으로 한글이 들어있으므로, 한글→영문 변환보다 먼저 확인한다
+    // 작업자 QR("WK:숫자")은 스캐너가 한글을 직접 보내면 깨지는 문제가 있어서, 숫자 코드로만 받고
+    // 실제 이름은 여기(WORKER_CODE_MAP)에서 찾아온다.
     if(raw.startsWith('WK:')){
-      const workerName = raw.slice(3).trim();
+      const workerCode = raw.slice(3).trim();
+      const workerName = WORKER_CODE_MAP[workerCode];
       if(workerName){
         currentWorker = workerName;
         inspectionStartTime = new Date(); // 작업자 QR 찍은 시점부터 작업시간 측정 시작
         showBanner('ok', '작업자 확인', workerName, '지금부터 작업시간이 측정됩니다', '👤');
-        addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), 'WK:'+workerName, true, '작업 시작');
+        addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), 'WK:'+workerCode, true, `작업 시작 (${workerName})`);
         playOkSound();
         speakKorean(`${workerName}님 작업 시작`);
+      } else {
+        showBanner('err', '알 수 없는 작업자 QR', raw, 'WORKER_CODE_MAP에 등록되지 않은 코드입니다', '❌');
+        playErrSound();
       }
       focusInput();
       return;
