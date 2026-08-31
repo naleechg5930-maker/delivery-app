@@ -500,7 +500,15 @@ scanInput.addEventListener('keydown', (e)=>{
     scanInput.value = '';
     if(!raw) return;
     if(boxMode){
-      if(awaitingItemScanFor){
+      // 순수 숫자 몇 자리(박스번호 형식)로 찍히면, 지금 품목 스캔을 기다리던 중이어도
+      // 그 박스는 포기하고 곧바로 새 박스번호로 넘어간다 (바코드 손상 등으로 막혔을 때 탈출용)
+      const looksLikeBoxNumber = /^\d{1,4}$/.test(raw);
+      if(awaitingItemScanFor && looksLikeBoxNumber){
+        awaitingItemScanFor = null;
+        currentBoxNumber = null;
+        lockedFactory = null;
+        handleBoxNumberScan(raw);
+      } else if(awaitingItemScanFor){
         handleItemScanForBox(raw);
       } else {
         handleBoxNumberScan(raw);
