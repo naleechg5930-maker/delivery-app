@@ -581,12 +581,28 @@
   <div class="paste-card" style="max-width:420px;">
     <h2 style="margin-top:0;">🔄 라벨 재출력</h2>
     <p style="font-size:13px; color:var(--sub); margin-top:-8px;">이미 검수완료된 전표의 라벨만 다시 뽑습니다. 피킹존 재고나 작업시간 기록은 전혀 건드리지 않습니다.</p>
+
+    <div style="display:flex; gap:8px; margin-bottom:14px;">
+      <button id="reprintTabDocKey" class="picking-menu-tab active" style="flex:1;">전표번호로 찾기</button>
+      <button id="reprintTabCompany" class="picking-menu-tab" style="flex:1;">거래처명으로 찾기</button>
+    </div>
+
     <label style="font-size:13px; color:var(--sub);">검수완료된 날짜</label>
     <input type="text" id="reprintDateInput" placeholder="예: 2026-08-30" style="width:100%; padding:10px; margin:6px 0 12px; border-radius:8px; border:1px solid var(--line);">
-    <label style="font-size:13px; color:var(--sub);">전표번호</label>
-    <input type="text" id="reprintDocKeyInput" placeholder="예: 2026/08/30-28" style="width:100%; padding:10px; margin:6px 0 16px; border-radius:8px; border:1px solid var(--line);">
-    <button id="reprintSearchBtn" style="width:100%; background:var(--accent); color:var(--accent-ink); font-weight:800; padding:12px;">조회 후 인쇄</button>
-    <div id="reprintResult" style="margin-top:14px; font-size:14px;"></div>
+
+    <div id="reprintPaneDocKey">
+      <label style="font-size:13px; color:var(--sub);">전표번호</label>
+      <input type="text" id="reprintDocKeyInput" placeholder="예: 2026/08/30-28" style="width:100%; padding:10px; margin:6px 0 16px; border-radius:8px; border:1px solid var(--line);">
+      <button id="reprintSearchBtn" style="width:100%; background:var(--accent); color:var(--accent-ink); font-weight:800; padding:12px;">조회 후 인쇄</button>
+    </div>
+
+    <div id="reprintPaneCompany" style="display:none;">
+      <label style="font-size:13px; color:var(--sub);">거래처명</label>
+      <input type="text" id="reprintCompanyInput" placeholder="예: 유라타임" style="width:100%; padding:10px; margin:6px 0 16px; border-radius:8px; border:1px solid var(--line);">
+      <button id="reprintCompanySearchBtn" style="width:100%; background:var(--accent); color:var(--accent-ink); font-weight:800; padding:12px;">검색하기</button>
+    </div>
+
+    <div id="reprintResult" style="margin-top:14px; font-size:14px; display:flex; flex-direction:column; gap:8px;"></div>
     <button id="closeLabelReprint" style="width:100%; margin-top:14px;">닫기</button>
   </div>
 </div>
@@ -2619,13 +2635,24 @@ document.getElementById('labelReprintBtn').addEventListener('click', ()=>{
   const todayStr = new Date().toLocaleDateString('sv-SE'); // yyyy-MM-dd 형식
   document.getElementById('reprintDateInput').value = todayStr;
   document.getElementById('reprintDocKeyInput').value = '';
-  document.getElementById('reprintResult').textContent = '';
+  document.getElementById('reprintCompanyInput').value = '';
+  document.getElementById('reprintResult').innerHTML = '';
   document.getElementById('labelReprintOverlay').classList.add('show');
 });
 document.getElementById('closeLabelReprint').addEventListener('click', ()=>{
   document.getElementById('labelReprintOverlay').classList.remove('show');
   focusInput();
 });
+
+function switchReprintTab(tab){
+  document.getElementById('reprintPaneDocKey').style.display = (tab==='DocKey') ? 'block' : 'none';
+  document.getElementById('reprintPaneCompany').style.display = (tab==='Company') ? 'block' : 'none';
+  document.getElementById('reprintTabDocKey').classList.toggle('active', tab==='DocKey');
+  document.getElementById('reprintTabCompany').classList.toggle('active', tab==='Company');
+  document.getElementById('reprintResult').innerHTML = '';
+}
+document.getElementById('reprintTabDocKey').addEventListener('click', ()=> switchReprintTab('DocKey'));
+document.getElementById('reprintTabCompany').addEventListener('click', ()=> switchReprintTab('Company'));
 
 document.getElementById('reprintSearchBtn').addEventListener('click', async ()=>{
   const dateStr = document.getElementById('reprintDateInput').value.trim();
@@ -2644,6 +2671,52 @@ document.getElementById('reprintSearchBtn').addEventListener('click', async ()=>
     }
     resultEl.innerHTML = `찾음: <b>${escapeHtml(result.company)}</b> · 봉투 ${result.bagCount}개<br>인쇄를 시작합니다...`;
     printReprintLabels(result.company, '', result.bagCount, result.spTag || '정식');
+  }catch(err){
+    resultEl.textContent = '네트워크 오류: ' + err.message;
+  }
+});
+
+document.getElementById('reprintCompanySearchBtn').addEventListener('click', async ()=>{
+  const dateStr = document.getElementById('reprintDateInput').value.trim();
+  const company = document.getElementById('reprintCompanyInput').value.trim();
+  const resultEl = document.getElementById('reprintResult');
+  if(!dateStr || !company){ resultEl.textContent = '날짜와 거래처명을 모두 입력해주세요.'; return; }
+  if(!gasWebhookUrl){ resultEl.textContent = '구글시트 연동이 설정되어 있지 않습니다.'; return; }
+
+  resultEl.textContent = '검색 중...';
+  try{
+    const resp = await fetch(gasWebhookUrl + '?action=searchLabelReprintByCompany&date=' + encodeURIComponent(dateStr) + '&company=' + encodeURIComponent(company));
+    const result = await resp.json();
+    if(!result.ok){
+      resultEl.textContent = '오류: ' + (result.error || '알 수 없는 오류');
+      return;
+    }
+    if(result.results.length === 0){
+      resultEl.textContent = '해당 날짜에 그 거래처명으로 된 기록을 찾지 못했습니다.';
+      return;
+    }
+    if(result.results.length === 1){
+      const item = result.results[0];
+      resultEl.innerHTML = `찾음: <b>${escapeHtml(item.company)}</b> · 봉투 ${item.bagCount}개<br>인쇄를 시작합니다...`;
+      printReprintLabels(item.company, '', item.bagCount, item.spTag || '정식');
+      return;
+    }
+    // 같은 거래처명으로 여러 건 있으면, 어느 걸 뽑을지 목록에서 직접 고르게 한다
+    resultEl.innerHTML = '';
+    const label = document.createElement('div');
+    label.textContent = `${result.results.length}건이 검색되었습니다. 인쇄할 것을 선택해주세요:`;
+    resultEl.appendChild(label);
+    result.results.forEach(item => {
+      const spLabel = item.spTag === 'SP' ? '📦 샘플' : '✅ 정식주문';
+      const btn = document.createElement('button');
+      btn.style.cssText = 'text-align:left; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); cursor:pointer;';
+      btn.innerHTML = `${spLabel} · 전표: ${escapeHtml(item.documentKey)} · 봉투 ${item.bagCount}개`;
+      btn.addEventListener('click', ()=>{
+        resultEl.innerHTML = `찾음: <b>${escapeHtml(item.company)}</b> · 봉투 ${item.bagCount}개<br>인쇄를 시작합니다...`;
+        printReprintLabels(item.company, '', item.bagCount, item.spTag || '정식');
+      });
+      resultEl.appendChild(btn);
+    });
   }catch(err){
     resultEl.textContent = '네트워크 오류: ' + err.message;
   }
