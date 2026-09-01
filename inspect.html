@@ -1846,6 +1846,7 @@ async function autoCaptureAndSave(companyName, stamp, meta){
           time: (meta && meta.displayTime) || new Date().toLocaleString('ko-KR'),
           elapsedMs: (meta && meta.elapsedMs) || 0,
           worker: (meta && meta.worker) || '',
+          spTag: currentOrderTag === 'S/P' ? 'SP' : '정식',
           errorSkuDetails: (meta && meta.errorSkuDetails) || [],
           itemCount: (meta && meta.itemCount) || '',
           totalQty: (meta && meta.totalQty) || '',
@@ -2176,35 +2177,12 @@ function getLabelOffsets(){
 }
 
 // 배송 QR에 담을 내용을 최대한 짧게 만든다 (JSON보다 훨씬 짧아서, 같은 물리크기에도 QR 모듈이 커지고
-// 인식/손상내성이 좋아짐). 형식: DLV|업체명|배송구역|총봉투수
-function generateShortQrCode(){
-  // 헷갈리는 문자(0/O, 1/I) 는 빼고 6자리로 생성
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for(let i=0;i<6;i++) code += chars[Math.floor(Math.random()*chars.length)];
-  return code;
-}
-
-async function saveQrMapping(code, company, zone, total){
-  if(!gasWebhookUrl) return;
-  try{
-    await fetch(gasWebhookUrl, {
-      method:'POST',
-      body: JSON.stringify({ type:'saveQrMapping', code, company, zone, total }),
-    });
-  }catch(err){
-    console.warn('QR 코드 매핑 저장 중 오류(무시하고 계속 진행):', err);
-  }
-}
-
-// QR 안에는 짧은 코드만 담아서(예: "Q:A3F9K1"), 배송앱이 스캔할 때 구글시트에서 실제 정보를
-// 찾아오는 방식이다. QR에 담는 글자수가 짧을수록 QR 자체가 더 단순해져서 인쇄/스캔 시
-// 약간의 손상에도 강해진다. 코드 저장은 인쇄를 기다리게 하지 않고 백그라운드로 보낸다.
+// 인식/손상내성이 좋아짐). 형식: DLV|업체명|배송구역|총봉투수|SP여부
+// (구글시트 조회 방식은 실제로 써보니 지연이 있어서, 조회 없이 QR 안에 정보를 직접 담는 방식으로 되돌림)
 function buildDeliveryQrPayload(company, zone, total){
   const safe = s => String(s || '').replace(/\|/g, ' ').trim();
-  const code = generateShortQrCode();
-  saveQrMapping(code, safe(company) || '업체명 미입력', safe(zone), total || 1);
-  return `Q:${code}`;
+  const spTag = currentOrderTag === 'S/P' ? 'SP' : '정식';
+  return `DLV|${safe(company) || '업체명 미입력'}|${safe(zone)}|${total || 1}|${spTag}`;
 }
 
 // 봉투가 딱 1개뿐이면 "1-1" 같은 번호를 굳이 안 보여주고 빈 칸으로 둔다
