@@ -137,6 +137,7 @@
     <video id="scanVideo" playsinline muted style="display:none;"></video>
     <div class="scan-frame" id="scanFrame" style="display:none;"></div>
     <div class="scan-hint" id="scanHint" style="display:none;">QR코드를 사각형 안에 맞춰주세요</div>
+    <button class="big ghost" id="manualEntryBtn" style="max-width:260px;">⌨️ QR 인식 안 될 때 (수동입력)</button>
 
     <div id="batchPanel" style="display:none; position:absolute; left:0; right:0; bottom:0; background:rgba(11,18,32,0.92); padding:14px 16px 18px; border-radius:16px 16px 0 0;">
       <div style="color:#fff; font-weight:800; font-size:14px; margin-bottom:8px;">🏢 스캔된 업체 (<span id="batchCount">0</span>곳)</div>
@@ -145,10 +146,20 @@
     </div>
   </div>
 
+  <!-- 1-b. 수동입력 화면 -->
+  <div class="screen" id="manualScreen">
+    <div style="font-size:15px; font-weight:700; margin-bottom:10px;">업체명을 입력해주세요</div>
+    <input type="text" id="manualCompanyInput" placeholder="예: 유라타임" style="width:100%; max-width:280px; padding:14px; font-size:16px; border-radius:10px; border:1px solid #ccc; margin-bottom:12px;">
+    <button class="big primary" id="manualSearchBtn" style="max-width:260px;">검색하기</button>
+    <button class="big ghost" id="manualBackBtn" style="max-width:260px;">뒤로</button>
+    <div id="manualResultList" style="width:100%; max-width:320px; margin-top:16px;"></div>
+  </div>
+
   <!-- 2. 확인 화면 -->
   <div class="screen" id="confirmScreen">
     <div class="confirm-card">
       <div class="company" id="confirmCompany">-</div>
+      <div class="bags" id="confirmSpTag" style="font-weight:800;">-</div>
       <div class="bags" id="confirmZoneWrap" style="display:none;">배송구역: <b id="confirmZone">-</b></div>
       <div class="bags">총 <b id="confirmBags">-</b> 봉투/박스</div>
     </div>
@@ -193,6 +204,8 @@ let gasUrl = localStorage.getItem('deliveryGasUrl') || '';
 let currentCompany = '';
 let currentBags = '';
 let currentZone = '';
+let currentSpTag = '정식';
+let manualDocumentKey = ''; // 수동입력으로 고른 경우, 정확한 매칭을 위한 전표번호
 let qrScanner = null;
 let captureStream = null;
 let capturedDataUrl = '';
@@ -314,48 +327,26 @@ function startScanning(){
 // 배송 QR 내용을 해석한다. 짧은코드 형식(Q:AB12CD, 구글시트에서 실제 정보를 찾아옴),
 // 예전 형식(DLV|업체명|배송구역|봉투수), 더 예전 JSON 형식({"t":"delivery",...}) 셋 다 인식해서
 // 예전에 인쇄해둔 라벨도 계속 스캔되게 한다.
-async function parseDeliveryQr(text){
+function parseDeliveryQr(text){
   const raw = String(text || '').trim();
-
-  if(raw.startsWith('Q:')){
-    const code = raw.slice(2).trim();
-    if(!code || !gasUrl) return null;
-    try{
-      const resp = await fetch(gasUrl + '?action=lookupQrMapping&code=' + encodeURIComponent(code));
-      const result = await resp.json();
-      if(result.ok) return { c: result.company || '', z: result.zone || '', n: result.total || '' };
-    }catch(err){
-      console.warn('QR 코드 조회 중 오류:', err);
-    }
-    return null;
-  }
 
   if(raw.startsWith('DLV|')){
     const parts = raw.split('|');
-    return { c: parts[1] || '', z: parts[2] || '', n: parts[3] || '' };
+    return { c: parts[1] || '', z: parts[2] || '', n: parts[3] || '', sp: parts[4] || '정식' };
   }
   try{
     const obj = JSON.parse(raw);
-    if(obj && obj.t === 'delivery') return { c: obj.c || '', z: obj.z || '', n: obj.n || '' };
+    if(obj && obj.t === 'delivery') return { c: obj.c || '', z: obj.z || '', n: obj.n || '', sp: '정식' };
   }catch(err){ /* JSON도 아니면 배송 QR이 아닌 것 */ }
   return null;
 }
 
-let qrLookupInProgress = false; // 짧은코드 조회 중에 같은 프레임이 또 스캔되어 중복 처리되는 걸 방지
-
-async function onQrDetected(text){
-  if(qrLookupInProgress) return;
+function onQrDetected(text){
   // 디버그용: 뭐라도 읽혔으면 화면 하단에 잠깐 표시 (QR을 아예 못 읽는 건지, 형식이 다른 건지 구분하기 위함)
   const hintEl = document.getElementById('scanHint');
   const raw = String(text || '').trim();
 
-  if(raw.startsWith('Q:')){
-    qrLookupInProgress = true;
-    if(hintEl) hintEl.textContent = '확인 중...';
-  }
-
-  const payload = await parseDeliveryQr(raw);
-  qrLookupInProgress = false;
+  const payload = parseDeliveryQr(raw);
 
   if(!payload){
     if(hintEl) hintEl.textContent = '읽음(배송 QR 아님): ' + raw.slice(0, 60);
@@ -370,7 +361,7 @@ async function onQrDetected(text){
       if(hintEl) hintEl.textContent = `이미 추가됨: ${company}`;
       return;
     }
-    batchList.push({ company, zone: payload.z || '', bagCount: payload.n || '' });
+    batchList.push({ company, zone: payload.z || '', bagCount: payload.n || '', spTag: payload.sp || '정식' });
     renderBatchList();
     if(hintEl) hintEl.textContent = `✅ 추가됨: ${company} (계속 스캔하거나 아래 버튼으로 마무리)`;
     return;
@@ -386,8 +377,14 @@ async function onQrDetected(text){
   currentCompany = payload.c || '업체명 미확인';
   currentBags = payload.n || '';
   currentZone = payload.z || '';
+  currentSpTag = payload.sp || '정식';
   document.getElementById('confirmCompany').textContent = currentCompany;
   document.getElementById('confirmBags').textContent = currentBags;
+  const spEl = document.getElementById('confirmSpTag');
+  if(spEl){
+    spEl.textContent = currentSpTag === 'SP' ? '📦 샘플' : '✅ 정식주문';
+    spEl.style.color = currentSpTag === 'SP' ? '#DC2626' : '#16A34A';
+  }
   const zoneWrap = document.getElementById('confirmZoneWrap');
   if(currentZone){
     document.getElementById('confirmZone').textContent = currentZone;
@@ -404,6 +401,82 @@ document.getElementById('rescanBtn').addEventListener('click', ()=>{
   document.getElementById('scanVideo').style.display = 'none';
   document.getElementById('scanFrame').style.display = 'none';
   document.getElementById('scanHint').style.display = 'none';
+});
+
+/* ---------- 수동입력 (QR 인식 안 될 때) ---------- */
+document.getElementById('manualEntryBtn').addEventListener('click', ()=>{
+  if(qrScanner){ qrScanner.stop(); qrScanner.destroy(); qrScanner = null; }
+  const scanVideoEl = document.getElementById('scanVideo');
+  if(scanVideoEl && scanVideoEl.srcObject){
+    scanVideoEl.srcObject.getTracks().forEach(t=>t.stop());
+    scanVideoEl.srcObject = null;
+  }
+  document.getElementById('manualCompanyInput').value = '';
+  document.getElementById('manualResultList').innerHTML = '';
+  showScreen('manualScreen');
+  setTimeout(()=> document.getElementById('manualCompanyInput').focus(), 100);
+});
+
+document.getElementById('manualBackBtn').addEventListener('click', ()=>{
+  showScreen('scanScreen');
+  document.getElementById('startCamWrap').style.display = 'flex';
+  document.getElementById('scanVideo').style.display = 'none';
+  document.getElementById('scanFrame').style.display = 'none';
+  document.getElementById('scanHint').style.display = 'none';
+});
+
+function renderManualResults(results){
+  const listEl = document.getElementById('manualResultList');
+  if(results.length === 0){
+    listEl.innerHTML = '<div style="color:#888; text-align:center; margin-top:10px;">오늘 아직 배송완료 안 된 건이 없습니다.</div>';
+    return;
+  }
+  listEl.innerHTML = '';
+  results.forEach(item => {
+    const spLabel = item.spTag === 'SP' ? '📦 샘플' : '✅ 정식주문';
+    const spColor = item.spTag === 'SP' ? '#DC2626' : '#16A34A';
+    const btn = document.createElement('button');
+    btn.className = 'big ghost';
+    btn.style.cssText = 'max-width:none; width:100%; text-align:left; margin-bottom:8px;';
+    btn.innerHTML = `<span style="color:${spColor}; font-weight:800;">${spLabel}</span><br><span style="font-size:13px;">전표: ${item.documentKey || '-'} · 봉투 ${item.bagCount || '-'}개</span>`;
+    btn.addEventListener('click', ()=>{
+      const company = document.getElementById('manualCompanyInput').value.trim();
+      currentCompany = company;
+      currentBags = item.bagCount || '';
+      currentZone = '';
+      currentSpTag = item.spTag || '정식';
+      manualDocumentKey = item.documentKey || '';
+      document.getElementById('confirmCompany').textContent = currentCompany;
+      document.getElementById('confirmBags').textContent = currentBags;
+      const spEl = document.getElementById('confirmSpTag');
+      if(spEl){
+        spEl.textContent = currentSpTag === 'SP' ? '📦 샘플' : '✅ 정식주문';
+        spEl.style.color = currentSpTag === 'SP' ? '#DC2626' : '#16A34A';
+      }
+      document.getElementById('confirmZoneWrap').style.display = 'none';
+      showScreen('confirmScreen');
+    });
+    listEl.appendChild(btn);
+  });
+}
+
+document.getElementById('manualSearchBtn').addEventListener('click', async ()=>{
+  const company = document.getElementById('manualCompanyInput').value.trim();
+  const listEl = document.getElementById('manualResultList');
+  if(!company){ alert('업체명을 입력해주세요.'); return; }
+  if(!gasUrl){ alert('먼저 오른쪽 위 ⚙️ 에서 구글시트 연동 주소를 설정해주세요.'); return; }
+  listEl.innerHTML = '<div style="text-align:center; margin-top:10px;">검색 중...</div>';
+  try{
+    const resp = await fetch(gasUrl + '?action=searchCompanyOrders&company=' + encodeURIComponent(company));
+    const result = await resp.json();
+    if(!result.ok){
+      listEl.innerHTML = '<div style="color:#DC2626; text-align:center; margin-top:10px;">오류: ' + (result.error || '알 수 없는 오류') + '</div>';
+      return;
+    }
+    renderManualResults(result.results || []);
+  }catch(err){
+    listEl.innerHTML = '<div style="color:#DC2626; text-align:center; margin-top:10px;">네트워크 오류: ' + err.message + '</div>';
+  }
 });
 
 /* ---------- 2 -> 3. 촬영 (핸드폰 기본 카메라 앱 사용) ---------- */
@@ -476,11 +549,15 @@ document.getElementById('sendBtn').addEventListener('click', ()=>{
   }
   const isBatch = pendingMode === 'batch';
   const isMilestone = !isBatch && pendingMode !== 'delivery';
+  const isManual = !isBatch && !isMilestone && !!manualDocumentKey;
   const payload = isBatch
     ? { type:'batchDelivery', companies: batchList, image: capturedDataUrl }
     : isMilestone
     ? { type:'milestone', milestoneType: pendingMode, image: capturedDataUrl }
-    : { type:'delivery', company: currentCompany, zone: currentZone, bagCount: currentBags, image: capturedDataUrl };
+    : isManual
+    ? { type:'manualDeliveryComplete', company: currentCompany, documentKey: manualDocumentKey, bagCount: currentBags, image: capturedDataUrl }
+    : { type:'delivery', company: currentCompany, zone: currentZone, bagCount: currentBags, spTag: currentSpTag, image: capturedDataUrl };
+  manualDocumentKey = ''; // 한 번 쓰고 나면 다음 스캔에 영향 안 주도록 비움
 
   // 서버(드라이브 업로드+시트 기록) 처리를 기다리지 않고, 화면은 바로 완료로 넘어간다.
   // (기다리는 시간을 최대한 줄이기 위함 - 실제 업로드는 백그라운드에서 계속 진행됨)
