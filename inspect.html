@@ -414,6 +414,7 @@
     </label>
     <button id="printQueueBtn">🖨️ 인쇄 대기열</button>
     <button id="pickingMenuBtn">🔧 재고 수정 메뉴</button>
+    <button id="labelReprintBtn">🔄 라벨 재출력</button>
   </div>
 </div>
 
@@ -573,6 +574,21 @@
 <div id="pickingToast" style="display:none; position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:998; background:#DC2626; color:#fff; border-radius:12px; padding:14px 20px; box-shadow:0 8px 24px rgba(0,0,0,0.3); max-width:520px; text-align:left;">
   <div style="font-weight:800; margin-bottom:6px;">📦⚠️ 재입고 필요 (<span id="pickingToastCount">0</span>건)</div>
   <div id="pickingToastList" style="font-size:13px; line-height:1.6;"></div>
+</div>
+
+<!-- 라벨 재출력 (판매현황 재조회 없이, 이미 검수완료된 기록에서 업체명/봉투수만 찾아서 라벨만 재출력) -->
+<div class="overlay" id="labelReprintOverlay">
+  <div class="paste-card" style="max-width:420px;">
+    <h2 style="margin-top:0;">🔄 라벨 재출력</h2>
+    <p style="font-size:13px; color:var(--sub); margin-top:-8px;">이미 검수완료된 전표의 라벨만 다시 뽑습니다. 피킹존 재고나 작업시간 기록은 전혀 건드리지 않습니다.</p>
+    <label style="font-size:13px; color:var(--sub);">검수완료된 날짜</label>
+    <input type="text" id="reprintDateInput" placeholder="예: 2026-08-30" style="width:100%; padding:10px; margin:6px 0 12px; border-radius:8px; border:1px solid var(--line);">
+    <label style="font-size:13px; color:var(--sub);">전표번호</label>
+    <input type="text" id="reprintDocKeyInput" placeholder="예: 2026/08/30-28" style="width:100%; padding:10px; margin:6px 0 16px; border-radius:8px; border:1px solid var(--line);">
+    <button id="reprintSearchBtn" style="width:100%; background:var(--accent); color:var(--accent-ink); font-weight:800; padding:12px;">조회 후 인쇄</button>
+    <div id="reprintResult" style="margin-top:14px; font-size:14px;"></div>
+    <button id="closeLabelReprint" style="width:100%; margin-top:14px;">닫기</button>
+  </div>
 </div>
 
 <!-- 재고 수정 메뉴 (상시, 품번 검색해서 불량/오입고 수정) -->
@@ -2596,6 +2612,62 @@ async function printAllQueued(){
     await new Promise(r => setTimeout(r, 2000)); // 인쇄들이 겹치지 않도록 순서대로, 약간의 간격을 둠
   }
   btn.disabled = false;
+}
+
+/* ===================== 라벨 재출력 (판매현황 재조회 없이, 검수기록에서만 찾아옴) ===================== */
+document.getElementById('labelReprintBtn').addEventListener('click', ()=>{
+  const todayStr = new Date().toLocaleDateString('sv-SE'); // yyyy-MM-dd 형식
+  document.getElementById('reprintDateInput').value = todayStr;
+  document.getElementById('reprintDocKeyInput').value = '';
+  document.getElementById('reprintResult').textContent = '';
+  document.getElementById('labelReprintOverlay').classList.add('show');
+});
+document.getElementById('closeLabelReprint').addEventListener('click', ()=>{
+  document.getElementById('labelReprintOverlay').classList.remove('show');
+  focusInput();
+});
+
+document.getElementById('reprintSearchBtn').addEventListener('click', async ()=>{
+  const dateStr = document.getElementById('reprintDateInput').value.trim();
+  const docKey = document.getElementById('reprintDocKeyInput').value.trim();
+  const resultEl = document.getElementById('reprintResult');
+  if(!dateStr || !docKey){ resultEl.textContent = '날짜와 전표번호를 모두 입력해주세요.'; return; }
+  if(!gasWebhookUrl){ resultEl.textContent = '구글시트 연동이 설정되어 있지 않습니다.'; return; }
+
+  resultEl.textContent = '조회 중...';
+  try{
+    const resp = await fetch(gasWebhookUrl + '?action=getLabelReprintInfo&date=' + encodeURIComponent(dateStr) + '&documentKey=' + encodeURIComponent(docKey));
+    const result = await resp.json();
+    if(!result.ok){
+      resultEl.textContent = '오류: ' + (result.error || '알 수 없는 오류');
+      return;
+    }
+    resultEl.innerHTML = `찾음: <b>${escapeHtml(result.company)}</b> · 봉투 ${result.bagCount}개<br>인쇄를 시작합니다...`;
+    printReprintLabels(result.company, '', result.bagCount, result.spTag || '정식');
+  }catch(err){
+    resultEl.textContent = '네트워크 오류: ' + err.message;
+  }
+});
+
+// 이미 검수완료된 전표의 라벨을 다시 뽑는다. 현재 화면의 items/scanSequence/작업자/피킹존카운터 등
+// 어떤 상태도 건드리지 않고, 순수하게 "업체명+봉투수+S/P여부"만으로 필요한 장수만큼 라벨을 새로 만든다.
+// (buildDeliveryQrPayload는 화면에 떠있는 다른 전표의 currentOrderTag를 참조해서 S/P가 엉뚱하게
+// 찍힐 위험이 있으므로, 여기서는 조회해온 정확한 spTag로 QR 내용을 직접 만든다)
+function printReprintLabels(companyName, zoneValue, totalBags, spTag){
+  const safe = s => String(s || '').replace(/\|/g, ' ').trim();
+  const qrPayload = `DLV|${safe(companyName) || '업체명 미입력'}|${safe(zoneValue)}|${totalBags || 1}|${spTag === 'SP' ? 'SP' : '정식'}`;
+  const container = document.getElementById('printLabelArea');
+  let html = '';
+  if(totalBags <= 1){
+    html = buildLabelPageHTML(companyName, zoneValue, '', false, qrPayload, 1);
+  } else {
+    for(let num = 1; num <= totalBags; num++){
+      const isLast = num === totalBags;
+      html += buildLabelPageHTML(companyName, zoneValue, buildBagLabelText(totalBags, num), isLast, qrPayload, totalBags);
+    }
+  }
+  container.innerHTML = html;
+  setTimeout(()=>{ waitForImagesThenPrint(container, 3000); }, 100);
 }
 
 document.getElementById('printQueueBtn').addEventListener('click', ()=>{
