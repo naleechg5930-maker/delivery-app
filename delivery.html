@@ -438,10 +438,9 @@ function renderManualResults(results){
     const btn = document.createElement('button');
     btn.className = 'big ghost';
     btn.style.cssText = 'max-width:none; width:100%; text-align:left; margin-bottom:8px;';
-    btn.innerHTML = `<span style="color:${spColor}; font-weight:800;">${spLabel}</span><br><span style="font-size:13px;">전표: ${item.documentKey || '-'} · 봉투 ${item.bagCount || '-'}개</span>`;
+    btn.innerHTML = `<div style="font-weight:800; font-size:15px;">${item.company || '-'}</div><span style="color:${spColor}; font-weight:800;">${spLabel}</span><br><span style="font-size:13px;">전표: ${item.documentKey || '-'} · 봉투 ${item.bagCount || '-'}개</span>`;
     btn.addEventListener('click', ()=>{
-      const company = document.getElementById('manualCompanyInput').value.trim();
-      currentCompany = company;
+      currentCompany = item.company || '';
       currentBags = item.bagCount || '';
       currentZone = '';
       currentSpTag = item.spTag || '정식';
