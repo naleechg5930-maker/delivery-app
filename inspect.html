@@ -415,6 +415,7 @@
     <button id="printQueueBtn">🖨️ 인쇄 대기열</button>
     <button id="pickingMenuBtn">🔧 재고 수정 메뉴</button>
     <button id="labelReprintBtn">🔄 라벨 재출력</button>
+    <button id="refreshSalesCacheBtn">🔄 판매현황 새로고침</button>
   </div>
 </div>
 
@@ -1480,6 +1481,17 @@ async function idbGet(key){
 
 /* ===================== 구글시트 연동 (Apps Script 웹앱) ===================== */
 let gasWebhookUrl = '';
+// 판매현황 캐시: 20분마다(또는 수동 새로고침) 통째로 받아와서 저장해두고,
+// 그 안에서 전표를 찾으면 시트 재조회 없이 훨씬 빠르게 조회할 수 있다.
+let salesCache = null;
+let salesCacheFetchedAt = 0;
+// 마지막으로 지난 "정각 0분/20분/40분" 시각(밀리초)을 구한다.
+// 예: 지금이 9시 35분이면 -> 9시 20분을 반환. 캐시를 그 시각 이전에 받아왔으면 낡은 것으로 본다.
+function getMostRecent20MinBoundary(){
+  const now = new Date();
+  const alignedMinutes = Math.floor(now.getMinutes() / 20) * 20; // 0, 20, 40 중 하나
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), alignedMinutes, 0, 0).getTime();
+}
 
 function updateGasStatus(){
   const el = document.getElementById('gasStatus');
@@ -1779,6 +1791,77 @@ document.getElementById('searchQtyBtn').addEventListener('click', async ()=>{
   }
 });
 
+// 서버(Apps Script)의 buildSalesKey와 정확히 동일한 로직 - 전표번호를 여러 표기 후보로 정규화한다.
+// (판매현황 시트의 "일자-No" 열 표기가 "2026/07/29 -67", "2026/07/29-67", "2026/7/29-67" 등으로
+//  조금씩 다를 수 있어서, 클라이언트에서 캐시를 뒤질 때도 서버랑 똑같은 후보들을 만들어 비교해야 한다)
+function buildSalesKeyJS(raw){
+  const parts = String(raw).split('/').map(p => p.trim()).filter(p => p !== '');
+  let yyyy, mm, dd, seqRaw;
+
+  if(parts.length >= 3 && /^\d{8}$/.test(parts[parts.length-2]) && /^\d+$/.test(parts[parts.length-1])){
+    const dateStr = parts[parts.length-2];
+    seqRaw = parts[parts.length-1];
+    yyyy = dateStr.slice(0,4); mm = dateStr.slice(4,6); dd = dateStr.slice(6,8);
+  } else {
+    const numeric = (parts[parts.length-1] || '').replace(/\D/g, '');
+    if(numeric.length < 9) return null;
+    yyyy = numeric.slice(0,4); mm = numeric.slice(4,6); dd = numeric.slice(6,8);
+    seqRaw = numeric.slice(8);
+  }
+
+  const seqNum = String(Number(seqRaw));
+  const displayKey = yyyy + '/' + mm + '/' + dd + '-' + seqNum;
+  const mmNoZero = String(Number(mm));
+  const ddNoZero = String(Number(dd));
+  const candidates = [
+    yyyy + '/' + mm + '/' + dd + '-' + seqNum,
+    yyyy + '/' + mm + '/' + dd + '-' + seqRaw,
+    yyyy + '/' + mmNoZero + '/' + ddNoZero + '-' + seqNum,
+    yyyy + '/' + mmNoZero + '/' + ddNoZero + '-' + seqRaw,
+  ];
+  return { displayKey, candidates };
+}
+
+// 판매현황 전체를 통째로 받아와서 캐시에 저장한다 (20분 자동갱신 또는 수동 새로고침 시 호출됨)
+async function refreshSalesCache(){
+  if(!gasWebhookUrl) return false;
+  try{
+    const resp = await fetch(gasWebhookUrl + '?action=getAllSalesData');
+    const result = await resp.json();
+    if(result.ok){
+      salesCache = result.rows;
+      salesCacheFetchedAt = Date.now();
+      return true;
+    }
+  }catch(err){
+    console.warn('판매현황 캐시 갱신 실패:', err);
+  }
+  return false;
+}
+
+// 캐시 안에서 전표를 찾는다. 서버 lookup과 동일한 후보 매칭 방식을 그대로 재현한다.
+function findInSalesCache(raw){
+  if(!salesCache) return null;
+  const key = buildSalesKeyJS(raw);
+  if(!key) return null;
+
+  const matched = [];
+  let companyName = '', hasPrice = false, arrivalGuaranteed = false;
+  salesCache.forEach(row => {
+    if(key.candidates.indexOf(row.key) === -1) return;
+    const qty = parseFloat(String(row.qty).replace(/,/g, '')) || 0;
+    const price = parseFloat(String(row.price).replace(/,/g, '')) || 0;
+    if(!row.code || qty <= 0) return;
+    if(!companyName) companyName = row.company;
+    if(price > 0) hasPrice = true;
+    if(row.company === '슈가파우더' && row.note.indexOf('도착보장') !== -1) arrivalGuaranteed = true;
+    matched.push({ code: row.code, name: row.name, spec: row.spec, qty });
+  });
+
+  if(matched.length === 0) return null;
+  return { ok:true, company: companyName, hasPrice, key: key.displayKey, rows: matched, arrivalGuaranteed };
+}
+
 async function processDocumentLookup(raw){
   if(!gasWebhookUrl){
     alert('구글시트 연동이 설정되어 있지 않습니다. 먼저 상단 "구글시트 연동" 칸에 웹앱 주소를 연결해주세요.');
@@ -1792,8 +1875,27 @@ async function processDocumentLookup(raw){
   resetPickingReloadPanel(); // 새 전표 조회 시작하면 이전 재입고 목록은 비운다
   showBanner('idle', '전표 조회중...', raw, '판매현황에서 찾는 중입니다...', '🔎');
   try{
-    const res = await fetch(gasWebhookUrl + '?lookup=' + encodeURIComponent(raw));
-    const data = await res.json();
+    // 1) 캐시가 없거나 20분 넘게 낡았으면, 먼저 최신으로 받아온다
+    const cacheStale = !salesCache || (salesCacheFetchedAt < getMostRecent20MinBoundary());
+    if(cacheStale) await refreshSalesCache();
+
+    // 2) 캐시에서 찾아본다 (시트 재조회 없이 즉시 처리되어 빠름)
+    let data = findInSalesCache(raw);
+    let fromCache = !!data;
+
+    // 3) 캐시에 없으면(예: 캐시 받아온 뒤 새로 추가된 전표), 한 번 더 강제로 최신화하고 재시도
+    if(!data){
+      await refreshSalesCache();
+      data = findInSalesCache(raw);
+      fromCache = !!data;
+    }
+
+    // 4) 그래도 없으면, 최후의 수단으로 서버가 직접 찾는 기존 방식을 그대로 사용
+    if(!data){
+      const res = await fetch(gasWebhookUrl + '?lookup=' + encodeURIComponent(raw));
+      data = await res.json();
+      fromCache = false;
+    }
 
     if(!data.ok){
       showBanner('err', '조회 실패', raw, data.error || '해당 전표를 판매현황에서 찾지 못했습니다', '❌');
@@ -1824,8 +1926,19 @@ async function processDocumentLookup(raw){
     playOkSound();
     speakKorean('검수 시작');
 
-    // 피킹존 재입고 알림 (시범 등록된 품번 중, 40개 단위를 넘긴 게 있으면 표시)
-    if(Array.isArray(data.pickingAlerts) && data.pickingAlerts.length > 0){
+    if(fromCache){
+      // 캐시로 찾은 경우엔 서버가 피킹카운터를 못 건드렸으니, 여기서 별도로(백그라운드로) 반영 요청을 보낸다.
+      // 화면(품목 목록 표시)은 이미 끝났으니 이건 기다리지 않고 결과가 오면 그때 알림만 띄운다.
+      fetch(gasWebhookUrl, {
+        method:'POST',
+        body: JSON.stringify({ type:'registerPickingForDocument', documentKey: data.key || raw, rows: list }),
+      }).then(r=>r.json()).then(result=>{
+        if(result.ok && Array.isArray(result.pickingAlerts) && result.pickingAlerts.length > 0){
+          showPickingAlerts(result.pickingAlerts);
+        }
+      }).catch(err => console.warn('피킹카운터 반영 요청 실패:', err));
+    } else if(Array.isArray(data.pickingAlerts) && data.pickingAlerts.length > 0){
+      // 서버가 직접 찾은 경우(캐시 없거나 끝까지 실패한 경우)엔 이미 서버에서 피킹카운터까지 처리해서 응답에 포함됨
       showPickingAlerts(data.pickingAlerts);
     }
   }catch(err){
@@ -2631,6 +2744,22 @@ async function printAllQueued(){
 }
 
 /* ===================== 라벨 재출력 (판매현황 재조회 없이, 검수기록에서만 찾아옴) ===================== */
+document.getElementById('refreshSalesCacheBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('refreshSalesCacheBtn');
+  const original = btn.textContent;
+  btn.textContent = '⏳ 불러오는 중...';
+  btn.disabled = true;
+  const ok = await refreshSalesCache();
+  btn.textContent = original;
+  btn.disabled = false;
+  if(ok){
+    alert(`판매현황 최신화 완료! (${salesCache.length}건 불러옴)`);
+  } else {
+    alert('판매현황을 불러오지 못했습니다. 구글시트 연동 설정을 확인해주세요.');
+  }
+  focusInput();
+});
+
 document.getElementById('labelReprintBtn').addEventListener('click', ()=>{
   const todayStr = new Date().toLocaleDateString('sv-SE'); // yyyy-MM-dd 형식
   document.getElementById('reprintDateInput').value = todayStr;
