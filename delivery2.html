@@ -354,13 +354,16 @@ document.addEventListener('keydown', (e)=>{
 
 // 배송 QR/바코드 내용을 해석한다. 형식: DLV|업체명|배송구역|봉투수|S-P여부
 // (예전 형식들도 계속 인식되게 하위호환 유지)
-// 16진수(hex) 문자열을 원래 텍스트(UTF-8)로 되돌린다. 검수프로그램에서 업체명을
-// 안전하게 hex로 인코딩해서 QR에 담아두었으므로, 여기서 다시 원래 한글로 복원한다.
-function hexToText(hex){
-  const clean = String(hex || '').trim();
-  if(!clean || clean.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(clean)) return null;
+// 순수 숫자(10진수) 문자열을 원래 텍스트(UTF-8)로 되돌린다. 각 3자리 숫자가 바이트 하나(0~255).
+function digitsToText(digits){
+  const clean = String(digits || '').trim();
+  if(!clean || clean.length % 3 !== 0 || !/^\d+$/.test(clean)) return null;
   const bytes = [];
-  for(let i = 0; i < clean.length; i += 2) bytes.push(parseInt(clean.substr(i, 2), 16));
+  for(let i = 0; i < clean.length; i += 3){
+    const b = parseInt(clean.substr(i, 3), 10);
+    if(b > 255) return null; // 3자리 숫자인데 255 넘으면 이 인코딩 형식이 아님
+    bytes.push(b);
+  }
   try{
     return new TextDecoder('utf-8').decode(new Uint8Array(bytes));
   }catch(err){
@@ -372,9 +375,9 @@ function tryParseDeliveryQrRaw(raw){
   // 스캐너 설정에 따라 "DLV"가 소문자로 오는 경우가 있어 대소문자 구분 없이 확인한다
   if(/^dlv\|/i.test(raw)){
     const parts = raw.split('|');
-    const decodedCompany = hexToText(parts[1]);
+    const decodedCompany = digitsToText(parts[1]);
     return {
-      c: decodedCompany !== null ? decodedCompany : (parts[1] || ''), // 예전 라벨(hex 아님) 대비 하위호환
+      c: decodedCompany !== null ? decodedCompany : (parts[1] || ''), // 예전 라벨(숫자인코딩 아님) 대비 하위호환
       z: parts[2] || '', n: parts[3] || '', sp: parts[4] || '정식',
     };
   }
@@ -385,8 +388,8 @@ function tryParseDeliveryQrRaw(raw){
   return null;
 }
 
-// 업체명이 이제 hex로 안전하게 담겨있어서 한글 자체는 QR에 없지만, 혹시 예전에 인쇄해둔
-// (hex 적용 전) 라벨이 아직 남아있을 경우를 대비해 한/영 역변환 보정도 계속 유지한다.
+// 업체명이 이제 순수 숫자로 안전하게 담겨있어서 한글 자체는 QR에 없지만, 혹시 예전에 인쇄해둔
+// (숫자인코딩 적용 전) 라벨이 아직 남아있을 경우를 대비해 한/영 역변환 보정도 계속 유지한다.
 function parseDeliveryQr(text){
   const raw = String(text || '').trim();
 
