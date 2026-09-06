@@ -133,6 +133,7 @@
     <div id="scanStartLabel" style="font-size:14px; color:var(--sub);">라벨의 바코드를 스캐너로 찍어주세요</div>
     <div class="scan-debug-box" id="scanDebugBox">최근 인식: (아직 없음)</div>
     <button class="big ghost" id="manualEntryBtn" style="max-width:260px;">⌨️ 스캔 안 될 때 (수동입력)</button>
+    <button class="big ghost" id="refreshOrderMappingBtn" style="max-width:260px;">🔄 전표목록 새로고침</button>
 
     <div id="batchPanel" style="display:none; position:absolute; left:0; right:0; bottom:0; background:rgba(11,18,32,0.92); padding:14px 16px 18px; border-radius:16px 16px 0 0;">
       <div style="color:#fff; font-weight:800; font-size:14px; margin-bottom:8px;">🏢 스캔된 업체 (<span id="batchCount">0</span>곳)</div>
@@ -201,6 +202,56 @@ let currentBags = '';
 let currentZone = '';
 let currentSpTag = '정식';
 let manualDocumentKey = ''; // 수동입력으로 고른 경우, 정확한 매칭을 위한 전표번호
+
+// 전표매핑 캐시: QR엔 전표번호 뒷자리만 있어서, 실제 업체명/구역/봉투수/S-P는
+// 이 캐시(오늘 새벽 5시 기준)에서 찾는다. 시트 조회 없이 즉시 처리되어 빠르다.
+let orderMappingCache = null;
+let orderMappingCacheFetchedAt = 0;
+
+// 마지막으로 지난 "새벽 5시" 시점(밀리초)을 구한다. 새벽 5시 이전이면 전날 5시가 기준이 된다.
+function getBusinessDayBoundary(){
+  const now = new Date();
+  const boundary = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 5, 0, 0, 0);
+  if(now.getHours() < 5) boundary.setDate(boundary.getDate() - 1);
+  return boundary.getTime();
+}
+
+async function refreshOrderMappingCache(){
+  if(!gasUrl) return false;
+  try{
+    const resp = await fetch(gasUrl + '?action=getTodayOrderMapping');
+    const result = await resp.json();
+    if(result.ok){
+      orderMappingCache = result.rows;
+      orderMappingCacheFetchedAt = Date.now();
+      return true;
+    }
+  }catch(err){
+    console.warn('전표매핑 캐시 갱신 실패:', err);
+  }
+  return false;
+}
+
+function findInOrderMappingCache(suffix){
+  if(!orderMappingCache) return null;
+  const target = String(suffix || '').trim();
+  const found = orderMappingCache.find(r => String(r.suffix || '').trim() === target);
+  return found || null;
+}
+
+// 캐시가 없거나 새벽 5시 경계를 넘겼으면 최신화하고, 찾아본다. 없으면 한 번 더 강제 최신화 후 재시도.
+async function lookupOrderBySuffix(suffix){
+  const stale = !orderMappingCache || (orderMappingCacheFetchedAt < getBusinessDayBoundary());
+  if(stale) await refreshOrderMappingCache();
+
+  let found = findInOrderMappingCache(suffix);
+  if(!found){
+    await refreshOrderMappingCache();
+    found = findInOrderMappingCache(suffix);
+  }
+  return found;
+}
+
 let captureStream = null;
 let capturedDataUrl = '';
 let pendingMode = 'delivery'; // 'delivery' | '상차전' | '상차후' | '출발' | '도착'
@@ -371,25 +422,25 @@ function digitsToText(digits){
   }
 }
 
+// 새 형식(DLV|전표번호뒷자리)인지, 예전 형식(DLV|숫자인코딩업체명|구역|봉투수|S-P)인지 구분해서 처리한다.
 function tryParseDeliveryQrRaw(raw){
-  // 스캐너 설정에 따라 "DLV"가 소문자로 오는 경우가 있어 대소문자 구분 없이 확인한다
-  if(/^dlv\|/i.test(raw)){
-    const parts = raw.split('|');
-    const decodedCompany = digitsToText(parts[1]);
-    return {
-      c: decodedCompany !== null ? decodedCompany : (parts[1] || ''), // 예전 라벨(숫자인코딩 아님) 대비 하위호환
-      z: parts[2] || '', n: parts[3] || '', sp: parts[4] || '정식',
-    };
+  if(!/^dlv\|/i.test(raw)) return null; // 스캐너 설정에 따라 "DLV"가 소문자로 오는 경우가 있어 대소문자 구분 없이 확인
+  const parts = raw.split('|');
+
+  if(parts.length <= 2){
+    // 새 형식: 전표번호 뒷자리만 있음 - 이건 나중에 캐시에서 찾아야 하므로 suffix만 반환
+    return { suffix: (parts[1] || '').trim() };
   }
-  try{
-    const obj = JSON.parse(raw);
-    if(obj && obj.t === 'delivery') return { c: obj.c || '', z: obj.z || '', n: obj.n || '', sp: '정식' };
-  }catch(err){ /* JSON도 아니면 배송 QR이 아닌 것 */ }
-  return null;
+
+  // 예전 형식(하위호환): 정보가 QR 안에 그대로 다 있던 방식
+  const decodedCompany = digitsToText(parts[1]);
+  return {
+    c: decodedCompany !== null ? decodedCompany : (parts[1] || ''),
+    z: parts[2] || '', n: parts[3] || '', sp: parts[4] || '정식',
+  };
 }
 
-// 업체명이 이제 순수 숫자로 안전하게 담겨있어서 한글 자체는 QR에 없지만, 혹시 예전에 인쇄해둔
-// (숫자인코딩 적용 전) 라벨이 아직 남아있을 경우를 대비해 한/영 역변환 보정도 계속 유지한다.
+// 예전에 인쇄해둔(숫자인코딩 적용 전) 라벨이 아직 남아있을 경우를 대비해 한/영 역변환 보정도 유지한다.
 function parseDeliveryQr(text){
   const raw = String(text || '').trim();
 
@@ -404,16 +455,28 @@ function parseDeliveryQr(text){
   return null;
 }
 
-function onScanDetected(text){
+async function onScanDetected(text){
   const debugEl = document.getElementById('scanDebugBox');
   const raw = String(text || '').trim();
   if(debugEl) debugEl.textContent = '최근 인식: ' + raw;
 
-  const payload = parseDeliveryQr(raw);
+  const parsed = parseDeliveryQr(raw);
 
-  if(!payload){
+  if(!parsed){
     if(debugEl) debugEl.textContent = '읽음(배송 바코드 아님): ' + raw.slice(0, 60);
     return;
+  }
+
+  // 새 형식(suffix만 있음)이면 캐시에서 실제 정보를 찾아온다. 예전 형식이면 이미 다 갖고 있음.
+  let payload = parsed;
+  if(parsed.suffix !== undefined){
+    if(debugEl) debugEl.textContent = '조회 중... (전표: ' + parsed.suffix + ')';
+    const found = await lookupOrderBySuffix(parsed.suffix);
+    if(!found){
+      if(debugEl) debugEl.textContent = '전표번호 ' + parsed.suffix + '에 해당하는 정보를 찾지 못했습니다. 새로고침 후 다시 시도해주세요.';
+      return;
+    }
+    payload = { c: found.company, z: found.zone, n: found.bagCount, sp: found.spTag, documentKeyFromCache: found.documentKey };
   }
 
   if(batchMode){
@@ -460,6 +523,18 @@ document.getElementById('rescanBtn').addEventListener('click', ()=>{
 });
 
 /* ---------- 수동입력 (스캔 안 될 때) ---------- */
+document.getElementById('refreshOrderMappingBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('refreshOrderMappingBtn');
+  const original = btn.textContent;
+  btn.textContent = '⏳ 불러오는 중...';
+  btn.disabled = true;
+  const ok = await refreshOrderMappingCache();
+  btn.textContent = original;
+  btn.disabled = false;
+  const debugEl = document.getElementById('scanDebugBox');
+  if(debugEl) debugEl.textContent = ok ? `전표목록 최신화 완료! (${orderMappingCache.length}건)` : '전표목록을 불러오지 못했습니다.';
+});
+
 document.getElementById('manualEntryBtn').addEventListener('click', ()=>{
   document.getElementById('manualCompanyInput').value = '';
   document.getElementById('manualResultList').innerHTML = '';
