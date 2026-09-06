@@ -138,6 +138,7 @@
     <div class="scan-frame" id="scanFrame" style="display:none;"></div>
     <div class="scan-hint" id="scanHint" style="display:none;">QR코드를 사각형 안에 맞춰주세요</div>
     <button class="big ghost" id="manualEntryBtn" style="max-width:260px;">⌨️ QR 인식 안 될 때 (수동입력)</button>
+    <button class="big ghost" id="refreshOrderMappingBtn" style="max-width:260px;">🔄 전표목록 새로고침</button>
 
     <div id="batchPanel" style="display:none; position:absolute; left:0; right:0; bottom:0; background:rgba(11,18,32,0.92); padding:14px 16px 18px; border-radius:16px 16px 0 0;">
       <div style="color:#fff; font-weight:800; font-size:14px; margin-bottom:8px;">🏢 스캔된 업체 (<span id="batchCount">0</span>곳)</div>
@@ -205,6 +206,53 @@ let currentCompany = '';
 let currentBags = '';
 let currentZone = '';
 let currentSpTag = '정식';
+
+// 전표매핑 캐시: QR엔 전표번호 뒷자리만 있어서, 실제 업체명/구역/봉투수/S-P는
+// 이 캐시(오늘 새벽 5시 기준)에서 찾는다. 시트 조회 없이 즉시 처리되어 빠르다.
+let orderMappingCache = null;
+let orderMappingCacheFetchedAt = 0;
+
+function getBusinessDayBoundary(){
+  const now = new Date();
+  const boundary = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 5, 0, 0, 0);
+  if(now.getHours() < 5) boundary.setDate(boundary.getDate() - 1);
+  return boundary.getTime();
+}
+
+async function refreshOrderMappingCache(){
+  if(!gasUrl) return false;
+  try{
+    const resp = await fetch(gasUrl + '?action=getTodayOrderMapping');
+    const result = await resp.json();
+    if(result.ok){
+      orderMappingCache = result.rows;
+      orderMappingCacheFetchedAt = Date.now();
+      return true;
+    }
+  }catch(err){
+    console.warn('전표매핑 캐시 갱신 실패:', err);
+  }
+  return false;
+}
+
+function findInOrderMappingCache(suffix){
+  if(!orderMappingCache) return null;
+  const target = String(suffix || '').trim();
+  const found = orderMappingCache.find(r => String(r.suffix || '').trim() === target);
+  return found || null;
+}
+
+async function lookupOrderBySuffix(suffix){
+  const stale = !orderMappingCache || (orderMappingCacheFetchedAt < getBusinessDayBoundary());
+  if(stale) await refreshOrderMappingCache();
+
+  let found = findInOrderMappingCache(suffix);
+  if(!found){
+    await refreshOrderMappingCache();
+    found = findInOrderMappingCache(suffix);
+  }
+  return found;
+}
 let manualDocumentKey = ''; // 수동입력으로 고른 경우, 정확한 매칭을 위한 전표번호
 let qrScanner = null;
 let captureStream = null;
@@ -344,18 +392,27 @@ function digitsToText(digits){
   }
 }
 
+function tryParseDeliveryQrRaw(raw){
+  if(!/^dlv\|/i.test(raw)) return null; // 스캐너 설정에 따라 "DLV"가 소문자로 오는 경우가 있어 대소문자 구분 없이 확인
+  const parts = raw.split('|');
+
+  if(parts.length <= 2){
+    // 새 형식: 전표번호 뒷자리만 있음 - 이건 나중에 캐시에서 찾아야 하므로 suffix만 반환
+    return { suffix: (parts[1] || '').trim() };
+  }
+
+  // 예전 형식(하위호환): 정보가 QR 안에 그대로 다 있던 방식
+  const decodedCompany = digitsToText(parts[1]);
+  return {
+    c: decodedCompany !== null ? decodedCompany : (parts[1] || ''),
+    z: parts[2] || '', n: parts[3] || '', sp: parts[4] || '정식',
+  };
+}
+
 function parseDeliveryQr(text){
   const raw = String(text || '').trim();
-
-  // 스캐너 설정에 따라 "DLV"가 소문자로 오는 경우가 있어 대소문자 구분 없이 확인한다
-  if(/^dlv\|/i.test(raw)){
-    const parts = raw.split('|');
-    const decodedCompany = digitsToText(parts[1]);
-    return {
-      c: decodedCompany !== null ? decodedCompany : (parts[1] || ''), // 예전 라벨(숫자인코딩 아님) 대비 하위호환
-      z: parts[2] || '', n: parts[3] || '', sp: parts[4] || '정식',
-    };
-  }
+  const direct = tryParseDeliveryQrRaw(raw);
+  if(direct) return direct;
   try{
     const obj = JSON.parse(raw);
     if(obj && obj.t === 'delivery') return { c: obj.c || '', z: obj.z || '', n: obj.n || '', sp: '정식' };
@@ -363,16 +420,27 @@ function parseDeliveryQr(text){
   return null;
 }
 
-function onQrDetected(text){
+async function onQrDetected(text){
   // 디버그용: 뭐라도 읽혔으면 화면 하단에 잠깐 표시 (QR을 아예 못 읽는 건지, 형식이 다른 건지 구분하기 위함)
   const hintEl = document.getElementById('scanHint');
   const raw = String(text || '').trim();
 
-  const payload = parseDeliveryQr(raw);
+  const parsed = parseDeliveryQr(raw);
 
-  if(!payload){
+  if(!parsed){
     if(hintEl) hintEl.textContent = '읽음(배송 QR 아님): ' + raw.slice(0, 60);
     return;
+  }
+
+  let payload = parsed;
+  if(parsed.suffix !== undefined){
+    if(hintEl) hintEl.textContent = '조회 중... (전표: ' + parsed.suffix + ')';
+    const found = await lookupOrderBySuffix(parsed.suffix);
+    if(!found){
+      if(hintEl) hintEl.textContent = '전표번호 ' + parsed.suffix + '에 해당하는 정보를 찾지 못했습니다.';
+      return;
+    }
+    payload = { c: found.company, z: found.zone, n: found.bagCount, sp: found.spTag };
   }
 
   if(batchMode){
@@ -426,6 +494,17 @@ document.getElementById('rescanBtn').addEventListener('click', ()=>{
 });
 
 /* ---------- 수동입력 (QR 인식 안 될 때) ---------- */
+document.getElementById('refreshOrderMappingBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('refreshOrderMappingBtn');
+  const original = btn.textContent;
+  btn.textContent = '⏳ 불러오는 중...';
+  btn.disabled = true;
+  const ok = await refreshOrderMappingCache();
+  btn.textContent = original;
+  btn.disabled = false;
+  alert(ok ? `전표목록 최신화 완료! (${orderMappingCache.length}건)` : '전표목록을 불러오지 못했습니다.');
+});
+
 document.getElementById('manualEntryBtn').addEventListener('click', ()=>{
   if(qrScanner){ qrScanner.stop(); qrScanner.destroy(); qrScanner = null; }
   const scanVideoEl = document.getElementById('scanVideo');
