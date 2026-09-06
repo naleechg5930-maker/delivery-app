@@ -735,6 +735,9 @@ document.getElementById('nextBtn').addEventListener('click', ()=>{
 
 if(!gasUrl){
   setTimeout(()=>{ document.getElementById('settingsBtn').click(); }, 400);
+} else {
+  // 앱 켜는 순간 바로 오늘 전표매핑을 미리 받아온다 (첫 스캔에서 기다리지 않도록)
+  refreshOrderMappingCache();
 }
 
 /* ===================== 카톡 자동발송 실패 알림 (어느 화면에 있든 주기적으로 확인) ===================== */
