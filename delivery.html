@@ -327,12 +327,31 @@ function startScanning(){
 // 배송 QR 내용을 해석한다. 짧은코드 형식(Q:AB12CD, 구글시트에서 실제 정보를 찾아옴),
 // 예전 형식(DLV|업체명|배송구역|봉투수), 더 예전 JSON 형식({"t":"delivery",...}) 셋 다 인식해서
 // 예전에 인쇄해둔 라벨도 계속 스캔되게 한다.
+// 16진수(hex) 문자열을 원래 텍스트(UTF-8)로 되돌린다. 검수프로그램에서 업체명을
+// 안전하게 hex로 인코딩해서 QR에 담아두었으므로, 여기서 다시 원래 한글로 복원한다.
+function hexToText(hex){
+  const clean = String(hex || '').trim();
+  if(!clean || clean.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(clean)) return null;
+  const bytes = [];
+  for(let i = 0; i < clean.length; i += 2) bytes.push(parseInt(clean.substr(i, 2), 16));
+  try{
+    return new TextDecoder('utf-8').decode(new Uint8Array(bytes));
+  }catch(err){
+    return null;
+  }
+}
+
 function parseDeliveryQr(text){
   const raw = String(text || '').trim();
 
-  if(raw.startsWith('DLV|')){
+  // 스캐너 설정에 따라 "DLV"가 소문자로 오는 경우가 있어 대소문자 구분 없이 확인한다
+  if(/^dlv\|/i.test(raw)){
     const parts = raw.split('|');
-    return { c: parts[1] || '', z: parts[2] || '', n: parts[3] || '', sp: parts[4] || '정식' };
+    const decodedCompany = hexToText(parts[1]);
+    return {
+      c: decodedCompany !== null ? decodedCompany : (parts[1] || ''), // 예전 라벨(hex 아님) 대비 하위호환
+      z: parts[2] || '', n: parts[3] || '', sp: parts[4] || '정식',
+    };
   }
   try{
     const obj = JSON.parse(raw);
