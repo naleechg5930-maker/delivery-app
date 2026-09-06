@@ -449,6 +449,10 @@ function onScanDetected(text){
     zoneWrap.style.display = 'none';
   }
   showScreen('confirmScreen');
+
+  // 스캐너버전은 인식되면 사람이 버튼을 또 누를 필요 없이 바로 사진 촬영으로 넘어간다
+  pendingMode = 'delivery';
+  document.getElementById('cameraInput').click();
 }
 
 document.getElementById('rescanBtn').addEventListener('click', ()=>{
