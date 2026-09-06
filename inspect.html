@@ -2333,11 +2333,34 @@ function textToDigits(str){
   return Array.from(bytes).map(b => String(b).padStart(3, '0')).join('');
 }
 
+// QR 안엔 이제 전표번호 뒷자리(예: "67")만 담는다 - 훨씬 짧아서 저가형 스캐너도 빠르게 읽는다.
+// 실제 업체명/구역/봉투수/S-P여부는 서버의 "오늘전표매핑" 시트에 미리 저장해두고,
+// 배송앱이 하루에 한 번(또는 필요시) 그 전체 목록을 통째로 받아와서 캐싱해뒀다가 찾아본다.
 function buildDeliveryQrPayload(company, zone, total){
   const safe = s => String(s || '').replace(/\|/g, ' ').trim();
   const spTag = currentOrderTag === 'S/P' ? 'SP' : '정식';
-  const companyDigits = textToDigits(safe(company) || '업체명 미입력');
-  return `DLV|${companyDigits}|${safe(zone)}|${total || 1}|${spTag}`;
+  const suffix = extractDocumentSuffixJS(currentDocumentKey);
+
+  // 서버에 이 전표의 실제 정보를 미리 저장해둔다 (백그라운드로, 인쇄를 기다리게 하지 않음)
+  if(gasWebhookUrl && currentDocumentKey){
+    fetch(gasWebhookUrl, {
+      method:'POST',
+      body: JSON.stringify({
+        type:'saveOrderMapping', documentKey: currentDocumentKey,
+        company: safe(company) || '업체명 미입력', zone: safe(zone), bagCount: total || 1, spTag,
+      }),
+    }).catch(err => console.warn('전표매핑 저장 실패(무시하고 계속 진행):', err));
+  }
+
+  return `DLV|${suffix}`;
+}
+
+// 전표번호 뒷자리(마지막 "-" 뒤 숫자)만 뽑아낸다. 예: "2026/09/02-67" -> "67"
+function extractDocumentSuffixJS(documentKey){
+  const key = String(documentKey || '').trim();
+  const idx = key.lastIndexOf('-');
+  if(idx === -1) return key;
+  return key.slice(idx + 1).trim();
 }
 
 // 봉투가 딱 1개뿐이면 "1-1" 같은 번호를 굳이 안 보여주고 빈 칸으로 둔다
@@ -2809,7 +2832,7 @@ document.getElementById('reprintSearchBtn').addEventListener('click', async ()=>
       return;
     }
     resultEl.innerHTML = `찾음: <b>${escapeHtml(result.company)}</b> · 봉투 ${result.bagCount}개<br>인쇄를 시작합니다...`;
-    printReprintLabels(result.company, '', result.bagCount, result.spTag || '정식');
+    printReprintLabels(result.company, '', result.bagCount, result.spTag || '정식', docKey);
   }catch(err){
     resultEl.textContent = '네트워크 오류: ' + err.message;
   }
@@ -2837,7 +2860,7 @@ document.getElementById('reprintCompanySearchBtn').addEventListener('click', asy
     if(result.results.length === 1){
       const item = result.results[0];
       resultEl.innerHTML = `찾음: <b>${escapeHtml(item.company)}</b> · 봉투 ${item.bagCount}개<br>인쇄를 시작합니다...`;
-      printReprintLabels(item.company, '', item.bagCount, item.spTag || '정식');
+      printReprintLabels(item.company, '', item.bagCount, item.spTag || '정식', item.documentKey);
       return;
     }
     // 같은 거래처명으로 여러 건 있으면, 어느 걸 뽑을지 목록에서 직접 고르게 한다
@@ -2852,7 +2875,7 @@ document.getElementById('reprintCompanySearchBtn').addEventListener('click', asy
       btn.innerHTML = `${spLabel} · 전표: ${escapeHtml(item.documentKey)} · 봉투 ${item.bagCount}개`;
       btn.addEventListener('click', ()=>{
         resultEl.innerHTML = `찾음: <b>${escapeHtml(item.company)}</b> · 봉투 ${item.bagCount}개<br>인쇄를 시작합니다...`;
-        printReprintLabels(item.company, '', item.bagCount, item.spTag || '정식');
+        printReprintLabels(item.company, '', item.bagCount, item.spTag || '정식', item.documentKey);
       });
       resultEl.appendChild(btn);
     });
@@ -2865,10 +2888,9 @@ document.getElementById('reprintCompanySearchBtn').addEventListener('click', asy
 // 어떤 상태도 건드리지 않고, 순수하게 "업체명+봉투수+S/P여부"만으로 필요한 장수만큼 라벨을 새로 만든다.
 // (buildDeliveryQrPayload는 화면에 떠있는 다른 전표의 currentOrderTag를 참조해서 S/P가 엉뚱하게
 // 찍힐 위험이 있으므로, 여기서는 조회해온 정확한 spTag로 QR 내용을 직접 만든다)
-function printReprintLabels(companyName, zoneValue, totalBags, spTag){
-  const safe = s => String(s || '').replace(/\|/g, ' ').trim();
-  const companyDigits = textToDigits(safe(companyName) || '업체명 미입력');
-  const qrPayload = `DLV|${companyDigits}|${safe(zoneValue)}|${totalBags || 1}|${spTag === 'SP' ? 'SP' : '정식'}`;
+function printReprintLabels(companyName, zoneValue, totalBags, spTag, documentKey){
+  const suffix = extractDocumentSuffixJS(documentKey);
+  const qrPayload = `DLV|${suffix}`;
   const container = document.getElementById('printLabelArea');
   let html = '';
   if(totalBags <= 1){
