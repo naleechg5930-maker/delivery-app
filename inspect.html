@@ -787,6 +787,7 @@ let items = [];       // {code, name, spec, orderQty, scannedQty, cap5, cap7, ca
 let codeIndex = {};   // code -> item ref
 let aliasIndex = {};  // 실제 스캔되는 다른 바코드(SF 등) -> 품목코드
 let scanSequence = []; // [{code, qty}] 정상 반영된 스캔을 순서대로 기록 (봉투 계산용)
+let printedPackingBagCount = 0; // 에이블리(오더) 전용: 봉투 완료 즉시 인쇄한 봉투 개수(중복 인쇄 방지용)
 let boxScanEvents = []; // [{code, name, spec, qty}] 박스/마대 통째로 스캔된 것 (봉투 재포장 계산에서 제외, 그대로 1박스 처리)
 let inspectionStartTime = null; // 검수 시작 시각 (주문서를 불러온 시점)
 let currentOrderTag = ''; // '' (단가 있음, 표시 없음) | 'S/P' (단가 없음, 샘플 표시)
@@ -849,6 +850,7 @@ function loadItems(rawList){
 
   lastScannedItem = null;
   scanSequence = [];
+  printedPackingBagCount = 0;
   boxScanEvents = [];
   inspectionStartTime = new Date();
   errLogEntries = [];
@@ -1290,7 +1292,7 @@ function processScan(rawCode){
     showBanner('ok', '정상피킹', displayCode, `${item.name} / ${item.spec}  (${item.scannedQty}/${item.orderQty})${bundleNote}`, '✅');
     addLog(timeStr, displayCode, true, (done ? '해당 품번 완료' : `${item.scannedQty}/${item.orderQty}`) + bundleNote);
     playOkSound();
-    if(bagsFilled > 0) announceBagFilled();
+    if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
   } else {
     const overBy = bulkQty - remaining;
     item.scannedQty = item.orderQty;
@@ -1313,7 +1315,7 @@ function processScan(rawCode){
     addLog(timeStr, displayCode, false, `박스 수량 ${bulkQty} 스캔 → ${remaining}개만 반영, ${overBy}개 초과`);
     playErrSound();
     speakKorean(`${overBy}개 과송`);
-    if(bagsFilled > 0) announceBagFilled();
+    if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
   }
 
   updateMiniStats();
@@ -1372,7 +1374,7 @@ function adjustLastScanned(amount){
     showBanner('ok', '정상피킹', item.code, `${item.name} / ${item.spec}  (+${amount}) → ${item.scannedQty}/${item.orderQty}`, '✅');
     addLog(timeStr, item.code, true, `수량버튼 +${amount}${done ? ' (완료)' : ''} (${item.scannedQty}/${item.orderQty})`);
     playOkSound();
-    if(bagsFilled > 0) announceBagFilled();
+    if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
   } else {
     const overBy = amount - remaining;
     item.scannedQty = item.orderQty;
@@ -1387,7 +1389,7 @@ function adjustLastScanned(amount){
     showBanner('err', '오피킹', item.code, `${item.name} / ${item.spec} — 남은 수량 ${remaining}개인데 ${amount}개를 추가하려 했습니다 (초과 ${overBy}개)`, '⚠️');
     addLog(timeStr, item.code, false, `수량버튼 +${amount} 시도 → ${remaining}개만 반영, ${overBy}개 초과`);
     playErrSound();
-    if(bagsFilled > 0) announceBagFilled();
+    if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
   }
 
   showQuickAdd(item);
@@ -2334,6 +2336,31 @@ function updateLivePackingBanner(){
 }
 
 // 봉투 하나가 방금 다 찼을 때 음성 + 큰 배너 + 소리로 알려준다 (오피킹/정상피킹처럼 눈에 띄게)
+// 에이블리(오더) 전용: 봉투가 완료되는 즉시, "그 봉투에 뭐가 들어갔는지"(품목만, 전표번호 없음)
+// 포장명세를 곧바로 인쇄한다. 배송용 라벨(QR 포함)은 지금처럼 검수완료 시점에 한꺼번에 인쇄되고,
+// 이 포장명세만 따로 떼어내서 봉투가 찰 때마다 바로바로 뽑아 즉시 패킹/부착할 수 있게 한다.
+// (나중에 최종 봉투 구성이 재조정되어도, 이미 완료되어 인쇄된 봉투는 그대로 확정된 것으로 취급한다)
+function maybePrintCompletedBagsImmediately(){
+  const companyName = document.getElementById('companyNameInput').value;
+  if(normalizeCompanyKey(companyName) !== normalizeCompanyKey('에이블리(오더)')) return;
+  if(!allItemsHaveCapacity() || scanSequence.length === 0) return;
+
+  const result = computeBagPacking(scanSequence);
+  const bagContentLists = result.bagContentLists;
+  // 맨 마지막 봉투는 아직 "진행 중"일 수 있으므로(계속 스캔하면 내용이 바뀔 수 있음) 그 앞 봉투까지만 확정으로 본다
+  const confirmedCount = Math.max(0, bagContentLists.length - 1);
+  if(confirmedCount <= printedPackingBagCount) return; // 새로 확정된 봉투가 없으면 아무것도 안 함
+
+  const container = document.getElementById('printLabelArea');
+  let html = '';
+  for(let i = printedPackingBagCount; i < confirmedCount; i++){
+    html += buildPackingListPageHTML(i + 1, '즉시', bagContentLists[i] || []);
+  }
+  printedPackingBagCount = confirmedCount;
+  container.innerHTML = html;
+  setTimeout(()=>{ waitForImagesThenPrint(container, 3000); }, 100);
+}
+
 function announceBagFilled(){
   playBagFullSound();
   speakKorean('봉투 완료, 다음 봉투 준비하세요');
@@ -2589,7 +2616,7 @@ function printCompletionLabelInner(companyName, zoneValue, container){
       const num = idx + 1;
       const isLast = idx === bagSizes.length - 1; // 봉투 계산상 진짜 마지막 봉투에만 별표 (박스가 뒤에 와도 상관없음)
       html += buildLabelPageHTML(companyName, zoneValue, buildBagLabelText(total, num), isLast, qrPayload, total);
-      if(wantsPackingList){
+      if(wantsPackingList && idx >= printedPackingBagCount){
         html += buildPackingListPageHTML(num, total, bagContentLists[idx] || []);
       }
     });
