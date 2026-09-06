@@ -443,6 +443,10 @@
   <span id="gasStatus" class="folder-status">미연결 · 구글시트에는 기록되지 않습니다</span>
 </div>
 
+<div class="live-packing" id="livePackingBanner" style="display:none;">
+  <span id="livePackingText">📦 포장 진행중</span>
+</div>
+
 <div class="progress-wrap">
   <div class="progress-top">
     <div class="label">전체 진행률</div>
@@ -487,10 +491,6 @@
         <button class="qa-btn" data-amt="9">+9</button>
         <button class="qa-btn" data-amt="10">+10</button>
       </div>
-    </div>
-
-    <div class="live-packing" id="livePackingBanner" style="display:none;">
-      <span id="livePackingText">📦 포장 진행중</span>
     </div>
 
     <div class="mini-stats">
@@ -836,6 +836,17 @@ function loadItems(rawList){
 
   codeIndex = {};
   items.forEach(it => codeIndex[it.code.toUpperCase()] = it);
+
+  // 전표를 불러온 이 시점에, "전체 주문을 순서대로 다 스캔하면 대략 몇 개 봉투가 될지" 미리 한 번
+  // 계산해서 참고용 "예상치"로 남겨둔다. 실제 스캔 순서에 따라 최종 결과는 달라질 수 있어서
+  // 정확한 값은 아니지만, 작업 중 대략의 감을 잡는 용도로 화면에 같이 보여준다.
+  expectedTotalBags = 0;
+  if(allItemsHaveCapacity()){
+    const hypotheticalSequence = items.map(it => ({ code: it.code, qty: it.orderQty }));
+    const estimate = computeBagPacking(hypotheticalSequence);
+    expectedTotalBags = estimate.bagSizes.length;
+  }
+
   lastScannedItem = null;
   scanSequence = [];
   boxScanEvents = [];
@@ -2232,6 +2243,7 @@ function computeBagPacking(sequence){
 
 /* ===================== 실시간 포장 진행 (스캔하면서 봉투가 꽉 찰 때마다 알려줌) ===================== */
 let liveBagState = { size: null, used: 0, bagNumber: 0 };
+let expectedTotalBags = 0; // 전표 불러온 시점에 미리 한 번 계산해두는 "예상" 총 봉투 수 (참고용, 정확한 값 아님)
 
 function resetLiveBagState(){
   liveBagState = { size: null, used: 0, bagNumber: 0 };
@@ -2305,9 +2317,9 @@ function updateLivePackingBanner(){
     return;
   }
   el.style.display = '';
-  const pct = Math.min(100, Math.round((liveBagState.used || 0) * 100));
+  const estimateText = expectedTotalBags > 0 ? ` (예상 총 ${expectedTotalBags}개)` : '';
   document.getElementById('livePackingText').textContent =
-    `📦 ${liveBagState.bagNumber}번째 봉투 (${liveBagState.size || ''}) 포장중 — 약 ${pct}%`;
+    `📦 ${liveBagState.bagNumber}번째 봉투 포장중${estimateText}`;
 }
 
 // 봉투 하나가 방금 다 찼을 때 음성 + 큰 배너 + 소리로 알려준다 (오피킹/정상피킹처럼 눈에 띄게)
