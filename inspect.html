@@ -2324,20 +2324,20 @@ function getLabelOffsets(){
 // 배송 QR에 담을 내용을 최대한 짧게 만든다 (JSON보다 훨씬 짧아서, 같은 물리크기에도 QR 모듈이 커지고
 // 인식/손상내성이 좋아짐). 형식: DLV|업체명|배송구역|총봉투수|SP여부
 // (구글시트 조회 방식은 실제로 써보니 지연이 있어서, 조회 없이 QR 안에 정보를 직접 담는 방식으로 되돌림)
-// 업체명(한글)을 안전한 16진수(hex) 문자열로 바꾼다. 하드웨어 바코드 스캐너는 "키보드처럼
-// 타이핑하는 방식"으로 동작하는데, 스캐너에 설정된 자판에 한글이 없으면 한글을 못 보내고
-// 엉뚱한 값(유니코드 번호, 깨진 특수문자 등)으로 보내버리는 경우가 있다. 16진수는 0-9,A-F
-// 문자만 쓰므로 어떤 스캐너/자판 설정에서도 항상 안전하게 전달된다.
-function textToHex(str){
+// 업체명(한글)을 순수 숫자(10진수) 문자열로 바꾼다. 원래는 16진수(hex, 0-9+a-f)로 시도했는데,
+// 실제 스캐너(미라클엠 MQ350W)에서 테스트해보니 "숫자만 있는 건 확실히 잘 보내지만, 숫자+영문이
+// 섞이면 그 부분을 통째로 빠뜨리는" 현상이 확인됐다. 그래서 더 길어지더라도 영문을 아예 안 섞고
+// 순수 숫자만 쓰는 방식으로 바꿨다 (각 바이트를 0~255 사이 3자리 숫자로 표현).
+function textToDigits(str){
   const bytes = new TextEncoder().encode(String(str || ''));
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  return Array.from(bytes).map(b => String(b).padStart(3, '0')).join('');
 }
 
 function buildDeliveryQrPayload(company, zone, total){
   const safe = s => String(s || '').replace(/\|/g, ' ').trim();
   const spTag = currentOrderTag === 'S/P' ? 'SP' : '정식';
-  const companyHex = textToHex(safe(company) || '업체명 미입력');
-  return `DLV|${companyHex}|${safe(zone)}|${total || 1}|${spTag}`;
+  const companyDigits = textToDigits(safe(company) || '업체명 미입력');
+  return `DLV|${companyDigits}|${safe(zone)}|${total || 1}|${spTag}`;
 }
 
 // 봉투가 딱 1개뿐이면 "1-1" 같은 번호를 굳이 안 보여주고 빈 칸으로 둔다
@@ -2867,8 +2867,8 @@ document.getElementById('reprintCompanySearchBtn').addEventListener('click', asy
 // 찍힐 위험이 있으므로, 여기서는 조회해온 정확한 spTag로 QR 내용을 직접 만든다)
 function printReprintLabels(companyName, zoneValue, totalBags, spTag){
   const safe = s => String(s || '').replace(/\|/g, ' ').trim();
-  const companyHex = textToHex(safe(companyName) || '업체명 미입력');
-  const qrPayload = `DLV|${companyHex}|${safe(zoneValue)}|${totalBags || 1}|${spTag === 'SP' ? 'SP' : '정식'}`;
+  const companyDigits = textToDigits(safe(companyName) || '업체명 미입력');
+  const qrPayload = `DLV|${companyDigits}|${safe(zoneValue)}|${totalBags || 1}|${spTag === 'SP' ? 'SP' : '정식'}`;
   const container = document.getElementById('printLabelArea');
   let html = '';
   if(totalBags <= 1){
