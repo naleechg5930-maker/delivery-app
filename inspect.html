@@ -420,6 +420,12 @@
 </div>
 
 <div class="order-info" id="orderInfo">주문서를 업로드하면 회사명/기간이 표시됩니다. (현재는 업로드된 파일의 데이터로 시작합니다)</div>
+<div id="workerReminderBanner" style="display:none; background:#DC2626; color:#fff; text-align:center; padding:18px 12px; font-size:26px; font-weight:900; border-radius:10px; margin:10px 0; animation:workerReminderBlink 1s infinite;">
+  👤 작업자를 입력하세요!
+</div>
+<style>
+@keyframes workerReminderBlink { 0%,100% { opacity:1; } 50% { opacity:0.55; } }
+</style>
 
 <div class="company-bar">
   <label for="companyNameInput">업체명</label>
@@ -1140,6 +1146,7 @@ scanInput.addEventListener('keydown', (e)=>{
       if(workerName){
         currentWorker = workerName;
         inspectionStartTime = new Date(); // 작업자 QR 찍은 시점부터 작업시간 측정 시작
+        hideWorkerReminderBanner();
         showBanner('ok', '작업자 확인', workerName, '지금부터 작업시간이 측정됩니다', '👤');
         addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), 'WK:'+workerCode, true, `작업 시작 (${workerName})`);
         playOkSound();
@@ -1302,6 +1309,18 @@ function processScan(rawCode){
   updateRow(item);
   updateProgress();
   checkAllComplete();
+}
+
+// 전표를 새로 불러온 직후, 아직 작업자를 안 찍은 상태라면 크고 눈에 띄게 알려준다.
+// (이름 QR을 찍으면 hideWorkerReminderBanner가 자동으로 꺼줌)
+function showWorkerReminderBanner(){
+  const el = document.getElementById('workerReminderBanner');
+  if(el) el.style.display = 'block';
+  speakKorean('작업자를 입력하세요');
+}
+function hideWorkerReminderBanner(){
+  const el = document.getElementById('workerReminderBanner');
+  if(el) el.style.display = 'none';
 }
 
 function showBanner(kind, verdict, code, descText, icon){
@@ -1925,6 +1944,7 @@ async function processDocumentLookup(raw){
     addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), data.key || raw, true, `전표 조회 → ${list.length}품목 불러옴`);
     playOkSound();
     speakKorean('검수 시작');
+    showWorkerReminderBanner(); // 전표를 처음 불러온 직후(작업자 아직 없음)라서 크게 알림
 
     if(fromCache){
       // 캐시로 찾은 경우엔 서버가 피킹카운터를 못 건드렸으니, 여기서 별도로(백그라운드로) 반영 요청을 보낸다.
