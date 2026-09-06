@@ -354,10 +354,29 @@ document.addEventListener('keydown', (e)=>{
 
 // 배송 QR/바코드 내용을 해석한다. 형식: DLV|업체명|배송구역|봉투수|S-P여부
 // (예전 형식들도 계속 인식되게 하위호환 유지)
+// 16진수(hex) 문자열을 원래 텍스트(UTF-8)로 되돌린다. 검수프로그램에서 업체명을
+// 안전하게 hex로 인코딩해서 QR에 담아두었으므로, 여기서 다시 원래 한글로 복원한다.
+function hexToText(hex){
+  const clean = String(hex || '').trim();
+  if(!clean || clean.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(clean)) return null;
+  const bytes = [];
+  for(let i = 0; i < clean.length; i += 2) bytes.push(parseInt(clean.substr(i, 2), 16));
+  try{
+    return new TextDecoder('utf-8').decode(new Uint8Array(bytes));
+  }catch(err){
+    return null;
+  }
+}
+
 function tryParseDeliveryQrRaw(raw){
-  if(raw.startsWith('DLV|')){
+  // 스캐너 설정에 따라 "DLV"가 소문자로 오는 경우가 있어 대소문자 구분 없이 확인한다
+  if(/^dlv\|/i.test(raw)){
     const parts = raw.split('|');
-    return { c: parts[1] || '', z: parts[2] || '', n: parts[3] || '', sp: parts[4] || '정식' };
+    const decodedCompany = hexToText(parts[1]);
+    return {
+      c: decodedCompany !== null ? decodedCompany : (parts[1] || ''), // 예전 라벨(hex 아님) 대비 하위호환
+      z: parts[2] || '', n: parts[3] || '', sp: parts[4] || '정식',
+    };
   }
   try{
     const obj = JSON.parse(raw);
@@ -366,9 +385,8 @@ function tryParseDeliveryQrRaw(raw){
   return null;
 }
 
-// 배송 QR엔 업체명이 원래부터 한글로 정상적으로 들어있으므로, 무조건 한글→영문 변환을 걸면
-// 정상적인 업체명까지 깨뜨려버린다. 그래서 "있는 그대로 먼저 해석 시도" → "그게 실패하고,
-// 한글이 섞여있을 때만" 한/영키 오타로 의심해서 되돌려보는 순서로 처리한다.
+// 업체명이 이제 hex로 안전하게 담겨있어서 한글 자체는 QR에 없지만, 혹시 예전에 인쇄해둔
+// (hex 적용 전) 라벨이 아직 남아있을 경우를 대비해 한/영 역변환 보정도 계속 유지한다.
 function parseDeliveryQr(text){
   const raw = String(text || '').trim();
 
