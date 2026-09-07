@@ -799,6 +799,8 @@ let inspectionStartTime = null; // 검수 시작 시각 (주문서를 불러온 
 let currentOrderTag = ''; // '' (단가 있음, 표시 없음) | 'S/P' (단가 없음, 샘플 표시)
 let currentDocumentKey = ''; // 전표번호 (QR 조회로 불러온 경우만 값이 있음, 그 외엔 빈 값)
 let currentWorker = ''; // 작업자 QR을 찍으면 채워짐 (전표 찍고 그다음에 찍는 방식)
+let documentWorkerMap = {}; // { 정규화된전표번호: 작업자명 } - 오늘 이 화면에서 작업자를 찍었던 전표는 계속 기억해둠
+function normalizeDocKeyForWorkerMap(key){ return String(key || '').replace(/\s+/g, ''); }
 // 작업자 QR 코드(숫자) -> 실제 이름. QR엔 한글 대신 이 숫자만 들어있어서 스캐너가 깨질 일이 없다.
 const WORKER_CODE_MAP = { '1': '최희강', '2': '이시안', '3': '김태형', '4': '오영삼' };
 let errLogEntries = [];         // 오피킹 상세 로그 (구글시트에 함께 기록)
@@ -1165,6 +1167,7 @@ scanInput.addEventListener('keydown', (e)=>{
       const workerName = WORKER_CODE_MAP[workerCode];
       if(workerName){
         currentWorker = workerName;
+        if(currentDocumentKey) documentWorkerMap[normalizeDocKeyForWorkerMap(currentDocumentKey)] = workerName;
         inspectionStartTime = new Date(); // 작업자 QR 찍은 시점부터 작업시간 측정 시작
         hideWorkerReminderBanner();
         showBanner('ok', '작업자 확인', workerName, '지금부터 작업시간이 측정됩니다', '👤');
@@ -1909,9 +1912,7 @@ async function processDocumentLookup(raw){
   // 새 전표 조회를 "시작"하는 이 시점에 바로(비동기 요청 전에) 작업자 정보를 리셋한다.
   // loadItems() 안에서 리셋하면, 조회가 끝나기 전에 사용자가 이름QR을 먼저 찍었을 때
   // 나중에 조회가 끝나면서 그 값을 도로 지워버리는 순서 문제가 생길 수 있어서 여기서 미리 처리한다.
-  // 단, "같은 전표를 실수로 또 찍은 경우"를 나중에 구분할 수 있도록, 리셋 직전 값을 잠깐 기억해둔다.
-  const previousWorker = currentWorker;
-  const previousDocumentKey = currentDocumentKey;
+  // (혹시 이 전표에 이미 작업자가 배정된 적 있으면, 조회 완료 후 documentWorkerMap에서 되살림)
   currentWorker = '';
   resetPickingReloadPanel(); // 새 전표 조회 시작하면 이전 재입고 목록은 비운다
   showBanner('idle', '전표 조회중...', raw, '판매현황에서 찾는 중입니다...', '🔎');
@@ -1948,11 +1949,12 @@ async function processDocumentLookup(raw){
     const list = data.rows.map(r => ({ code: r.code, name: r.name, spec: r.spec, qty: r.qty }));
     loadItems(list);
     currentDocumentKey = data.key || raw;
-    // 방금 찍은 전표가, 조회 시작 직전까지 작업 중이던 바로 그 전표와 같다면(같은 전표를
-    // 실수로 또 찍은 경우) - 그 사이에 새로 작업자를 찍은 게 아니라는 전제 하에, 이미 입력했던
-    // 작업자 정보를 그대로 되살린다. (그래야 "이미 찍었던 전표를 다시 찍었다고 또 물어보는" 일이 없음)
-    if(currentWorker === '' && currentDocumentKey === previousDocumentKey && previousWorker){
-      currentWorker = previousWorker;
+    // 오늘 이 화면에서 이 전표에 작업자를 찍은 적이 있다면(방금 전이든, 한참 전에 다른 전표들을
+    // 처리하고 다시 돌아온 것이든 상관없이), 그 기록을 찾아서 되살린다. 표기가 미묘하게
+    // 다를 수 있어서(예: "2026/09/06 -7" vs "2026/09/06-7") 공백은 무시하고 비교한다.
+    if(currentWorker === ''){
+      const rememberedWorker = documentWorkerMap[normalizeDocKeyForWorkerMap(currentDocumentKey)];
+      if(rememberedWorker) currentWorker = rememberedWorker;
     }
     okCount = 0; errCount = 0;
     logList.innerHTML = '';
