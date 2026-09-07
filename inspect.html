@@ -419,6 +419,11 @@
   </div>
 </div>
 
+<div id="remainingWorkBar" style="display:none; background:#FEF3C7; color:#92400E; border-radius:8px; padding:10px 14px; margin:8px 0; font-size:13px; align-items:center; justify-content:space-between; gap:10px;">
+  <span id="remainingWorkText">⚠️ 미처리 현황 불러오는 중...</span>
+  <span id="remainingWorkUpdatedAt" style="color:#B45309; white-space:nowrap;"></span>
+</div>
+
 <div class="order-info" id="orderInfo">주문서를 업로드하면 회사명/기간이 표시됩니다. (현재는 업로드된 파일의 데이터로 시작합니다)</div>
 <div id="workerReminderBanner" style="display:none; position:fixed; inset:0; z-index:9999; background:#DC2626; color:#fff; align-items:center; justify-content:center; text-align:center; padding:24px; font-size:56px; font-weight:900; animation:workerReminderBlink 1s infinite; pointer-events:none;">
   👤 작업자를 입력하세요!
@@ -3527,6 +3532,33 @@ restoreLabelOffsets();
 loadItems(DEFAULT_ITEMS);
 document.getElementById('orderInfo').innerHTML =
   `<b>기본 주문서:</b> 루나앤솔 / (주)에이블리코퍼레이션 · 2026/07/26 &nbsp; · <b>품목수:</b> ${DEFAULT_ITEMS.length}개 (새 주문서는 위 "주문서 업로드" 버튼으로 교체하세요)`;
+
+/* ===================== 상단 미처리 현황 표시 (1분마다 자동 새로고침) ===================== */
+// "물류작업시간분석" 파일이 5분마다 미리 계산해둔 결과를, 여기서는 계산 없이 가볍게 읽어오기만 한다.
+async function refreshRemainingWorkStatus(){
+  if(!gasWebhookUrl) return;
+  const bar = document.getElementById('remainingWorkBar');
+  try{
+    const resp = await fetch(gasWebhookUrl + '?action=getRemainingWorkStatus');
+    const data = await resp.json();
+    if(!data.ok){
+      bar.style.display = 'none'; // 아직 한 번도 계산 안 됐거나 오류면, 조용히 숨김(방해 안 되게)
+      return;
+    }
+    const firstEstimate = (data.timeEstimates && data.timeEstimates[0]) ? data.timeEstimates[0].value : '';
+    document.getElementById('remainingWorkText').textContent =
+      `⚠️ ${data.unprocessedCountLabel || ''} · ${data.remainingPcsLabel || ''}` +
+      (firstEstimate ? ` · 예상 ${firstEstimate}` : '');
+    document.getElementById('remainingWorkUpdatedAt').textContent =
+      data.updatedAt ? `${data.updatedAt} 기준 (5분마다 자동갱신)` : '';
+    bar.style.display = 'flex';
+  }catch(err){
+    console.warn('미처리 현황 조회 실패(무시):', err);
+    bar.style.display = 'none';
+  }
+}
+refreshRemainingWorkStatus();
+setInterval(refreshRemainingWorkStatus, 60000); // 1분마다 가볍게 다시 조회 (계산은 저쪽에서 5분마다만 함)
 </script>
 </body>
 </html>
