@@ -3555,10 +3555,10 @@ async function refreshRemainingWorkStatus(){
       bar.style.display = 'none'; // 아직 한 번도 계산 안 됐거나 오류면, 조용히 숨김(방해 안 되게)
       return;
     }
-    const firstEstimate = (data.timeEstimates && data.timeEstimates[0]) ? data.timeEstimates[0].value : '';
+    const chosenEstimate = (data.timeEstimates && data.timeEstimates[1]) ? data.timeEstimates[1].value : '';
     document.getElementById('remainingWorkText').textContent =
       `⚠️ ${data.unprocessedCountLabel || ''} · ${data.remainingPcsLabel || ''}` +
-      (firstEstimate ? ` · 예상 ${firstEstimate}` : '');
+      (chosenEstimate ? ` · 예상 ${chosenEstimate}` : '');
     document.getElementById('remainingWorkUpdatedAt').textContent =
       data.updatedAt ? `${data.updatedAt} 기준 (5분마다 자동갱신)` : '';
     bar.style.display = 'flex';
