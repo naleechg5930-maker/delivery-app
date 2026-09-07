@@ -395,27 +395,28 @@
     </div>
   </div>
   <div class="toolbar">
-    <button id="pasteOpenBtn">📋 화면에서 붙여넣기</button>
-    <label class="file-btn" for="fileInput">📂 엑셀 업로드(.xlsx)</label>
-    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
-    <label class="file-btn" for="aliasFileInput">🏷️ SF 바코드 매핑</label>
-    <input type="file" id="aliasFileInput" accept=".xlsx,.xls,.csv">
-    <label class="file-btn" for="bagCapFileInput">📦 봉투캐파시티표 업로드</label>
-    <input type="file" id="bagCapFileInput" accept=".xlsx,.xls,.csv">
-    <label class="file-btn" for="zoneFileInput">🗺️ 배송구역 참고표 업로드</label>
-    <input type="file" id="zoneFileInput" accept=".xlsx,.xls,.csv">
-    <label class="file-btn" for="returnFileInput">🔄 반품(창고이동) 처리</label>
-    <input type="file" id="returnFileInput" accept=".xlsx,.xls,.csv">
-    <button id="refreshTablesFromSheetBtn">🔄 구글시트에서 참고표 불러오기</button>
     <button id="soundToggle">🔊 소리 켜짐</button>
-    <button id="resetBtn">↺ 검수 초기화</button>
     <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--sub); cursor:pointer; margin-left:8px;">
       <input type="checkbox" id="noPrinterToggle"> 이 컴퓨터엔 프린터 없음(대기열로 보내기)
     </label>
-    <button id="printQueueBtn">🖨️ 인쇄 대기열</button>
-    <button id="pickingMenuBtn">🔧 재고 수정 메뉴</button>
-    <button id="labelReprintBtn">🔄 라벨 재출력</button>
-    <button id="refreshSalesCacheBtn">🔄 판매현황 새로고침</button>
+    <button id="moreMenuBtn" style="margin-left:8px;">☰ 더보기</button>
+  </div>
+  <div id="moreMenuPanel" style="display:none; border:1px solid var(--line); border-radius:10px; padding:10px; margin-top:8px; background:var(--panel);">
+    <div style="display:flex; flex-wrap:wrap; gap:8px;">
+      <button id="pasteOpenBtn">📋 화면에서 붙여넣기</button>
+      <label class="file-btn" for="aliasFileInput">🏷️ SF 바코드 매핑</label>
+      <input type="file" id="aliasFileInput" accept=".xlsx,.xls,.csv">
+      <label class="file-btn" for="bagCapFileInput">📦 봉투캐파시티표 업로드</label>
+      <input type="file" id="bagCapFileInput" accept=".xlsx,.xls,.csv">
+      <label class="file-btn" for="returnFileInput">🔄 반품(창고이동) 처리</label>
+      <input type="file" id="returnFileInput" accept=".xlsx,.xls,.csv">
+      <button id="refreshTablesFromSheetBtn">🔄 구글시트에서 참고표 불러오기</button>
+      <button id="resetBtn">↺ 검수 초기화</button>
+      <button id="printQueueBtn">🖨️ 인쇄 대기열</button>
+      <button id="pickingMenuBtn">🔧 재고 수정 메뉴</button>
+      <button id="labelReprintBtn">🔄 라벨 재출력</button>
+      <button id="refreshSalesCacheBtn">🔄 판매현황 새로고침</button>
+    </div>
   </div>
 </div>
 
@@ -3015,13 +3016,20 @@ document.getElementById('soundToggle').addEventListener('click', function(){
   if(soundOn) ensureAudio();
 });
 
+document.getElementById('moreMenuBtn').addEventListener('click', function(){
+  const panel = document.getElementById('moreMenuPanel');
+  const isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'block';
+  focusInput(); // 메뉴 열고 닫아도 스캔 입력창 포커스는 항상 유지
+});
+
 document.getElementById('closeOverlay').addEventListener('click', ()=>{
   document.getElementById('overlay').classList.remove('show');
   focusInput();
 });
 
 /* ===================== 주문서 업로드 (.xlsx) ===================== */
-document.getElementById('fileInput').addEventListener('change', function(e){
+document.getElementById('fileInput')?.addEventListener('change', function(e){
   const file = e.target.files[0];
   if(!file) return;
   const reader = new FileReader();
@@ -3192,7 +3200,7 @@ document.getElementById('bagCapFileInput').addEventListener('change', function(e
 });
 
 /* ===================== 배송구역 참고표 업로드 (거래처명 / 소매처 / 배송구역) ===================== */
-document.getElementById('zoneFileInput').addEventListener('change', function(e){
+document.getElementById('zoneFileInput')?.addEventListener('change', function(e){
   const file = e.target.files[0];
   if(!file) return;
   const reader = new FileReader();
