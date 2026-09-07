@@ -787,7 +787,8 @@ let items = [];       // {code, name, spec, orderQty, scannedQty, cap5, cap7, ca
 let codeIndex = {};   // code -> item ref
 let aliasIndex = {};  // 실제 스캔되는 다른 바코드(SF 등) -> 품목코드
 let scanSequence = []; // [{code, qty}] 정상 반영된 스캔을 순서대로 기록 (봉투 계산용)
-let printedPackingBagCount = 0; // 에이블리(오더) 전용: 봉투 완료 즉시 인쇄한 봉투 개수(중복 인쇄 방지용)
+let printedPackingBagCount = 0; // 에이블리(오더) 전용: 봉투 완료 즉시 인쇄한 봉투 개수(중복 인쇄 방지용, scanSequence 기반 봉투용)
+let printedBoxEventCount = 0; // 에이블리(오더) 전용: 즉시 인쇄한 묶음/박스 건수(중복 인쇄 방지용, boxScanEvents 기반)
 let boxScanEvents = []; // [{code, name, spec, qty}] 박스/마대 통째로 스캔된 것 (봉투 재포장 계산에서 제외, 그대로 1박스 처리)
 let inspectionStartTime = null; // 검수 시작 시각 (주문서를 불러온 시점)
 let currentOrderTag = ''; // '' (단가 있음, 표시 없음) | 'S/P' (단가 없음, 샘플 표시)
@@ -851,6 +852,7 @@ function loadItems(rawList){
   lastScannedItem = null;
   scanSequence = [];
   printedPackingBagCount = 0;
+  printedBoxEventCount = 0;
   boxScanEvents = [];
   inspectionStartTime = new Date();
   errLogEntries = [];
@@ -1272,25 +1274,23 @@ function processScan(rawCode){
     item.scannedQty += bulkQty;
     okCount += bulkQty;
     let bagsFilled = 0;
-    let bundleBreakdown = null;
     if(bundleApplied){
-      // 묶음처리 스캔: 캐파시티 안에 들어가면 무조건 1봉투, 넘으면 캐파시티 단위로 나눔(그 내역을 화면에 보여줌)
-      const result = addBundleToBags(item, bulkQty);
-      bagsFilled = result.bagsFilled;
-      bundleBreakdown = result.breakdown;
+      // 묶음처리 스캔: "이미 포장된 박스"가 아니라 "그냥 한 번에 많이 스캔된 수량"이라서,
+      // 일반 스캔과 완전히 똑같이 봉투 계산(scanSequence)에 넣는다. 캐파시티를 넘으면
+      // 자동으로 여러 봉투에 나뉘고, 다른 품목이랑 같은 봉투에 같이 담길 수도 있다.
+      scanSequence.push({ code: item.code, qty: bulkQty });
+      bagsFilled = addToLiveBag(item, bulkQty);
     } else if(bulkQty > 1){
       // 박스/마대는 이미 포장된 채로 그대로 출고되므로, 봉투 재포장 계산에는 넣지 않고 따로 기록한다
       boxScanEvents.push({ code: item.code, name: item.name, spec: item.spec, qty: bulkQty });
+      bagsFilled = 1; // 박스/마대도 스캔되는 즉시 확정된 1건이므로, 즉시인쇄 대상이 되도록 표시
     } else {
       scanSequence.push({ code: item.code, qty: bulkQty });
       bagsFilled = addToLiveBag(item, bulkQty);
     }
     const done = item.scannedQty >= item.orderQty;
-    const bundleNote = (bundleBreakdown && bundleBreakdown.length > 1)
-      ? ` — 묶음 ${bulkQty}개가 캐파시티를 넘어서 ${bundleBreakdown.join('+')}개로 ${bundleBreakdown.length}봉투에 나뉘어 담겼습니다`
-      : '';
-    showBanner('ok', '정상피킹', displayCode, `${item.name} / ${item.spec}  (${item.scannedQty}/${item.orderQty})${bundleNote}`, '✅');
-    addLog(timeStr, displayCode, true, (done ? '해당 품번 완료' : `${item.scannedQty}/${item.orderQty}`) + bundleNote);
+    showBanner('ok', '정상피킹', displayCode, `${item.name} / ${item.spec}  (${item.scannedQty}/${item.orderQty})`, '✅');
+    addLog(timeStr, displayCode, true, (done ? '해당 품번 완료' : `${item.scannedQty}/${item.orderQty}`));
     playOkSound();
     if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
   } else {
@@ -1302,10 +1302,11 @@ function processScan(rawCode){
     let bagsFilled = 0;
     if(remaining > 0){
       if(bundleApplied){
-        addBundleToBags(item, remaining);
-        bagsFilled = 1;
+        scanSequence.push({ code: item.code, qty: remaining });
+        bagsFilled = addToLiveBag(item, remaining);
       } else if(bulkQty > 1){
         boxScanEvents.push({ code: item.code, name: item.name, spec: item.spec, qty: remaining });
+        bagsFilled = 1;
       } else {
         scanSequence.push({ code: item.code, qty: remaining });
         bagsFilled = addToLiveBag(item, remaining);
@@ -2256,10 +2257,12 @@ function computeBagPacking(sequence){
 
 /* ===================== 실시간 포장 진행 (스캔하면서 봉투가 꽉 찰 때마다 알려줌) ===================== */
 let liveBagState = { size: null, used: 0, bagNumber: 0 };
+let liveBagContents = []; // [[{code,name,spec,qty}], ...] 실시간으로 각 봉투에 들어간 내역, 한번 닫힌 봉투는 다신 안 건드림
 let expectedTotalBags = 0; // 전표 불러온 시점에 미리 한 번 계산해두는 "예상" 총 봉투 수 (참고용, 정확한 값 아님)
 
 function resetLiveBagState(){
   liveBagState = { size: null, used: 0, bagNumber: 0 };
+  liveBagContents = [];
   updateLivePackingBanner();
 }
 
@@ -2281,6 +2284,7 @@ function addToLiveBag(item, qty){
       liveBagState.size = pickBagSizeForLookahead(capObj, totalRemaining);
       liveBagState.used = 0;
       liveBagState.bagNumber++;
+      liveBagContents[liveBagState.bagNumber - 1] = []; // 이 봉투 전용 내용 기록 시작 (한번 닫히면 다신 안 건드림)
     }
     const cap = capForBagSize(capObj, liveBagState.size) || 1;
     const perUnit = 1 / cap;
@@ -2293,6 +2297,10 @@ function addToLiveBag(item, qty){
     }
     const putIn = Math.min(canFit, remainingQty);
     liveBagState.used += putIn * perUnit;
+    const bucket = liveBagContents[liveBagState.bagNumber - 1];
+    const existingEntry = bucket.find(e => e.code === item.code);
+    if(existingEntry) existingEntry.qty += putIn;
+    else bucket.push({ code: item.code, name: item.name, spec: item.spec, qty: putIn });
     remainingQty -= putIn;
     if(liveBagState.used >= 1 - 1e-9){
       filledCount++;
@@ -2343,20 +2351,28 @@ function updateLivePackingBanner(){
 function maybePrintCompletedBagsImmediately(){
   const companyName = document.getElementById('companyNameInput').value;
   if(normalizeCompanyKey(companyName) !== normalizeCompanyKey('에이블리(오더)')) return;
-  if(!allItemsHaveCapacity() || scanSequence.length === 0) return;
-
-  const result = computeBagPacking(scanSequence);
-  const bagContentLists = result.bagContentLists;
-  // 맨 마지막 봉투는 아직 "진행 중"일 수 있으므로(계속 스캔하면 내용이 바뀔 수 있음) 그 앞 봉투까지만 확정으로 본다
-  const confirmedCount = Math.max(0, bagContentLists.length - 1);
-  if(confirmedCount <= printedPackingBagCount) return; // 새로 확정된 봉투가 없으면 아무것도 안 함
 
   const container = document.getElementById('printLabelArea');
   let html = '';
-  for(let i = printedPackingBagCount; i < confirmedCount; i++){
-    html += buildPackingListPageHTML(i + 1, '즉시', bagContentLists[i] || []);
+
+  // 1) 묶음처리/박스/마대로 스캔된 것들 (boxScanEvents) - 각각 스캔되는 순간 이미 확정된 상태라
+  //    "다음 게 시작돼야 확정"인 봉투와 달리, 새로 생긴 건 바로바로 인쇄해도 된다.
+  for(let i = printedBoxEventCount; i < boxScanEvents.length; i++){
+    html += buildPackingListPageHTML(i + 1, '즉시', [boxScanEvents[i]]);
   }
-  printedPackingBagCount = confirmedCount;
+  printedBoxEventCount = boxScanEvents.length;
+
+  // 2) 일반 스캔으로 캐파시티 계산되는 봉투 - liveBagContents는 addToLiveBag이 실시간으로
+  //    앞에서부터 순서대로만 채워나가는 기록이고, 한번 닫힌 봉투(bagNumber가 넘어간 시점)는
+  //    다시는 안 건드리므로, 닫히는 즉시 바로 인쇄해도 안전하다.
+  const confirmedCount = liveBagState.size === null ? liveBagState.bagNumber : liveBagState.bagNumber - 1;
+  for(let i = printedPackingBagCount; i < confirmedCount; i++){
+    if(!liveBagContents[i]) break; // 혹시 아직 기록이 없으면 다음 기회에 다시 시도
+    html += buildPackingListPageHTML(i + 1, '즉시', liveBagContents[i]);
+    printedPackingBagCount = i + 1;
+  }
+
+  if(!html) return; // 새로 인쇄할 게 없으면 아무것도 안 함
   container.innerHTML = html;
   setTimeout(()=>{ waitForImagesThenPrint(container, 3000); }, 100);
 }
@@ -2623,7 +2639,7 @@ function printCompletionLabelInner(companyName, zoneValue, container){
     boxScanEvents.forEach((box, idx) => {
       const num = bagSizes.length + idx + 1;
       html += buildLabelPageHTML(companyName, zoneValue, buildBagLabelText(total, num), false, qrPayload, total); // 박스는 별표 안 붙임
-      if(wantsPackingList){
+      if(wantsPackingList && idx >= printedBoxEventCount){
         html += buildPackingListPageHTML(num, total, [box]);
       }
     });
