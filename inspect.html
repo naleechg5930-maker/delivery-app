@@ -800,8 +800,52 @@ let inspectionStartTime = null; // 검수 시작 시각 (주문서를 불러온 
 let currentOrderTag = ''; // '' (단가 있음, 표시 없음) | 'S/P' (단가 없음, 샘플 표시)
 let currentDocumentKey = ''; // 전표번호 (QR 조회로 불러온 경우만 값이 있음, 그 외엔 빈 값)
 let currentWorker = ''; // 작업자 QR을 찍으면 채워짐 (전표 찍고 그다음에 찍는 방식)
-let documentWorkerMap = {}; // { 정규화된전표번호: 작업자명 } - 오늘 이 화면에서 작업자를 찍었던 전표는 계속 기억해둠
 function normalizeDocKeyForWorkerMap(key){ return String(key || '').replace(/\s+/g, ''); }
+
+// 오늘(새벽 5시 기준) 날짜 문자열. 날짜가 바뀌면 documentWorkerMap도 자동으로 새로 시작한다.
+function getBusinessDateStrForWorkerMap(){
+  const now = new Date();
+  const d = new Date(now);
+  if(now.getHours() < 5) d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// { 정규화된전표번호: 작업자명 } - 오늘 이 전표에 작업자를 찍은 적 있으면 계속 기억해둔다.
+// 새로고침해도(브라우저 메모리가 아니라 localStorage에 저장하므로) 그대로 유지된다.
+let documentWorkerMap = {};
+(function loadDocumentWorkerMapFromStorage(){
+  try{
+    const saved = JSON.parse(localStorage.getItem('documentWorkerMap') || 'null');
+    if(saved && saved.businessDate === getBusinessDateStrForWorkerMap()){
+      documentWorkerMap = saved.map || {};
+    }
+  }catch(err){ /* 저장된 값이 없거나 깨졌으면 그냥 빈 상태로 시작 */ }
+})();
+function saveDocumentWorkerMapToStorage(){
+  try{
+    localStorage.setItem('documentWorkerMap', JSON.stringify({
+      businessDate: getBusinessDateStrForWorkerMap(),
+      map: documentWorkerMap,
+    }));
+  }catch(err){ /* 저장 실패해도 무시(기능엔 지장 없음, 새로고침 안 하면 그대로 잘 동작) */ }
+}
+
+// 다른 노트북에서 찍은 것까지 알기 위한 서버 동기화 캐시. 전표 찍을 때마다 서버에 물어보면
+// 느려지므로, 1분마다 백그라운드로 통째로 받아다가 여기 저장해두고, 조회는 항상 이 캐시에서만 한다.
+let serverWorkerAssignments = {};
+async function refreshServerWorkerAssignments(){
+  if(!gasWebhookUrl) return;
+  try{
+    const resp = await fetch(gasWebhookUrl + '?action=getTodayWorkAssignments');
+    const data = await resp.json();
+    if(data.ok) serverWorkerAssignments = data.assignments || {};
+  }catch(err){
+    console.warn('작업배정 목록 동기화 실패(무시):', err);
+  }
+}
+refreshServerWorkerAssignments();
+setInterval(refreshServerWorkerAssignments, 60000); // 1분마다 백그라운드로만 갱신, 스캔할 때는 절대 서버 안 물어봄
+
 // 작업자 QR 코드(숫자) -> 실제 이름. QR엔 한글 대신 이 숫자만 들어있어서 스캐너가 깨질 일이 없다.
 const WORKER_CODE_MAP = { '1': '최희강', '2': '이시안', '3': '김태형', '4': '오영삼' };
 let errLogEntries = [];         // 오피킹 상세 로그 (구글시트에 함께 기록)
@@ -1168,7 +1212,10 @@ scanInput.addEventListener('keydown', (e)=>{
       const workerName = WORKER_CODE_MAP[workerCode];
       if(workerName){
         currentWorker = workerName;
-        if(currentDocumentKey) documentWorkerMap[normalizeDocKeyForWorkerMap(currentDocumentKey)] = workerName;
+        if(currentDocumentKey){
+          documentWorkerMap[normalizeDocKeyForWorkerMap(currentDocumentKey)] = workerName;
+          saveDocumentWorkerMapToStorage();
+        }
         inspectionStartTime = new Date(); // 작업자 QR 찍은 시점부터 작업시간 측정 시작
         hideWorkerReminderBanner();
         showBanner('ok', '작업자 확인', workerName, '지금부터 작업시간이 측정됩니다', '👤');
@@ -1950,11 +1997,16 @@ async function processDocumentLookup(raw){
     const list = data.rows.map(r => ({ code: r.code, name: r.name, spec: r.spec, qty: r.qty }));
     loadItems(list);
     currentDocumentKey = data.key || raw;
-    // 오늘 이 화면에서 이 전표에 작업자를 찍은 적이 있다면(방금 전이든, 한참 전에 다른 전표들을
-    // 처리하고 다시 돌아온 것이든 상관없이), 그 기록을 찾아서 되살린다. 표기가 미묘하게
-    // 다를 수 있어서(예: "2026/09/06 -7" vs "2026/09/06-7") 공백은 무시하고 비교한다.
+    // 오늘 이 전표에 작업자를 찍은 적이 있다면 - 이 컴퓨터에서 찍었든(documentWorkerMap),
+    // 다른 노트북에서 찍었든(serverWorkerAssignments, 1분마다 백그라운드로 동기화됨) - 되살린다.
+    // 표기가 미묘하게 다를 수 있어서(예: "2026/09/06 -7" vs "2026/09/06-7") 공백은 무시하고 비교한다.
     if(currentWorker === ''){
-      const rememberedWorker = documentWorkerMap[normalizeDocKeyForWorkerMap(currentDocumentKey)];
+      const normalizedKey = normalizeDocKeyForWorkerMap(currentDocumentKey);
+      let rememberedWorker = documentWorkerMap[normalizedKey];
+      if(!rememberedWorker){
+        const matchKey = Object.keys(serverWorkerAssignments).find(k => normalizeDocKeyForWorkerMap(k) === normalizedKey);
+        if(matchKey) rememberedWorker = serverWorkerAssignments[matchKey];
+      }
       if(rememberedWorker) currentWorker = rememberedWorker;
     }
     okCount = 0; errCount = 0;
