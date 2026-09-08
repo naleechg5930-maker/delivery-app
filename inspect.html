@@ -737,6 +737,11 @@
 <div id="printLabelArea"></div>
 
 <script>
+/* 페이지 로드 즉시 실행되는 백그라운드 동기화 함수들(전체휴식/작업배정 등)이 이 값을
+   참조하므로, 다른 어떤 선언보다도 먼저 여기서 선언해둔다. (실제 저장된 값은 나중에
+   idbGet으로 비동기 복원되지만, 그 전까지도 최소한 참조 자체는 에러 없이 되어야 한다) */
+let gasWebhookUrl = '';
+
 /* ===================== 기본 데이터 (업로드한 주문서 기준으로 자동 반영됨) ===================== */
 const DEFAULT_ITEMS = [{"code": "NTA5002B211", "name": "NT-5002-B2BA", "spec": "그레이-기본-S", "qty": 1}, {"code": "NTA5002G111", "name": "NT-5002-G1BA", "spec": "레드-기본-S", "qty": 1}, {"code": "NTA5002G212", "name": "NT-5002-G2BA", "spec": "라이트핑크-기본-M", "qty": 1}, {"code": "NTA5002G213", "name": "NT-5002-G2BA", "spec": "라이트핑크-기본-L", "qty": 2}, {"code": "NTA8000B113", "name": "NT-8000-B1BA", "spec": "차콜-기본-L", "qty": 1}, {"code": "NTA8000B211", "name": "NT-8000-B2BA", "spec": "그레이-기본-S", "qty": 1}, {"code": "NTA8000B213", "name": "NT-8000-B2BA", "spec": "그레이-기본-L", "qty": 1}, {"code": "NTA8000D113", "name": "NT-8000-D1BA", "spec": "베이지-기본-L", "qty": 1}, {"code": "NTA8000H312", "name": "NT-8000-H3BA", "spec": "라이트블루-기본-M", "qty": 1}, {"code": "NTA8000H313", "name": "NT-8000-H3BA", "spec": "라이트블루-기본-L", "qty": 1}, {"code": "NTA8001E211", "name": "NT-8001-E2BA", "spec": "딥브라운-기본-S", "qty": 1}, {"code": "NTA8001F411", "name": "NT-8001-F4BA", "spec": "민트-기본-S", "qty": 1}, {"code": "NTA8004D113", "name": "NT-8004-D1BA", "spec": "베이지-기본-L", "qty": 1}, {"code": "NTA8021H213", "name": "NT-8021-H2BA", "spec": "네이비-기본-L", "qty": 1}, {"code": "NTA8024C211", "name": "NT-8024-C2BA", "spec": "아이보리-기본-S", "qty": 1}, {"code": "NTA8024E213", "name": "NT-8024-E2BA", "spec": "딥브라운-기본-L", "qty": 1}, {"code": "SFA0102A113", "name": "SF-0102-A1BA", "spec": "블랙-기본-L", "qty": 1}, {"code": "SFA0102A116", "name": "SF-0102-A1BA", "spec": "블랙-기본-3XL", "qty": 1}, {"code": "SFA0102J213", "name": "SF-0102-J2BA", "spec": "진청-기본-L", "qty": 1}, {"code": "SFA0102J223", "name": "SF-0102-J2LO", "spec": "진청-롱-L", "qty": 1}, {"code": "SFA0102J224", "name": "SF-0102-J2LO", "spec": "진청-롱-XL", "qty": 1}, {"code": "SFA0102J315", "name": "SF-0102-J3BA", "spec": "중청-기본-2XL", "qty": 1}, {"code": "SFA0102J316", "name": "SF-0102-J3BA", "spec": "중청-기본-3XL", "qty": 1}, {"code": "SFA0102J321", "name": "SF-0102-J3LO", "spec": "중청-롱-S", "qty": 1}, {"code": "SSA1001H218", "name": "SS-1001-H2BA", "spec": "네이비-기본-F2", "qty": 1}, {"code": "TTA3000B213", "name": "TT-3000-B2BA", "spec": "그레이-기본-L", "qty": 2}, {"code": "TTA3500A111", "name": "TT-3500-A1BA", "spec": "블랙-기본-S", "qty": 1}, {"code": "TTA3501C213", "name": "TT-3501-C2BA", "spec": "아이보리-기본-L", "qty": 1}, {"code": "TTA3504C211", "name": "TT-3504-C2BA", "spec": "아이보리-기본-S", "qty": 1}, {"code": "TTA3506A111", "name": "TT-3506-A1BA", "spec": "블랙-기본-S", "qty": 2}, {"code": "TTA3507B212", "name": "TT-3507-B2BA", "spec": "그레이-기본-M", "qty": 2}, {"code": "TTA3507E213", "name": "TT-3507-E2BA", "spec": "딥브라운-기본-L", "qty": 1}, {"code": "TTA3508A113", "name": "TT-3508-A1BA", "spec": "블랙-기본-L", "qty": 1}, {"code": "TTA3508B212", "name": "TT-3508-B2BA", "spec": "그레이-기본-M", "qty": 1}, {"code": "TTA3508B213", "name": "TT-3508-B2BA", "spec": "그레이-기본-L", "qty": 1}, {"code": "TTA3508C213", "name": "TT-3508-C2BA", "spec": "아이보리-기본-L", "qty": 2}];
 
@@ -1662,7 +1667,8 @@ async function idbGet(key){
 }
 
 /* ===================== 구글시트 연동 (Apps Script 웹앱) ===================== */
-let gasWebhookUrl = '';
+// gasWebhookUrl은 파일 맨 위에서 이미 선언됨 (백그라운드 동기화 함수들이 페이지 로드 즉시
+// 참조하기 때문에, 다른 어떤 선언보다도 먼저 있어야 해서 위로 옮겼음)
 // 판매현황 캐시: 20분마다(또는 수동 새로고침) 통째로 받아와서 저장해두고,
 // 그 안에서 전표를 찾으면 시트 재조회 없이 훨씬 빠르게 조회할 수 있다.
 let salesCache = null;
