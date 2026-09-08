@@ -803,18 +803,25 @@ let printedPackingBagCount = 0; // 에이블리(오더) 전용: 봉투 완료 �
 let printedBoxEventCount = 0; // 에이블리(오더) 전용: 즉시 인쇄한 묶음/박스 건수(중복 인쇄 방지용, boxScanEvents 기반)
 let boxScanEvents = []; // [{code, name, spec, qty}] 박스/마대 통째로 스캔된 것 (봉투 재포장 계산에서 제외, 그대로 1박스 처리)
 let inspectionStartTime = null; // 검수 시작 시각 (주문서를 불러온 시점)
-let restStartTime = null; // null이면 쉬는 중 아님, 값이 있으면 그 시각부터 휴식 중
-let totalRestMs = 0; // 지금 이 전표에서 누적된 휴식시간(밀리초) - 검수완료 시 작업시간에서 뺌
+let restStartTime = null; // 지금 로컬에 알려진(서버에서 동기화된) 전체 휴식 시작시각. null이면 아무도 안 쉬는 중.
 
-// 지금 휴식 중이면 그 휴식을 종료 처리하고 누적시간에 더한다 (재개 버튼을 눌렀을 때든,
-// 깜빡하고 다음 전표를 찍거나 검수완료를 눌러버렸을 때든 - 이 함수로 안전하게 마무리한다)
-function finalizeCurrentRestIfAny(){
-  if(restStartTime){
-    totalRestMs += (Date.now() - restStartTime.getTime());
-    restStartTime = null;
-    updateRestButtonLabel();
+// 서버의 "전체 휴식 상태"를 짧은 주기로 확인해서, 다른 노트북에서 눌렀어도 이 화면에 바로 반영한다.
+// 실제 작업시간 차감 계산은 검수완료 시 서버가 알아서 정확하게 하므로, 여기선 화면 표시만 신경쓴다.
+async function refreshGlobalRestState(){
+  if(!gasWebhookUrl) return;
+  try{
+    const resp = await fetch(gasWebhookUrl + '?action=getGlobalRestState');
+    const data = await resp.json();
+    if(data.ok){
+      restStartTime = data.resting ? new Date(data.startedAt) : null;
+      updateRestButtonLabel();
+    }
+  }catch(err){
+    console.warn('전체 휴식 상태 동기화 실패(무시):', err);
   }
 }
+refreshGlobalRestState();
+setInterval(refreshGlobalRestState, 5000); // 5초마다 - 다른 노트북이 누른 것도 금방 반영되도록
 
 function updateRestButtonLabel(){
   const btn = document.getElementById('restBtn');
@@ -1999,10 +2006,18 @@ async function processDocumentLookup(raw){
   // 나중에 조회가 끝나면서 그 값을 도로 지워버리는 순서 문제가 생길 수 있어서 여기서 미리 처리한다.
   // (혹시 이 전표에 이미 작업자가 배정된 적 있으면, 조회 완료 후 documentWorkerMap에서 되살림)
   currentWorker = '';
-  // 혹시 쉬는 중이었는데 재개를 안 누르고 바로 다음 전표를 찍었다면, 여기서 강제로 휴식을
-  // 종료 처리한다(그 사이 흐른 시간까지만 휴식으로 인정). 새 전표는 휴식누적을 0부터 다시 시작.
-  finalizeCurrentRestIfAny();
-  totalRestMs = 0;
+  // 혹시(이 노트북이든 다른 노트북이든) 전체 휴식 중이었다면, 전표를 새로 찍는 이 순간
+  // 서버에 "휴식 끝"을 보내서 모두에게 적용되는 휴식 상태를 강제로 종료시킨다.
+  if(restStartTime !== null){
+    restStartTime = null;
+    updateRestButtonLabel();
+    if(gasWebhookUrl){
+      fetch(gasWebhookUrl, {
+        method:'POST',
+        body: JSON.stringify({ type:'setGlobalRestState', action:'end' }),
+      }).catch(err => console.warn('휴식 자동종료 전송 실패:', err));
+    }
+  }
   resetPickingReloadPanel(); // 새 전표 조회 시작하면 이전 재입고 목록은 비운다
   showBanner('idle', '전표 조회중...', raw, '판매현황에서 찾는 중입니다...', '🔎');
   try{
@@ -2136,7 +2151,6 @@ async function autoCaptureAndSave(companyName, stamp, meta){
           startTime: (meta && meta.startTime) || '',
           time: (meta && meta.displayTime) || new Date().toLocaleString('ko-KR'),
           elapsedMs: (meta && meta.elapsedMs) || 0,
-          restMs: (meta && meta.restMs) || 0,
           worker: (meta && meta.worker) || '',
           spTag: currentOrderTag === 'S/P' ? 'SP' : '정식',
           errorSkuDetails: (meta && meta.errorSkuDetails) || [],
@@ -2795,13 +2809,10 @@ function checkAllComplete(){
       printCompletionLabel(company);
 
       setTimeout(()=>{
-        // 혹시 검수완료를 누른 순간까지도 휴식 상태였다면, 여기서 마저 종료 처리해서
-        // 그 시간까지 정확히 휴식으로 인정되게 한다.
-        finalizeCurrentRestIfAny();
         const startTime = inspectionStartTime ? inspectionStartTime.toLocaleTimeString('ko-KR', {hour12:false}) : '';
         const elapsedMs = inspectionStartTime ? (now.getTime() - inspectionStartTime.getTime()) : 0;
         const errLog = errLogEntries.join('\n');
-        autoCaptureAndSave(company, nowStamp(), { displayTime: completeTimeOnly, startTime, elapsedMs, itemCount, totalQty, errCount, errLog, bagCount, documentKey: currentDocumentKey, bagContentLists, worker: currentWorker, errorSkuDetails, restMs: totalRestMs });
+        autoCaptureAndSave(company, nowStamp(), { displayTime: completeTimeOnly, startTime, elapsedMs, itemCount, totalQty, errCount, errLog, bagCount, documentKey: currentDocumentKey, bagContentLists, worker: currentWorker, errorSkuDetails });
         // 클릭 없이도 자동으로 팝업이 닫히도록 처리 (원하면 먼저 확인 버튼으로 닫아도 됨)
         setTimeout(()=>{
           document.getElementById('overlay').classList.remove('show');
@@ -3120,13 +3131,23 @@ document.getElementById('moreMenuBtn').addEventListener('click', function(){
   focusInput(); // 메뉴 열고 닫아도 스캔 입력창 포커스는 항상 유지
 });
 
-document.getElementById('restBtn').addEventListener('click', function(){
-  if(restStartTime === null){
-    restStartTime = new Date();
-  } else {
-    finalizeCurrentRestIfAny();
+document.getElementById('restBtn').addEventListener('click', async function(){
+  if(!gasWebhookUrl){
+    alert('먼저 오른쪽 위 ⚙️ 에서 구글시트 연동 주소를 설정해주세요.');
+    return;
   }
+  const startingRest = (restStartTime === null);
+  // 서버 응답을 기다리지 않고 화면부터 바로 바꿔서 답답하지 않게 하고, 실제 값은 다음 폴링(5초 이내)에서 맞춰짐
+  restStartTime = startingRest ? new Date() : null;
   updateRestButtonLabel();
+  try{
+    await fetch(gasWebhookUrl, {
+      method:'POST',
+      body: JSON.stringify({ type:'setGlobalRestState', action: startingRest ? 'start' : 'end' }),
+    });
+  }catch(err){
+    console.warn('휴식 상태 서버 전송 실패:', err);
+  }
   focusInput();
 });
 
