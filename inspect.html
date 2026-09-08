@@ -10,6 +10,11 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
+  #restBtn.resting{
+    background:#F97316; color:#fff; font-weight:800;
+    animation: restPulse 1.5s infinite;
+  }
+  @keyframes restPulse{ 0%,100%{ opacity:1; } 50%{ opacity:0.7; } }
   :root{
     --bg: #FFFFFF;
     --panel: #F5F6FB;
@@ -400,6 +405,7 @@
       <input type="checkbox" id="noPrinterToggle"> 이 컴퓨터엔 프린터 없음(대기열로 보내기)
     </label>
     <button id="moreMenuBtn" style="margin-left:8px;">☰ 더보기</button>
+    <button id="restBtn" style="margin-left:8px;">⏸ 휴식</button>
   </div>
   <div id="moreMenuPanel" style="display:none; border:1px solid var(--line); border-radius:10px; padding:10px; margin-top:8px; background:var(--panel);">
     <div style="display:flex; flex-wrap:wrap; gap:8px;">
@@ -797,6 +803,37 @@ let printedPackingBagCount = 0; // 에이블리(오더) 전용: 봉투 완료 �
 let printedBoxEventCount = 0; // 에이블리(오더) 전용: 즉시 인쇄한 묶음/박스 건수(중복 인쇄 방지용, boxScanEvents 기반)
 let boxScanEvents = []; // [{code, name, spec, qty}] 박스/마대 통째로 스캔된 것 (봉투 재포장 계산에서 제외, 그대로 1박스 처리)
 let inspectionStartTime = null; // 검수 시작 시각 (주문서를 불러온 시점)
+let restStartTime = null; // null이면 쉬는 중 아님, 값이 있으면 그 시각부터 휴식 중
+let totalRestMs = 0; // 지금 이 전표에서 누적된 휴식시간(밀리초) - 검수완료 시 작업시간에서 뺌
+
+// 지금 휴식 중이면 그 휴식을 종료 처리하고 누적시간에 더한다 (재개 버튼을 눌렀을 때든,
+// 깜빡하고 다음 전표를 찍거나 검수완료를 눌러버렸을 때든 - 이 함수로 안전하게 마무리한다)
+function finalizeCurrentRestIfAny(){
+  if(restStartTime){
+    totalRestMs += (Date.now() - restStartTime.getTime());
+    restStartTime = null;
+    updateRestButtonLabel();
+  }
+}
+
+function updateRestButtonLabel(){
+  const btn = document.getElementById('restBtn');
+  if(!btn) return;
+  if(restStartTime){
+    const elapsed = Date.now() - restStartTime.getTime();
+    const h = Math.floor(elapsed / 3600000);
+    const m = Math.floor((elapsed % 3600000) / 60000);
+    const s = Math.floor((elapsed % 60000) / 1000);
+    const pad = n => String(n).padStart(2, '0');
+    btn.textContent = `▶ 재개(${pad(h)}:${pad(m)}:${pad(s)})`;
+    btn.classList.add('resting');
+  } else {
+    btn.textContent = '⏸ 휴식';
+    btn.classList.remove('resting');
+  }
+}
+setInterval(updateRestButtonLabel, 1000); // 쉬는 중이면 버튼 위 시간 표시를 1초마다 갱신
+
 let currentOrderTag = ''; // '' (단가 있음, 표시 없음) | 'S/P' (단가 없음, 샘플 표시)
 let currentDocumentKey = ''; // 전표번호 (QR 조회로 불러온 경우만 값이 있음, 그 외엔 빈 값)
 let currentWorker = ''; // 작업자 QR을 찍으면 채워짐 (전표 찍고 그다음에 찍는 방식)
@@ -1962,6 +1999,10 @@ async function processDocumentLookup(raw){
   // 나중에 조회가 끝나면서 그 값을 도로 지워버리는 순서 문제가 생길 수 있어서 여기서 미리 처리한다.
   // (혹시 이 전표에 이미 작업자가 배정된 적 있으면, 조회 완료 후 documentWorkerMap에서 되살림)
   currentWorker = '';
+  // 혹시 쉬는 중이었는데 재개를 안 누르고 바로 다음 전표를 찍었다면, 여기서 강제로 휴식을
+  // 종료 처리한다(그 사이 흐른 시간까지만 휴식으로 인정). 새 전표는 휴식누적을 0부터 다시 시작.
+  finalizeCurrentRestIfAny();
+  totalRestMs = 0;
   resetPickingReloadPanel(); // 새 전표 조회 시작하면 이전 재입고 목록은 비운다
   showBanner('idle', '전표 조회중...', raw, '판매현황에서 찾는 중입니다...', '🔎');
   try{
@@ -2095,6 +2136,7 @@ async function autoCaptureAndSave(companyName, stamp, meta){
           startTime: (meta && meta.startTime) || '',
           time: (meta && meta.displayTime) || new Date().toLocaleString('ko-KR'),
           elapsedMs: (meta && meta.elapsedMs) || 0,
+          restMs: (meta && meta.restMs) || 0,
           worker: (meta && meta.worker) || '',
           spTag: currentOrderTag === 'S/P' ? 'SP' : '정식',
           errorSkuDetails: (meta && meta.errorSkuDetails) || [],
@@ -2753,10 +2795,13 @@ function checkAllComplete(){
       printCompletionLabel(company);
 
       setTimeout(()=>{
+        // 혹시 검수완료를 누른 순간까지도 휴식 상태였다면, 여기서 마저 종료 처리해서
+        // 그 시간까지 정확히 휴식으로 인정되게 한다.
+        finalizeCurrentRestIfAny();
         const startTime = inspectionStartTime ? inspectionStartTime.toLocaleTimeString('ko-KR', {hour12:false}) : '';
         const elapsedMs = inspectionStartTime ? (now.getTime() - inspectionStartTime.getTime()) : 0;
         const errLog = errLogEntries.join('\n');
-        autoCaptureAndSave(company, nowStamp(), { displayTime: completeTimeOnly, startTime, elapsedMs, itemCount, totalQty, errCount, errLog, bagCount, documentKey: currentDocumentKey, bagContentLists, worker: currentWorker, errorSkuDetails });
+        autoCaptureAndSave(company, nowStamp(), { displayTime: completeTimeOnly, startTime, elapsedMs, itemCount, totalQty, errCount, errLog, bagCount, documentKey: currentDocumentKey, bagContentLists, worker: currentWorker, errorSkuDetails, restMs: totalRestMs });
         // 클릭 없이도 자동으로 팝업이 닫히도록 처리 (원하면 먼저 확인 버튼으로 닫아도 됨)
         setTimeout(()=>{
           document.getElementById('overlay').classList.remove('show');
@@ -3073,6 +3118,16 @@ document.getElementById('moreMenuBtn').addEventListener('click', function(){
   const isOpen = panel.style.display !== 'none';
   panel.style.display = isOpen ? 'none' : 'block';
   focusInput(); // 메뉴 열고 닫아도 스캔 입력창 포커스는 항상 유지
+});
+
+document.getElementById('restBtn').addEventListener('click', function(){
+  if(restStartTime === null){
+    restStartTime = new Date();
+  } else {
+    finalizeCurrentRestIfAny();
+  }
+  updateRestButtonLabel();
+  focusInput();
 });
 
 document.getElementById('closeOverlay').addEventListener('click', ()=>{
