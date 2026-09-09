@@ -200,6 +200,7 @@ let gasUrl = localStorage.getItem('deliveryGasUrl') || '';
 let currentCompany = '';
 let currentBags = '';
 let currentZone = '';
+let currentDocumentKey = ''; // 스캔으로 알아낸 정확한 전표번호 (배송완료 매칭 정확도를 위해 서버로도 같이 보냄
 let currentSpTag = '정식';
 let manualDocumentKey = ''; // 수동입력으로 고른 경우, 정확한 매칭을 위한 전표번호
 
@@ -279,7 +280,7 @@ function resetSessionState(){
   batchMode = false;
   batchList = [];
   pendingMode = 'delivery';
-  currentCompany = ''; currentBags = ''; currentZone = '';
+  currentCompany = ''; currentBags = ''; currentZone = ''; currentDocumentKey = '';
   capturedDataUrl = '';
   renderBatchList();
   document.getElementById('batchPanel').style.display = 'none';
@@ -496,6 +497,7 @@ async function onScanDetected(text){
   currentCompany = payload.c || '업체명 미확인';
   currentBags = payload.n || '';
   currentZone = payload.z || '';
+  currentDocumentKey = payload.documentKeyFromCache || '';
   currentSpTag = payload.sp || '정식';
   document.getElementById('confirmCompany').textContent = currentCompany;
   document.getElementById('confirmBags').textContent = currentBags;
@@ -670,7 +672,7 @@ document.getElementById('sendBtn').addEventListener('click', ()=>{
     ? { type:'milestone', milestoneType: pendingMode, image: capturedDataUrl }
     : isManual
     ? { type:'manualDeliveryComplete', company: currentCompany, documentKey: manualDocumentKey, bagCount: currentBags, image: capturedDataUrl }
-    : { type:'delivery', company: currentCompany, zone: currentZone, bagCount: currentBags, spTag: currentSpTag, image: capturedDataUrl };
+    : { type:'delivery', company: currentCompany, zone: currentZone, bagCount: currentBags, spTag: currentSpTag, documentKey: currentDocumentKey, image: capturedDataUrl };
   manualDocumentKey = ''; // 한 번 쓰고 나면 다음 스캔에 영향 안 주도록 비움
 
   // 서버(드라이브 업로드+시트 기록) 처리를 기다리지 않고, 화면은 바로 완료로 넘어간다.
