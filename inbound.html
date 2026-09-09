@@ -112,6 +112,7 @@
     <div class="subtitle">입고 검수 프로그램</div>
   </div>
   <div class="toolbar">
+    <button id="refreshStatusBtn">🔄 업데이트</button>
     <label class="file-btn" for="fileInput">📂 발주서 엑셀 업로드</label>
     <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
     <label class="file-btn" for="packingFileInput">📦 공장 패킹리스트 업로드</label>
@@ -187,9 +188,7 @@
   <div style="display:flex;flex-direction:column;gap:14px;">
     <div class="split-row">
       <div class="table-panel">
-        <div class="table-head">⏳ 대기중 / 진행중 <span class="count" id="waitCount">0품목</span>
-          <button id="refreshStatusBtn" style="margin-left:auto; font-size:12px; padding:4px 10px;">🔄 업데이트</button>
-        </div>
+        <div class="table-head">⏳ 대기중 / 진행중 <span class="count" id="waitCount">0품목</span></div>
         <div class="table-scroll">
           <table>
             <thead><tr><th>품번(바코드)</th><th>품목명</th><th>규격/사이즈</th><th id="colHeadOrder">발주</th><th id="colHeadInbound">입고</th><th>상태</th></tr></thead>
