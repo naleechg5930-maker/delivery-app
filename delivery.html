@@ -205,6 +205,7 @@ let gasUrl = localStorage.getItem('deliveryGasUrl') || '';
 let currentCompany = '';
 let currentBags = '';
 let currentZone = '';
+let currentDocumentKey = ''; // 스캔으로 알아낸 정확한 전표번호 (배송완료 매칭 정확도를 위해 서버로도 같이 보냄
 let currentSpTag = '정식';
 
 // 전표매핑 캐시: QR엔 전표번호 뒷자리만 있어서, 실제 업체명/구역/봉투수/S-P는
@@ -282,7 +283,7 @@ function resetSessionState(){
   batchMode = false;
   batchList = [];
   pendingMode = 'delivery';
-  currentCompany = ''; currentBags = ''; currentZone = '';
+  currentCompany = ''; currentBags = ''; currentZone = ''; currentDocumentKey = '';
   capturedDataUrl = '';
   renderBatchList();
   document.getElementById('batchPanel').style.display = 'none';
@@ -440,7 +441,7 @@ async function onQrDetected(text){
       if(hintEl) hintEl.textContent = '전표번호 ' + parsed.suffix + '에 해당하는 정보를 찾지 못했습니다.';
       return;
     }
-    payload = { c: found.company, z: found.zone, n: found.bagCount, sp: found.spTag };
+    payload = { c: found.company, z: found.zone, n: found.bagCount, sp: found.spTag, dk: found.documentKey };
   }
 
   if(batchMode){
@@ -467,6 +468,7 @@ async function onQrDetected(text){
   currentCompany = payload.c || '업체명 미확인';
   currentBags = payload.n || '';
   currentZone = payload.z || '';
+  currentDocumentKey = payload.dk || '';
   currentSpTag = payload.sp || '정식';
   document.getElementById('confirmCompany').textContent = currentCompany;
   document.getElementById('confirmBags').textContent = currentBags;
@@ -656,7 +658,7 @@ document.getElementById('sendBtn').addEventListener('click', ()=>{
     ? { type:'milestone', milestoneType: pendingMode, image: capturedDataUrl }
     : isManual
     ? { type:'manualDeliveryComplete', company: currentCompany, documentKey: manualDocumentKey, bagCount: currentBags, image: capturedDataUrl }
-    : { type:'delivery', company: currentCompany, zone: currentZone, bagCount: currentBags, spTag: currentSpTag, image: capturedDataUrl };
+    : { type:'delivery', company: currentCompany, zone: currentZone, bagCount: currentBags, spTag: currentSpTag, documentKey: currentDocumentKey, image: capturedDataUrl };
   manualDocumentKey = ''; // 한 번 쓰고 나면 다음 스캔에 영향 안 주도록 비움
 
   // 서버(드라이브 업로드+시트 기록) 처리를 기다리지 않고, 화면은 바로 완료로 넘어간다.
