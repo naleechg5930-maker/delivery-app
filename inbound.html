@@ -187,7 +187,9 @@
   <div style="display:flex;flex-direction:column;gap:14px;">
     <div class="split-row">
       <div class="table-panel">
-        <div class="table-head">⏳ 대기중 / 진행중 <span class="count" id="waitCount">0품목</span></div>
+        <div class="table-head">⏳ 대기중 / 진행중 <span class="count" id="waitCount">0품목</span>
+          <button id="refreshStatusBtn" style="margin-left:auto; font-size:12px; padding:4px 10px;">🔄 업데이트</button>
+        </div>
         <div class="table-scroll">
           <table>
             <thead><tr><th>품번(바코드)</th><th>품목명</th><th>규격/사이즈</th><th id="colHeadOrder">발주</th><th id="colHeadInbound">입고</th><th>상태</th></tr></thead>
@@ -365,7 +367,9 @@ function renderTables(){
     const done = it.scannedQty >= it.orderQty;
     const over = it.scannedQty > it.orderQty;
     const badge = over ? `<span class="badge over">초과</span>` : done ? `<span class="badge done">완료</span>` : `<span class="badge wait">대기</span>`;
-    const rowHtml = `<tr><td>${escapeHtml(it.code)}</td><td>${escapeHtml(it.name)}</td><td>${escapeHtml(it.spec)}</td><td>${it.orderQty}</td><td>${it.scannedQty}</td><td>${badge}</td></tr>`;
+    // 아직 하나도 안 찍힌 품목(바코드 불량 등으로 못 찍었을 가능성)은 빨간색으로 눈에 띄게 표시
+    const rowStyle = (it.scannedQty === 0) ? ' style="background:#FEE2E2; color:#991B1B; font-weight:700;"' : '';
+    const rowHtml = `<tr${rowStyle}><td>${escapeHtml(it.code)}</td><td>${escapeHtml(it.name)}</td><td>${escapeHtml(it.spec)}</td><td>${it.orderQty}</td><td>${it.scannedQty}</td><td>${badge}</td></tr>`;
     (done ? doneRows : waitRows).push(rowHtml);
   });
   waitTbody.innerHTML = waitRows.join('');
@@ -779,6 +783,10 @@ function activatePackingListData(statusMsg){
 }
 
 /* ===================== 발주서현황 화면 붙여넣기 (이카운트 표, 탭으로 구분된 텍스트) ===================== */
+document.getElementById('refreshStatusBtn').addEventListener('click', ()=>{
+  if(boxMode) renderBoxItemsTable(); else renderTables();
+});
+
 document.getElementById('openPasteBtn').addEventListener('click', ()=>{
   document.getElementById('pasteOverlay').classList.add('show');
   document.getElementById('pasteTextarea').value = '';
@@ -808,6 +816,8 @@ function parsePastedOrderStatusText(rawText){
   const idxBox = headerCols.indexOf('패킹넘버');
   const idxQty = headerCols.indexOf('수량');
   const idxFactory = headerCols.indexOf('적요');
+  const idxDocKey = headerCols.indexOf('일자-No.'); // 출하일자는 이 열의 날짜 부분에서 뽑음
+  const idxDueDate = headerCols.indexOf('품목별납기일자'); // 입고일
 
   if([idxCode, idxBox, idxQty, idxFactory].some(i => i === -1)){
     return { list: [], error: '필요한 열(품목코드/패킹넘버/수량/적요) 중 일부를 헤더에서 찾지 못했습니다.' };
@@ -824,12 +834,17 @@ function parsePastedOrderStatusText(rawText){
     const factory = (cols[idxFactory] || '').trim();
     const name = idxName !== -1 ? (cols[idxName] || '').trim() : '';
     const size = idxSpec !== -1 ? (cols[idxSpec] || '').trim() : '';
+    // "2026/09/05 -1" 같은 값에서 날짜 부분만("2026/09/05") 뽑아 출하일자로 쓴다
+    const rawDocKey = idxDocKey !== -1 ? (cols[idxDocKey] || '').trim() : '';
+    const shipDateMatch = rawDocKey.match(/^(\d{4}\/\d{2}\/\d{2})/);
+    const shipDate = shipDateMatch ? shipDateMatch[1] : '';
+    const dueDate = idxDueDate !== -1 ? (cols[idxDueDate] || '').trim() : '';
 
     if(!code || !boxNumber || !qty || isNaN(qty) || qty <= 0 || !factory) continue;
     // 품목코드처럼 보이는 것만 (영문 접두어 + 숫자/영문 조합, 합계 줄 등 걸러내기 위함)
     if(!/^[A-Za-z]{2,4}[0-9A-Za-z]{6,}$/.test(code)) continue;
 
-    list.push({ factory, boxNumber, code: code.toUpperCase(), name, size, qty, matched: false });
+    list.push({ factory, boxNumber, code: code.toUpperCase(), name, size, qty, matched: false, shipDate, dueDate });
   }
   return { list, error: null };
 }
@@ -857,6 +872,22 @@ document.getElementById('pasteLoadBtn').addEventListener('click', ()=>{
   document.getElementById('pasteOverlay').classList.remove('show');
   activatePackingListData(statusMsg);
   focusInput();
+
+  // 화면에서 뽑아낸 정보를 "루나앤솔입고" 시트에도 자동으로 저장한다 (오늘 날짜 탭에 쌓임)
+  if(gasWebhookUrl){
+    fetch(gasWebhookUrl, {
+      method:'POST',
+      body: JSON.stringify({
+        type:'saveInboundRecords',
+        records: list.map(item => ({
+          shipDate: item.shipDate, dueDate: item.dueDate, factory: item.factory,
+          boxNumber: item.boxNumber, code: item.code, name: item.name, size: item.size, qty: item.qty,
+        })),
+      }),
+    }).then(r => r.json()).then(res => {
+      if(!res.ok) console.warn('입고 시트 저장 실패:', res.error);
+    }).catch(err => console.warn('입고 시트 저장 요청 실패:', err));
+  }
 });
 
 
@@ -905,11 +936,14 @@ function renderBoxItemsTable(){
   order.forEach(key => {
     const g = groups[key];
     const allDone = g.boxes.every(b => b.matched);
+    const noneDone = g.boxes.every(b => !b.matched);
     const boxListHtml = g.boxes
       .map(b => `${escapeHtml(b.boxNumber)}번(${b.qty}개)${b.matched ? ' ✅' : ''}`)
       .join(', ');
     const badge = allDone ? '<span class="badge done">완료</span>' : '<span class="badge wait">대기</span>';
-    const row = `<tr><td>${escapeHtml(g.code)}</td><td>${escapeHtml(g.name)}</td><td>${escapeHtml(g.size)}</td><td>${escapeHtml(g.factory)}</td><td>${boxListHtml}</td><td>${badge}</td></tr>`;
+    // 박스가 하나도 안 찍힌 품목(바코드 불량 등으로 못 찍었을 가능성)은 빨간색으로 눈에 띄게 표시
+    const rowStyle = noneDone ? ' style="background:#FEE2E2; color:#991B1B; font-weight:700;"' : '';
+    const row = `<tr${rowStyle}><td>${escapeHtml(g.code)}</td><td>${escapeHtml(g.name)}</td><td>${escapeHtml(g.size)}</td><td>${escapeHtml(g.factory)}</td><td>${boxListHtml}</td><td>${badge}</td></tr>`;
     (allDone ? doneRows : waitRows).push(row);
   });
 
