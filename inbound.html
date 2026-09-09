@@ -1076,16 +1076,6 @@ function handleItemScanForBox(rawCode){
       lockedFactory = matchedCandidate.factory;
       document.getElementById('boxCandidateArea').style.display = 'none';
     }
-
-    if(gasWebhookUrl){
-      fetch(gasWebhookUrl, {
-        method:'POST',
-        body: JSON.stringify({
-          type:'inboundBox', factory: matchedCandidate.factory, boxNumber: matchedCandidate.boxNumber,
-          code: matchedCandidate.code, name: matchedCandidate.name, size: matchedCandidate.size, qty: matchedCandidate.qty,
-        })
-      }).catch(err => console.warn('박스 입고기록 저장 실패:', err));
-    }
   });
 
   if(matchedNames.length > 0){
