@@ -1043,7 +1043,7 @@
     const res = await fetch(config.webAppUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'saveResult', rows, manager, elapsedText })
+      body: JSON.stringify({ action: 'saveResult', rows, manager, elapsedText, warehouseCol: config.warehouseCol || '' })
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || '저장 실패');
