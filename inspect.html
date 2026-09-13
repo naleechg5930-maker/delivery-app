@@ -435,29 +435,15 @@
 <div id="workerReminderBanner" style="display:none; position:fixed; inset:0; z-index:9999; background:#DC2626; color:#fff; align-items:center; justify-content:center; text-align:center; padding:24px; font-size:56px; font-weight:900; animation:workerReminderBlink 1s infinite; pointer-events:none;">
   👤 작업자를 입력하세요!
 </div>
+<div id="workerBlockOverlay" style="display:none; position:fixed; inset:0; z-index:9998; background:rgba(220,38,38,0.96); color:#fff; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px;">
+  <div style="font-size:20px;">🔒</div>
+  <div style="font-size:22px; font-weight:800; margin-top:8px;">작업자를 먼저 찍어주세요</div>
+  <div style="font-size:14px; margin-top:6px; opacity:0.9;">품목 스캔은 작업자 지정 후 가능합니다</div>
+  <button id="adminForceUnlockBtn" style="margin-top:18px; font-size:13px; padding:8px 16px; background:#fff; color:#DC2626; border:none; border-radius:8px; font-weight:700; cursor:pointer;">관리자 강제 진행</button>
+</div>
 <style>
 @keyframes workerReminderBlink { 0%,100% { opacity:1; } 50% { opacity:0.55; } }
 </style>
-
-<div class="company-bar">
-  <label for="companyNameInput">업체명</label>
-  <input type="text" id="companyNameInput" placeholder="예: 바띠소띠 — 붙여넣기 시 자동 인식 시도, 다르면 직접 수정하세요">
-  <span id="orderTagBadge" style="display:none;"></span>
-  <label for="deliveryZoneInput" style="margin-left:10px;">배송구역</label>
-  <input type="text" id="deliveryZoneInput" placeholder="예: E1(우)" style="flex:0 0 140px;">
-  <button id="zoneLookupBtn" type="button">🔍 찾기</button>
-</div>
-
-<div class="company-bar folder-bar">
-  <label for="gasUrlInput">구글시트 연동</label>
-  <input type="text" id="gasUrlInput" placeholder="Apps Script 웹앱 URL 붙여넣기 (…/exec)" style="flex:1;min-width:200px;">
-  <button id="gasConnectBtn" type="button">🔗 연결</button>
-  <span id="gasStatus" class="folder-status">미연결 · 구글시트에는 기록되지 않습니다</span>
-</div>
-
-<div class="live-packing" id="livePackingBanner" style="display:none;">
-  <span id="livePackingText">📦 포장 진행중</span>
-</div>
 
 <div class="progress-wrap">
   <div class="progress-top">
@@ -565,6 +551,26 @@
       </div>
     </div>
   </div>
+</div>
+
+<div class="company-bar">
+  <label for="companyNameInput">업체명</label>
+  <input type="text" id="companyNameInput" placeholder="예: 바띠소띠 — 붙여넣기 시 자동 인식 시도, 다르면 직접 수정하세요">
+  <span id="orderTagBadge" style="display:none;"></span>
+  <label for="deliveryZoneInput" style="margin-left:10px;">배송구역</label>
+  <input type="text" id="deliveryZoneInput" placeholder="예: E1(우)" style="flex:0 0 140px;">
+  <button id="zoneLookupBtn" type="button">🔍 찾기</button>
+</div>
+
+<div class="company-bar folder-bar">
+  <label for="gasUrlInput">구글시트 연동</label>
+  <input type="text" id="gasUrlInput" placeholder="Apps Script 웹앱 URL 붙여넣기 (…/exec)" style="flex:1;min-width:200px;">
+  <button id="gasConnectBtn" type="button">🔗 연결</button>
+  <span id="gasStatus" class="folder-status">미연결 · 구글시트에는 기록되지 않습니다</span>
+</div>
+
+<div class="live-packing" id="livePackingBanner" style="display:none;">
+  <span id="livePackingText">📦 포장 진행중</span>
 </div>
 
 <div class="footer-settings">
@@ -849,6 +855,7 @@ setInterval(updateRestButtonLabel, 1000); // 쉬는 중이면 버튼 위 시간 
 let currentOrderTag = ''; // '' (단가 있음, 표시 없음) | 'S/P' (단가 없음, 샘플 표시)
 let currentDocumentKey = ''; // 전표번호 (QR 조회로 불러온 경우만 값이 있음, 그 외엔 빈 값)
 let currentWorker = ''; // 작업자 QR을 찍으면 채워짐 (전표 찍고 그다음에 찍는 방식)
+let adminForceUnlocked = false; // 관리자가 "강제 진행"을 눌러서, 작업자 미지정 상태에서도 스캔을 허용한 경우
 function normalizeDocKeyForWorkerMap(key){ return String(key || '').replace(/\s+/g, ''); }
 
 // 오늘(새벽 5시 기준) 날짜 문자열. 날짜가 바뀌면 documentWorkerMap도 자동으로 새로 시작한다.
@@ -1267,6 +1274,7 @@ scanInput.addEventListener('keydown', (e)=>{
         }
         inspectionStartTime = new Date(); // 작업자 QR 찍은 시점부터 작업시간 측정 시작
         hideWorkerReminderBanner();
+        document.getElementById('workerBlockOverlay').style.display = 'none';
         showBanner('ok', '작업자 확인', workerName, '지금부터 작업시간이 측정됩니다', '👤');
         addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), 'WK:'+workerCode, true, `작업 시작 (${workerName})`);
         playOkSound();
@@ -1316,6 +1324,11 @@ let lastScannedItem = null;
 const PRODUCT_CODE_LEN = 11; // 기본 품목코드 자릿수 (예: NTA8000A117)
 
 function processScan(rawCode){
+  if(currentWorker === '' && !adminForceUnlocked){
+    document.getElementById('workerBlockOverlay').style.display = 'flex';
+    playErrSound();
+    return;
+  }
   const scannedRaw = rawCode.toUpperCase().trim();
 
   // 먼저 스캔값 전체로 그대로 조회 (SF 등 원래부터 11자리보다 긴 정상 바코드가 있을 수 있음)
@@ -2061,6 +2074,8 @@ async function processDocumentLookup(raw){
   // 나중에 조회가 끝나면서 그 값을 도로 지워버리는 순서 문제가 생길 수 있어서 여기서 미리 처리한다.
   // (혹시 이 전표에 이미 작업자가 배정된 적 있으면, 조회 완료 후 documentWorkerMap에서 되살림)
   currentWorker = '';
+  adminForceUnlocked = false; // 새 전표는 다시 작업자 지정을 요구한다 (예전 강제진행은 그 전표에만 유효)
+  document.getElementById('workerBlockOverlay').style.display = 'none';
   // 혹시(이 노트북이든 다른 노트북이든) 전체 휴식 중이었다면, 전표를 새로 찍는 이 순간
   // 서버에 "휴식 끝"을 보내서 모두에게 적용되는 휴식 상태를 강제로 종료시킨다.
   if(restStartTime !== null){
@@ -2120,6 +2135,7 @@ async function processDocumentLookup(raw){
       }
       if(rememberedWorker) currentWorker = rememberedWorker;
     }
+    if(currentWorker !== '') document.getElementById('workerBlockOverlay').style.display = 'none';
     okCount = 0; errCount = 0;
     logList.innerHTML = '';
     updateMiniStats();
@@ -3184,6 +3200,13 @@ document.getElementById('moreMenuBtn').addEventListener('click', function(){
   const isOpen = panel.style.display !== 'none';
   panel.style.display = isOpen ? 'none' : 'block';
   focusInput(); // 메뉴 열고 닫아도 스캔 입력창 포커스는 항상 유지
+});
+
+document.getElementById('adminForceUnlockBtn').addEventListener('click', function(){
+  adminForceUnlocked = true;
+  document.getElementById('workerBlockOverlay').style.display = 'none';
+  addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), '관리자 강제 진행', true, '작업자 미지정 상태로 스캔 허용됨');
+  focusInput();
 });
 
 document.getElementById('restBtn').addEventListener('click', async function(){
