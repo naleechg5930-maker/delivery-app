@@ -832,7 +832,7 @@ async function refreshGlobalRestState(){
   }
 }
 refreshGlobalRestState();
-setInterval(refreshGlobalRestState, 5000); // 5초마다 - 다른 노트북이 누른 것도 금방 반영되도록
+setInterval(refreshGlobalRestState, 25000); // 25초마다 - 서버 부하를 줄이기 위해 5초에서 늘림 (여러 노트북이 동시에 계속 물어보면 서버가 혼잡해져서 다른 요청도 같이 느려지는 문제가 있었음)
 
 function updateRestButtonLabel(){
   const btn = document.getElementById('restBtn');
@@ -900,7 +900,7 @@ async function refreshServerWorkerAssignments(){
   }
 }
 refreshServerWorkerAssignments();
-setInterval(refreshServerWorkerAssignments, 60000); // 1분마다 백그라운드로만 갱신, 스캔할 때는 절대 서버 안 물어봄
+setInterval(refreshServerWorkerAssignments, 180000); // 3분마다 - 서버 부하를 줄이기 위해 1분에서 늘림, 스캔할 때는 절대 서버 안 물어봄
 
 // 작업자 QR 코드(숫자) -> 실제 이름. QR엔 한글 대신 이 숫자만 들어있어서 스캐너가 깨질 일이 없다.
 const WORKER_CODE_MAP = { '1': '최희강', '2': '이시안', '3': '김태형', '4': '오영삼' };
@@ -3774,7 +3774,7 @@ async function refreshRemainingWorkStatus(){
   }
 }
 refreshRemainingWorkStatus();
-setInterval(refreshRemainingWorkStatus, 60000); // 1분마다 가볍게 다시 조회 (계산은 저쪽에서 5분마다만 함)
+setInterval(refreshRemainingWorkStatus, 180000); // 3분마다 - 서버 부하를 줄이기 위해 1분에서 늘림 (계산은 저쪽에서 5분마다만 함)
 </script>
 </body>
 </html>
