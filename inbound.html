@@ -919,8 +919,8 @@ document.getElementById('pasteLoadBtn').addEventListener('click', ()=>{
         })),
       }),
     }).then(r => r.json()).then(res => {
-      if(!res.ok) console.warn('입고 시트 저장 실패:', res.error);
-    }).catch(err => console.warn('입고 시트 저장 요청 실패:', err));
+      if(!res.ok) alert('⚠️ 시트에 자동 저장하는 중 오류가 발생했습니다: ' + res.error);
+    }).catch(err => alert('⚠️ 시트 저장 요청 자체가 실패했습니다: ' + err));
   }
 });
 
