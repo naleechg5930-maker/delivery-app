@@ -2042,7 +2042,7 @@ function findInSalesCache(raw){
     if(!row.code || qty <= 0) return;
     if(!companyName) companyName = row.company;
     if(price > 0) hasPrice = true;
-    if(row.company === '슈가파우더' && row.note.indexOf('도착보장') !== -1) arrivalGuaranteed = true;
+    if(row.note && row.note.indexOf('도착보장') !== -1) arrivalGuaranteed = true;
     matched.push({ code: row.code, name: row.name, spec: row.spec, qty });
   });
 
