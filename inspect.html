@@ -1466,35 +1466,37 @@ function hideWorkerReminderBanner(){
 
 // 이미 검수완료된 전표의 라벨 QR을 다시 스캔했을 때 서버에 패킹완료를 알리고 결과를 보여준다.
 // 어느 노트북에서 스캔하든 동일하게 서버가 처리하므로, 검수했던 노트북이 아니어도 정확히 인식된다.
-async function handlePackingCompleteScan(suffix){
+// 패킹완료 QR 재스캔: 화면을 막지 않고 백그라운드로 처리한다.
+// 성공하면 짧은 소리만, 실패하면 에러 소리 + 스캔로그에 한 줄만 남긴다.
+// (패킹완료 처리 중에도 다음 전표 QR을 바로 찍고 작업을 이어갈 수 있도록 하기 위함)
+function handlePackingCompleteScan(suffix){
   if(!gasWebhookUrl){
-    showBanner('err', '설정 필요', suffix, '먼저 구글시트 연동 주소를 설정해주세요', '❌');
+    addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), `DLV|${suffix}`, false, '패킹완료 처리 불가: 구글시트 연동 주소가 설정되지 않았습니다');
+    playErrSound();
     return;
   }
-  showBanner('idle', '패킹완료 확인 중...', suffix, '', '📦');
-  try{
-    const resp = await fetch(gasWebhookUrl, {
-      method:'POST',
-      body: JSON.stringify({ type:'markPackingComplete', suffix: suffix }),
-    });
-    const data = await resp.json();
+  addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), `DLV|${suffix}`, true, '패킹완료 처리 중...(백그라운드)');
+  fetch(gasWebhookUrl, {
+    method:'POST',
+    body: JSON.stringify({ type:'markPackingComplete', suffix: suffix }),
+  }).then(r => r.json()).then(data => {
     if(!data.ok){
-      showBanner('err', '패킹완료 처리 실패', suffix, data.error || '알 수 없는 오류', '❌');
+      addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), `DLV|${suffix}`, false, `패킹완료 처리 실패: ${data.error || '알 수 없는 오류'}`);
       playErrSound();
       return;
     }
     if(data.alreadyDone){
-      showBanner('ok', '이미 패킹완료 처리됨', data.company || suffix, '', '📦');
+      addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), `DLV|${suffix}`, true, `이미 패킹완료 처리됨 (${data.company || suffix})`);
       return;
     }
     const durationLabel = data.packingMs > 0 ? formatMsShort(data.packingMs) : '';
-    showBanner('ok', '패킹완료 처리됨', data.company || suffix, `${data.worker || ''} 작업시간에 ${durationLabel} 추가됨`, '📦');
+    addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), `DLV|${suffix}`, true, `패킹완료 ✅ ${data.company || ''} / ${data.worker || ''} ${durationLabel}`);
     playOkSound();
     speakKorean('패킹 완료');
-  }catch(err){
-    showBanner('err', '패킹완료 처리 실패', suffix, String(err), '❌');
+  }).catch(err => {
+    addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), `DLV|${suffix}`, false, `패킹완료 처리 실패: ${err}`);
     playErrSound();
-  }
+  });
 }
 
 function formatMsShort(ms){
