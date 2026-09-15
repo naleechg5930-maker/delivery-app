@@ -1418,7 +1418,7 @@ function processScan(rawCode){
     const done = item.scannedQty >= item.orderQty;
     showBanner('ok', '정상피킹', displayCode, `${item.name} / ${item.spec}  (${item.scannedQty}/${item.orderQty})`, '✅');
     addLog(timeStr, displayCode, true, (done ? '해당 품번 완료' : `${item.scannedQty}/${item.orderQty}`));
-    if(done) playCompleteSound(); else playOkSound();
+    if(done){ playCompleteSound(); speakKorean('품목 완료'); } else playOkSound();
     if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
   } else {
     const overBy = bulkQty - remaining;
@@ -1543,7 +1543,7 @@ function adjustLastScanned(amount){
     const done = item.scannedQty >= item.orderQty;
     showBanner('ok', '정상피킹', item.code, `${item.name} / ${item.spec}  (+${amount}) → ${item.scannedQty}/${item.orderQty}`, '✅');
     addLog(timeStr, item.code, true, `수량버튼 +${amount}${done ? ' (완료)' : ''} (${item.scannedQty}/${item.orderQty})`);
-    if(done) playCompleteSound(); else playOkSound();
+    if(done){ playCompleteSound(); speakKorean('품목 완료'); } else playOkSound();
     if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
   } else {
     const overBy = amount - remaining;
