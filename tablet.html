@@ -389,22 +389,101 @@
   }
 </style>
 <style>
-/* ===== 태블릿 전용 UI ===== */
+/* ===== 태블릿 전용 UI — 다크 테마 통합 리스트 ===== */
+html, body { background: #0A0E2E !important; color: #C8CCEE !important; }
+.topbar { background: #161D65 !important; }
 .brand::after { content: ' (태블릿)'; font-size: 13px; color: #FFB200; font-weight: 400; }
-#scanInput { font-size: 22px !important; height: 64px !important; padding: 16px !important; }
-.table-scroll { max-height: 52vh !important; }
-#waitingBody td, #doneBody td { font-size: 16px !important; padding: 13px 10px !important; }
-th { font-size: 14px !important; padding: 10px !important; }
-.badge { font-size: 13px !important; padding: 5px 10px !important; }
-.location-badge {
-  display: inline-block; background: #161D65; color: #FFB200;
-  font-size: 12px; font-weight: 800; padding: 2px 7px;
-  border-radius: 5px; margin-right: 6px; font-family: monospace;
-  vertical-align: middle; letter-spacing: 0.5px;
+body { padding: 0 !important; gap: 0 !important; }
+
+/* 스캔 입력 */
+#scanInput {
+  font-size: 22px !important; height: 64px !important; padding: 16px !important;
+  background: #161D65 !important; color: #fff !important; border-color: #2D3570 !important;
 }
-#waitingBody tr.picking-now { background: #EEF2FF !important; }
-#waitingBody tr.picking-now td { color: #1E1B4B !important; font-weight: 700 !important; }
-#waitingBody tr.picking-now td:first-child { border-left: 4px solid #4F46E5 !important; }
+#scanInput::placeholder { color: #8890C0 !important; }
+
+/* 진행률 바 */
+.progress-wrap { background: #0F1340 !important; padding: 10px 16px !important; }
+.bar-bg { background: #1E2460 !important; height: 10px !important; border-radius: 5px !important; }
+.bar-fill { background: #FFB200 !important; }
+.progress-top .label { color: #8890C0 !important; }
+.progress-top .num { color: #FFB200 !important; font-size: 20px !important; }
+
+/* 대기중/완료 테이블 숨기기 — 태블릿은 통합 카드 리스트로 대체 */
+.split-row { display: none !important; }
+
+/* 통합 카드 리스트 */
+#tabletItemList {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.t-card {
+  border-radius: 14px;
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  transition: opacity 0.2s;
+}
+.t-card.t-wait {
+  background: #1A2040;
+  border: 1px solid #2D3570;
+}
+.t-card.t-active {
+  background: #1E3A5F;
+  border: 2px solid #3B82F6;
+}
+.t-card.t-done {
+  background: #0D2818;
+  border: 1px solid #166534;
+  opacity: 0.82;
+}
+.t-zone {
+  font-size: 13px; font-weight: 800; padding: 4px 10px;
+  border-radius: 6px; flex-shrink: 0; font-family: monospace; letter-spacing: 0.5px;
+}
+.t-wait .t-zone { background: #2D3570; color: #8890C0; }
+.t-active .t-zone { background: #3B82F6; color: #fff; }
+.t-done .t-zone { background: #166534; color: #4ADE80; }
+.t-info { flex: 1; min-width: 0; }
+.t-code { font-size: 13px; margin-bottom: 3px; }
+.t-wait .t-code { color: #6870A0; }
+.t-active .t-code { color: #93C5FD; font-weight: 700; }
+.t-done .t-code { color: #4ADE80; }
+.t-name { font-size: 20px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-wait .t-name { color: #C8CCEE; }
+.t-active .t-name { color: #fff; }
+.t-done .t-name { color: #86EFAC; }
+.t-qty { text-align: right; flex-shrink: 0; }
+.t-qty-num { font-size: 38px; font-weight: 800; line-height: 1; }
+.t-wait .t-qty-num { color: #C8CCEE; }
+.t-active .t-qty-num { color: #fff; }
+.t-done .t-qty-num { color: #4ADE80; }
+.t-qty-total { font-size: 20px; font-weight: 400; }
+.t-wait .t-qty-total { color: #6870A0; }
+.t-active .t-qty-total { color: #93C5FD; }
+.t-done .t-qty-total { color: #86EFAC; }
+.t-status {
+  font-size: 12px; padding: 3px 10px; border-radius: 5px; margin-top: 4px; display: inline-block;
+}
+.t-wait .t-status { background: #2D3570; color: #8890C0; }
+.t-active .t-status { background: #3B82F6; color: #fff; }
+.t-done .t-status { background: #166534; color: #4ADE80; }
+
+/* 하단 버튼 */
+.footer-settings { display: none !important; }
+.company-bar, .folder-bar, .live-packing { 
+  background: #0F1340 !important; 
+  border-color: #2D3570 !important; 
+  color: #8890C0 !important;
+}
+.company-bar label, .folder-bar label { color: #8890C0 !important; }
+.company-bar input, .folder-bar input { 
+  background: #161D65 !important; color: #fff !important; border-color: #2D3570 !important;
+}
+
 .toolbar button, .toolbar label.file-btn { font-size: 14px !important; padding: 9px 16px !important; }
 </style>
 </head>
@@ -471,6 +550,8 @@ th { font-size: 14px !important; padding: 10px !important; }
   </div>
   <div class="bar-bg"><div class="bar-fill" id="barFill"></div></div>
 </div>
+
+<div id="tabletItemList"></div>
 
 <div class="main-grid">
   <div class="scan-panel">
@@ -766,17 +847,26 @@ th { font-size: 14px !important; padding: 10px !important; }
    참조하므로, 다른 어떤 선언보다도 먼저 여기서 선언해둔다. (실제 저장된 값은 나중에
    idbGet으로 비동기 복원되지만, 그 전까지도 최소한 참조 자체는 에러 없이 되어야 한다) */
 let gasWebhookUrl = '';
-let locationMap = {}; // { 품목코드(대문자): { zone, seq } } — 태블릿 진열순서
+let locationEntries = []; // [{prefix, zone, seq}] — 긴 것부터 정렬됨
 
-// 진열순서 시트에서 구역/순번 데이터를 불러온다
+// 접두어로 품목코드에 맞는 구역/순번을 찾아 반환 (긴 접두어 우선)
+function findLocation(code) {
+  const upper = (code || '').toUpperCase();
+  for (let i = 0; i < locationEntries.length; i++) {
+    if (upper.startsWith(locationEntries[i].prefix)) return locationEntries[i];
+  }
+  return { zone: '', seq: 9999 };
+}
+
+// 진열순서 시트에서 접두어/구역/순번 데이터를 불러온다
 async function loadLocationMap() {
   if (!gasWebhookUrl) return;
   try {
     const resp = await fetch(gasWebhookUrl + '?action=getLocationOrder');
     const data = await resp.json();
-    if (data.ok && data.locationMap) {
-      locationMap = data.locationMap;
-      console.log('진열순서 로드 완료:', Object.keys(locationMap).length + '개 품목');
+    if (data.ok && data.entries) {
+      locationEntries = data.entries;
+      console.log('진열순서 로드 완료:', locationEntries.length + '개 접두어');
     }
   } catch (err) {
     console.warn('진열순서 로드 실패(무시):', err);
@@ -979,11 +1069,11 @@ function loadItems(rawList){
   });
   items = order.map(key => merged[key]);
 
-  // 태블릿 전용: 진열순서(locationMap)가 있으면 구역+순번 기준으로 정렬
-  if (Object.keys(locationMap).length > 0) {
+  // 태블릿 전용: 진열순서(locationEntries)가 있으면 구역+순번 기준으로 정렬
+  if (locationEntries.length > 0) {
     items.sort((a, b) => {
-      const la = locationMap[a.code.toUpperCase()] || { seq: 9999, zone: 'ZZ' };
-      const lb = locationMap[b.code.toUpperCase()] || { seq: 9999, zone: 'ZZ' };
+      const la = findLocation(a.code);
+      const lb = findLocation(b.code);
       if (la.zone !== lb.zone) return la.zone.localeCompare(lb.zone);
       return la.seq - lb.seq;
     });
@@ -1641,32 +1731,43 @@ function updateMiniStats(){
 
 /* ===================== 테이블 (대기중·진행중 / 완료 분리) ===================== */
 function renderTable(){
-  // 대기중: 진열순서 유지(이미 정렬됨), 단 방금 스캔한 품목은 맨 위
-  const waiting = items.filter(it => it.scannedQty < it.orderQty).sort((a, b) => {
-    if(lastScannedItem && a.code === lastScannedItem.code) return -1;
-    if(lastScannedItem && b.code === lastScannedItem.code) return 1;
-    return 0;
-  });
-  const done = items.filter(it => it.scannedQty >= it.orderQty).sort((a, b) => {
-    if(lastScannedItem && a.code === lastScannedItem.code) return -1;
-    if(lastScannedItem && b.code === lastScannedItem.code) return 1;
-    return 0;
-  });
+  // 태블릿: 진열순서대로 하나의 통합 카드 리스트로 보여준다
+  // 대기/진행중은 순서대로 위에, 완료는 맨 아래로 내려감
+  const waiting = items.filter(it => it.scannedQty < it.orderQty);
+  const done    = items.filter(it => it.scannedQty >= it.orderQty);
 
-  function locationBadge(code) {
-    const loc = locationMap[code.toUpperCase()];
-    if (!loc) return '';
-    return `<span class="location-badge">${loc.zone}</span>`;
+  // 대기 중 첫 번째 품목이 현재 피킹 중인 것 (active)
+  function cardHtml(it, isActive, isDone) {
+    const cls = isDone ? 't-done' : isActive ? 't-active' : 't-wait';
+    const loc = findLocation(it.code);
+    const zoneBadge = loc.zone ? `<div class="t-zone">${loc.zone}</div>` : '<div class="t-zone">—</div>';
+    const statusText = isDone ? '✅ 완료' : isActive ? '진행중' : '대기';
+    return `<div class="t-card ${cls}">
+      ${zoneBadge}
+      <div class="t-info">
+        <div class="t-code">${it.code}</div>
+        <div class="t-name">${it.name}${it.spec ? ' <span style="font-size:15px;font-weight:400;">' + it.spec + '</span>' : ''}</div>
+      </div>
+      <div class="t-qty">
+        <div><span class="t-qty-num">${it.scannedQty}</span><span class="t-qty-total"> / ${it.orderQty}</span></div>
+        <div class="t-status">${statusText}</div>
+      </div>
+    </div>`;
   }
 
-  document.getElementById('waitingBody').innerHTML = waiting.map((it, idx) => {
-    const isPickingNow = idx === 0 && waiting.length > 0;
-    const cls = isPickingNow ? ' class="picking-now"' : '';
-    return `<tr id="row-${it.code}"${cls}>${rowHtml(it, locationBadge(it.code))}</tr>`;
-  }).join('');
-  document.getElementById('doneBody').innerHTML = done.map(it => `<tr id="row-${it.code}" class="done">${rowHtml(it, '')}</tr>`).join('');
-  document.getElementById('waitingCount').textContent = waiting.length;
-  document.getElementById('doneCount').textContent = done.length;
+  const html = [
+    ...waiting.map((it, idx) => cardHtml(it, idx === 0, false)),
+    ...done.map(it => cardHtml(it, false, true)),
+  ].join('');
+
+  const listEl = document.getElementById('tabletItemList');
+  if (listEl) listEl.innerHTML = html;
+
+  // 기존 테이블도 혹시 쓰이는 곳을 위해 최소한 카운트는 업데이트
+  const wc = document.getElementById('waitingCount');
+  const dc = document.getElementById('doneCount');
+  if (wc) wc.textContent = waiting.length;
+  if (dc) dc.textContent = done.length;
   updateMiniStats();
 }
 function statusBadge(it){
