@@ -427,8 +427,8 @@ body { padding: 0 !important; gap: 0 !important; }
   gap: 8px;
 }
 .t-card {
-  border-radius: 14px;
-  padding: 18px 20px;
+  border-radius: 16px;
+  padding: 24px 24px;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -438,35 +438,35 @@ body { padding: 0 !important; gap: 0 !important; }
 .t-card.t-active { background: #1E3A5F; border: 2px solid #3B82F6; }
 .t-card.t-done { background: #0D2818; border: 1px solid #166534; opacity: 0.82; }
 .t-zone {
-  font-size: 16px; font-weight: 800; padding: 6px 14px;
+  font-size: 20px; font-weight: 800; padding: 8px 18px;
   border-radius: 6px; flex-shrink: 0; font-family: monospace; letter-spacing: 0.5px;
 }
 .t-wait .t-zone { background: #2D3570; color: #8890C0; }
 .t-active .t-zone { background: #3B82F6; color: #fff; }
 .t-done .t-zone { background: #166534; color: #4ADE80; }
 .t-info { flex: 1; min-width: 0; }
-.t-code { font-size: 16px; margin-bottom: 4px; }
+.t-code { font-size: 18px; margin-bottom: 6px; }
 .t-wait .t-code { color: #6870A0; }
 .t-active .t-code { color: #93C5FD; font-weight: 700; }
 .t-done .t-code { color: #4ADE80; }
-.t-name { font-size: 24px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-name { font-size: 30px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .t-wait .t-name { color: #C8CCEE; }
 .t-active .t-name { color: #fff; }
 .t-done .t-name { color: #86EFAC; }
 .t-qty { text-align: right; flex-shrink: 0; }
-.t-qty-label { font-size: 12px; margin-bottom: 2px; }
+.t-qty-label { font-size: 15px; margin-bottom: 3px; }
 .t-wait .t-qty-label { color: #6870A0; }
 .t-active .t-qty-label { color: #93C5FD; }
 .t-done .t-qty-label { color: #4ADE80; }
-.t-qty-num { font-size: 44px; font-weight: 800; line-height: 1; }
+.t-qty-num { font-size: 56px; font-weight: 800; line-height: 1; }
 .t-wait .t-qty-num { color: #C8CCEE; }
 .t-active .t-qty-num { color: #fff; }
 .t-done .t-qty-num { color: #4ADE80; }
-.t-qty-total { font-size: 26px; font-weight: 400; }
+.t-qty-total { font-size: 32px; font-weight: 400; }
 .t-wait .t-qty-total { color: #6870A0; }
 .t-active .t-qty-total { color: #93C5FD; }
 .t-done .t-qty-total { color: #86EFAC; }
-.t-status { font-size: 14px; padding: 5px 12px; border-radius: 5px; margin-top: 6px; display: inline-block; }
+.t-status { font-size: 16px; padding: 7px 16px; border-radius: 6px; margin-top: 8px; display: inline-block; font-weight: 700; }
 .t-wait .t-status { background: #2D3570; color: #8890C0; }
 .t-active .t-status { background: #3B82F6; color: #fff; }
 .t-done .t-status { background: #166534; color: #4ADE80; }
@@ -545,25 +545,27 @@ body { padding: 0 !important; gap: 0 !important; }
   <div class="bar-bg"><div class="bar-fill" id="barFill"></div></div>
 </div>
 
+<div style="background:#0F1340;padding:10px 16px 14px;border-bottom:1px solid #2D3570;">
+  <input type="text" id="tabletScanInput" placeholder="숫자 입력 후 엔터 = 수량 지정 / 바코드 스캔"
+    autocomplete="off"
+    style="width:100%;box-sizing:border-box;background:#161D65;color:#fff;border:2px solid #2D3570;border-radius:12px;padding:16px 18px;font-size:22px;outline:none;">
+  <div id="tabletQtyBadge" style="display:none;margin-top:8px;background:#FFB200;color:#1A1300;font-size:16px;font-weight:800;text-align:center;padding:10px;border-radius:8px;"></div>
+</div>
+
 <div id="tabletItemList"></div>
 
 <div class="main-grid">
-  <div class="scan-panel">
-    <div class="scan-input-wrap">
+  <div class="scan-panel" style="padding:0;">
+    <div class="scan-input-wrap" style="display:none;">
       <label>바코드 스캔 입력 (스캐너로 찍으면 자동 입력됩니다)</label>
-      <input type="text" id="scanInput" placeholder="숫자 입력 후 엔터 = 수량 지정 / 바코드 스캔" autocomplete="off">
+      <input type="text" id="scanInput" placeholder="숫자 입력 후 엔터 = 수량 지정 / 바코드 스캔" autocomplete="off" style="position:fixed;left:-9999px;opacity:0;">
     </div>
-    <div id="tabletQtyIndicator" style="display:none; background:#FFB200; color:#1A1300; font-weight:800; font-size:15px; text-align:center; padding:10px; border-radius:8px; margin-top:6px;"></div>
-
-    <div style="display:flex; align-items:center; gap:10px; margin-top:2px;">
-      <button id="bundleModeBtn" style="flex:1; padding:10px; font-size:14px; font-weight:800; background:#fff; color:var(--accent); border:2px solid var(--accent);">📦 묶음처리</button>
-      <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--sub); cursor:pointer; white-space:nowrap;">
-        <input type="checkbox" id="bundleContinuousToggle"> 연속
-      </label>
+    <div id="tabletQtyBadge" style="display:none;"></div>
+    <div style="display:none;">
+      <button id="bundleModeBtn">📦 묶음처리</button>
+      <label><input type="checkbox" id="bundleContinuousToggle"> 연속</label>
     </div>
-    <div id="bundleModeIndicator" style="display:none; background:#DC2626; color:#fff; font-weight:800; text-align:center; padding:8px; border-radius:8px;">
-      📦 묶음처리 모드 켜짐 — 다음 스캔은 묶음수량으로 처리됩니다
-    </div>
+    <div id="bundleModeIndicator" style="display:none;"></div>
 
     <div class="log-panel">
       <h2>스캔 로그</h2>
@@ -853,6 +855,53 @@ function findLocation(code) {
   }
   return { zone: '', seq: 9999 };
 }
+
+// 태블릿 전용 — 진행률 바 아래 스캔 입력창 연결
+(function setupTabletScanInput() {
+  const tabletInput = document.getElementById('tabletScanInput');
+  if (!tabletInput) return;
+
+  tabletInput.addEventListener('blur', () => {
+    setTimeout(() => {
+      if(anyModalOpen()) return;
+      if(isEditableFocused()) return;
+      tabletInput.focus();
+    }, 150);
+  });
+  setTimeout(() => tabletInput.focus(), 500);
+
+  tabletInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const raw = tabletInput.value.trim();
+    tabletInput.value = '';
+    if (!raw) return;
+
+    const badge = document.getElementById('tabletQtyBadge');
+
+    // 숫자만 입력 → 다음 스캔에 적용할 수량 예약
+    if (/^\d+$/.test(raw)) {
+      const qty = parseInt(raw, 10);
+      if (qty > 0 && qty <= 9999) {
+        pendingBulkQty = qty;
+        if (badge) { badge.textContent = '다음 스캔: ' + qty + '개 (낱개)'; badge.style.display = 'block'; }
+        playOkSound();
+      }
+      return;
+    }
+
+    // 바코드 스캔 — pendingBulkQty만큼 낱개로 반복 처리 (박스 아님)
+    const applyQty = pendingBulkQty;
+    pendingBulkQty = 1;
+    if (badge) badge.style.display = 'none';
+
+    if (applyQty > 1) {
+      for (let i = 0; i < applyQty; i++) processScan(raw);
+    } else {
+      processScan(raw);
+    }
+  });
+})();
 
 // 진열순서 시트에서 접두어/구역/순번 데이터를 불러온다
 async function loadLocationMap() {
@@ -1339,6 +1388,8 @@ function isEditableFocused(){
 function focusInput(){
   if(anyModalOpen()) return;
   if(isEditableFocused()) return;
+  const ti = document.getElementById('tabletScanInput');
+  if(ti){ ti.focus(); return; }
   scanInput.focus();
 }
 scanInput.addEventListener('blur', ()=> setTimeout(focusInput, 150));
@@ -1395,7 +1446,7 @@ scanInput.addEventListener('keydown', (e)=>{
       const qty = parseInt(raw, 10);
       if(qty > 0 && qty <= 9999){
         pendingBulkQty = qty;
-        const indicator = document.getElementById('tabletQtyIndicator');
+        const indicator = document.getElementById('tabletQtyBadge');
         if(indicator){
           indicator.textContent = '다음 스캔: ' + qty + '개';
           indicator.style.display = 'block';
@@ -1409,7 +1460,7 @@ scanInput.addEventListener('keydown', (e)=>{
     // 바코드 스캔 — pendingBulkQty 적용 후 1로 리셋
     const applyQty = pendingBulkQty;
     pendingBulkQty = 1;
-    const indicator = document.getElementById('tabletQtyIndicator');
+    const indicator = document.getElementById('tabletQtyBadge');
     if(indicator) indicator.style.display = 'none';
 
     if(applyQty > 1){
