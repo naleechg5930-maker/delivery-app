@@ -395,12 +395,19 @@ html, body { background: #0A0E2E !important; color: #C8CCEE !important; }
 .brand::after { content: ' (태블릿)'; font-size: 13px; color: #FFB200; font-weight: 400; }
 body { padding: 0 !important; gap: 0 !important; }
 
+/* 스캔 패널 고정 — 맨 위 */
+.main-grid { display: flex !important; flex-direction: column !important; }
+.scan-panel { background: #0F1340 !important; padding: 12px 16px !important; }
+.log-panel { background: #0A0E2E !important; border-top: 1px solid #2D3570 !important; }
+.log-panel h2 { color: #8890C0 !important; font-size: 14px !important; }
+.log-list { max-height: 160px !important; overflow-y: auto !important; }
+
 /* 스캔 입력 */
 #scanInput {
-  font-size: 22px !important; height: 64px !important; padding: 16px !important;
+  font-size: 22px !important; height: 60px !important; padding: 14px !important;
   background: #161D65 !important; color: #fff !important; border-color: #2D3570 !important;
 }
-#scanInput::placeholder { color: #8890C0 !important; }
+#scanInput::placeholder { color: #8890C0 !important; font-size: 16px !important; }
 
 /* 진행률 바 */
 .progress-wrap { background: #0F1340 !important; padding: 10px 16px !important; }
@@ -427,63 +434,50 @@ body { padding: 0 !important; gap: 0 !important; }
   gap: 16px;
   transition: opacity 0.2s;
 }
-.t-card.t-wait {
-  background: #1A2040;
-  border: 1px solid #2D3570;
-}
-.t-card.t-active {
-  background: #1E3A5F;
-  border: 2px solid #3B82F6;
-}
-.t-card.t-done {
-  background: #0D2818;
-  border: 1px solid #166534;
-  opacity: 0.82;
-}
+.t-card.t-wait { background: #1A2040; border: 1px solid #2D3570; }
+.t-card.t-active { background: #1E3A5F; border: 2px solid #3B82F6; }
+.t-card.t-done { background: #0D2818; border: 1px solid #166534; opacity: 0.82; }
 .t-zone {
-  font-size: 13px; font-weight: 800; padding: 4px 10px;
+  font-size: 16px; font-weight: 800; padding: 6px 14px;
   border-radius: 6px; flex-shrink: 0; font-family: monospace; letter-spacing: 0.5px;
 }
 .t-wait .t-zone { background: #2D3570; color: #8890C0; }
 .t-active .t-zone { background: #3B82F6; color: #fff; }
 .t-done .t-zone { background: #166534; color: #4ADE80; }
 .t-info { flex: 1; min-width: 0; }
-.t-code { font-size: 13px; margin-bottom: 3px; }
+.t-code { font-size: 16px; margin-bottom: 4px; }
 .t-wait .t-code { color: #6870A0; }
 .t-active .t-code { color: #93C5FD; font-weight: 700; }
 .t-done .t-code { color: #4ADE80; }
-.t-name { font-size: 20px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-name { font-size: 24px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .t-wait .t-name { color: #C8CCEE; }
 .t-active .t-name { color: #fff; }
 .t-done .t-name { color: #86EFAC; }
 .t-qty { text-align: right; flex-shrink: 0; }
-.t-qty-num { font-size: 38px; font-weight: 800; line-height: 1; }
+.t-qty-label { font-size: 12px; margin-bottom: 2px; }
+.t-wait .t-qty-label { color: #6870A0; }
+.t-active .t-qty-label { color: #93C5FD; }
+.t-done .t-qty-label { color: #4ADE80; }
+.t-qty-num { font-size: 44px; font-weight: 800; line-height: 1; }
 .t-wait .t-qty-num { color: #C8CCEE; }
 .t-active .t-qty-num { color: #fff; }
 .t-done .t-qty-num { color: #4ADE80; }
-.t-qty-total { font-size: 20px; font-weight: 400; }
+.t-qty-total { font-size: 26px; font-weight: 400; }
 .t-wait .t-qty-total { color: #6870A0; }
 .t-active .t-qty-total { color: #93C5FD; }
 .t-done .t-qty-total { color: #86EFAC; }
-.t-status {
-  font-size: 12px; padding: 3px 10px; border-radius: 5px; margin-top: 4px; display: inline-block;
-}
+.t-status { font-size: 14px; padding: 5px 12px; border-radius: 5px; margin-top: 6px; display: inline-block; }
 .t-wait .t-status { background: #2D3570; color: #8890C0; }
 .t-active .t-status { background: #3B82F6; color: #fff; }
 .t-done .t-status { background: #166534; color: #4ADE80; }
 
-/* 하단 버튼 */
+/* 기타 */
 .footer-settings { display: none !important; }
-.company-bar, .folder-bar, .live-packing { 
-  background: #0F1340 !important; 
-  border-color: #2D3570 !important; 
-  color: #8890C0 !important;
-}
+#bundleModeBtn, #bundleContinuousToggle, label[for="bundleContinuousToggle"],
+#bundleModeIndicator { display: none !important; }
+.company-bar, .folder-bar, .live-packing { background: #0F1340 !important; border-color: #2D3570 !important; color: #8890C0 !important; }
 .company-bar label, .folder-bar label { color: #8890C0 !important; }
-.company-bar input, .folder-bar input { 
-  background: #161D65 !important; color: #fff !important; border-color: #2D3570 !important;
-}
-
+.company-bar input, .folder-bar input { background: #161D65 !important; color: #fff !important; border-color: #2D3570 !important; }
 .toolbar button, .toolbar label.file-btn { font-size: 14px !important; padding: 9px 16px !important; }
 </style>
 </head>
@@ -557,8 +551,9 @@ body { padding: 0 !important; gap: 0 !important; }
   <div class="scan-panel">
     <div class="scan-input-wrap">
       <label>바코드 스캔 입력 (스캐너로 찍으면 자동 입력됩니다)</label>
-      <input type="text" id="scanInput" placeholder="여기를 클릭 후 바코드를 스캔하세요" autocomplete="off">
+      <input type="text" id="scanInput" placeholder="숫자 입력 후 엔터 = 수량 지정 / 바코드 스캔" autocomplete="off">
     </div>
+    <div id="tabletQtyIndicator" style="display:none; background:#FFB200; color:#1A1300; font-weight:800; font-size:15px; text-align:center; padding:10px; border-radius:8px; margin-top:6px;"></div>
 
     <div style="display:flex; align-items:center; gap:10px; margin-top:2px;">
       <button id="bundleModeBtn" style="flex:1; padding:10px; font-size:14px; font-weight:800; background:#fff; color:var(--accent); border:2px solid var(--accent);">📦 묶음처리</button>
@@ -848,6 +843,7 @@ body { padding: 0 !important; gap: 0 !important; }
    idbGet으로 비동기 복원되지만, 그 전까지도 최소한 참조 자체는 에러 없이 되어야 한다) */
 let gasWebhookUrl = '';
 let locationEntries = []; // [{prefix, zone, seq}] — 긴 것부터 정렬됨
+let pendingBulkQty = 1; // 수량 선입력 값 (숫자 엔터 → 다음 스캔에 한 번 적용, 이후 1로 리셋)
 
 // 접두어로 품목코드에 맞는 구역/순번을 찾아 반환 (긴 접두어 우선)
 function findLocation(code) {
@@ -1394,6 +1390,34 @@ scanInput.addEventListener('keydown', (e)=>{
     scanInput.value = '';
     if(!raw) return;
 
+    // 숫자만 입력됐을 때 → 다음 스캔에 적용할 수량으로 설정
+    if(/^\d+$/.test(raw)){
+      const qty = parseInt(raw, 10);
+      if(qty > 0 && qty <= 9999){
+        pendingBulkQty = qty;
+        const indicator = document.getElementById('tabletQtyIndicator');
+        if(indicator){
+          indicator.textContent = '다음 스캔: ' + qty + '개';
+          indicator.style.display = 'block';
+        }
+        playOkSound();
+      }
+      focusInput();
+      return;
+    }
+
+    // 바코드 스캔 — pendingBulkQty 적용 후 1로 리셋
+    const applyQty = pendingBulkQty;
+    pendingBulkQty = 1;
+    const indicator = document.getElementById('tabletQtyIndicator');
+    if(indicator) indicator.style.display = 'none';
+
+    if(applyQty > 1){
+      processScan(raw, applyQty);
+    } else {
+      processScan(raw);
+    }
+
     // 작업자 QR("WK:숫자")은 스캐너가 한글을 직접 보내면 깨지는 문제가 있어서, 숫자 코드로만 받고
     // 실제 이름은 여기(WORKER_CODE_MAP)에서 찾아온다.
     // 콜론(:) 자리에 스캐너가 다른 비슷한 문자를 보내는 경우가 있어서, 정규식으로 느슨하게 확인한다.
@@ -1458,7 +1482,7 @@ let lastScannedItem = null;
 
 const PRODUCT_CODE_LEN = 11; // 기본 품목코드 자릿수 (예: NTA8000A117)
 
-function processScan(rawCode){
+function processScan(rawCode, overrideQty){
   if(currentWorker === '' && !adminForceUnlocked){
     document.getElementById('workerBlockOverlay').style.display = 'flex';
     playErrSound();
@@ -1471,7 +1495,22 @@ function processScan(rawCode){
   let bulkQty = 1;
   const directTry = resolveScannedCode(scannedRaw);
 
-  if(!bundleModeActive && !codeIndex[directTry.resolved] && scannedRaw.length > PRODUCT_CODE_LEN){
+  // 수량 선입력이 있으면 우선 적용 (박스/마대 경로)
+  if(overrideQty && overrideQty > 1){
+    const directCode = resolveScannedCode(scannedRaw);
+    if(codeIndex[directCode.resolved]){
+      // 바코드가 품목코드 그대로인 경우 — 직접 bulkQty만 설정
+      codeForLookup = scannedRaw;
+      bulkQty = overrideQty;
+    } else {
+      const possibleCode = scannedRaw.slice(0, PRODUCT_CODE_LEN);
+      const boxTry = resolveScannedCode(possibleCode);
+      if(codeIndex[boxTry.resolved]){
+        codeForLookup = possibleCode;
+        bulkQty = overrideQty;
+      }
+    }
+  } else if(!bundleModeActive && !codeIndex[directTry.resolved] && scannedRaw.length > PRODUCT_CODE_LEN){
     // 묶음처리 모드가 꺼져있을 때만 박스/마대(품번 11자리 + 수량) 자동 해석을 시도한다.
     // (묶음처리 모드가 켜져있으면, 사용자가 명시적으로 "이건 묶음이다"라고 지정한 것이므로
     // 박스/마대로 잘못 오인해서 캐파시티 계산을 건너뛰는 일이 없도록 이 자동 해석을 건너뛴다)
@@ -1746,10 +1785,11 @@ function renderTable(){
       ${zoneBadge}
       <div class="t-info">
         <div class="t-code">${it.code}</div>
-        <div class="t-name">${it.name}${it.spec ? ' <span style="font-size:15px;font-weight:400;">' + it.spec + '</span>' : ''}</div>
+        <div class="t-name">${it.name}${it.spec ? ' <span style="font-size:18px;font-weight:400;">' + it.spec + '</span>' : ''}</div>
       </div>
       <div class="t-qty">
-        <div><span class="t-qty-num">${it.scannedQty}</span><span class="t-qty-total"> / ${it.orderQty}</span></div>
+        <div class="t-qty-label">주문 / 스캔</div>
+        <div><span class="t-qty-num">${it.orderQty}</span><span class="t-qty-total"> / ${it.scannedQty}</span></div>
         <div class="t-status">${statusText}</div>
       </div>
     </div>`;
