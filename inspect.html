@@ -405,6 +405,7 @@
       <input type="checkbox" id="noPrinterToggle"> 이 컴퓨터엔 프린터 없음(대기열로 보내기)
     </label>
     <button id="moreMenuBtn" style="margin-left:8px;">☰ 더보기</button>
+    <button id="forceFinishBtn" style="margin-left:8px; background:#DC2626; color:#fff; border-color:#DC2626;" title="지금까지 스캔한 수량만으로 봉투 계산 후 명세표+라벨 바로 출력">⚡ 강제 완료</button>
     <button id="restBtn" style="margin-left:8px;">⏸ 휴식</button>
   </div>
   <div id="moreMenuPanel" style="display:none; border:1px solid var(--line); border-radius:10px; padding:10px; margin-top:8px; background:var(--panel);">
@@ -555,7 +556,10 @@
 
 <div class="company-bar">
   <label for="companyNameInput">업체명</label>
-  <input type="text" id="companyNameInput" placeholder="예: 바띠소띠 — 붙여넣기 시 자동 인식 시도, 다르면 직접 수정하세요">
+  <div style="display:flex;flex-direction:column;gap:3px;flex:1;">
+    <input type="text" id="companyNameInput" placeholder="예: 바띠소띠 — 붙여넣기 시 자동 인식 시도, 다르면 직접 수정하세요">
+    <span id="ablyOrderDocKey" style="display:none;font-size:12px;color:#3B82F6;font-family:monospace;padding-left:2px;"></span>
+  </div>
   <span id="orderTagBadge" style="display:none;"></span>
   <label for="deliveryZoneInput" style="margin-left:10px;">배송구역</label>
   <input type="text" id="deliveryZoneInput" placeholder="예: E1(우)" style="flex:0 0 140px;">
@@ -2086,8 +2090,10 @@ async function processDocumentLookup(raw){
   // 나중에 조회가 끝나면서 그 값을 도로 지워버리는 순서 문제가 생길 수 있어서 여기서 미리 처리한다.
   // (혹시 이 전표에 이미 작업자가 배정된 적 있으면, 조회 완료 후 documentWorkerMap에서 되살림)
   currentWorker = '';
-  adminForceUnlocked = false; // 새 전표는 다시 작업자 지정을 요구한다 (예전 강제진행은 그 전표에만 유효)
+  adminForceUnlocked = false;
   document.getElementById('workerBlockOverlay').style.display = 'none';
+  const ablyDocEl = document.getElementById('ablyOrderDocKey');
+  if(ablyDocEl){ ablyDocEl.textContent = ''; ablyDocEl.style.display = 'none'; }
   // 혹시(이 노트북이든 다른 노트북이든) 전체 휴식 중이었다면, 전표를 새로 찍는 이 순간
   // 서버에 "휴식 끝"을 보내서 모두에게 적용되는 휴식 상태를 강제로 종료시킨다.
   if(restStartTime !== null){
@@ -2154,6 +2160,18 @@ async function processDocumentLookup(raw){
     if(data.company){
       const companyDisplay = data.arrivalGuaranteed ? `${data.company} (도착보장)` : data.company;
       document.getElementById('companyNameInput').value = companyDisplay;
+
+      // 에이블리(오더)일 때만 업체명 아래에 전표번호를 작게 표시
+      const ablyDocEl = document.getElementById('ablyOrderDocKey');
+      if(ablyDocEl){
+        if(normalizeCompanyKey(data.company) === normalizeCompanyKey('에이블리(오더)') && data.key){
+          ablyDocEl.textContent = data.key;
+          ablyDocEl.style.display = 'block';
+        } else {
+          ablyDocEl.textContent = '';
+          ablyDocEl.style.display = 'none';
+        }
+      }
     }
     // 소매처 참고표(거래처등록 마스터) 매칭을 우선시하고, 못 찾으면 판매현황 시트의 배송구역을 대신 사용
     const zoneFromLookup = guessZoneForCompany(data.company);
@@ -3218,6 +3236,24 @@ document.getElementById('adminForceUnlockBtn').addEventListener('click', functio
   adminForceUnlocked = true;
   document.getElementById('workerBlockOverlay').style.display = 'none';
   addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), '관리자 강제 진행', true, '작업자 미지정 상태로 스캔 허용됨');
+  focusInput();
+});
+
+// ⚡ 강제 완료 — 지금까지 스캔한 수량만으로 봉투 계산 후 명세표+라벨 바로 출력
+document.getElementById('forceFinishBtn').addEventListener('click', function(){
+  const company = (document.getElementById('companyNameInput').value || '').trim();
+  if(!company){
+    alert('업체명을 먼저 입력해주세요.');
+    return;
+  }
+  const scanned = items.reduce((s, it) => s + it.scannedQty, 0);
+  if(scanned === 0 && boxScanEvents.length === 0){
+    alert('스캔된 수량이 없습니다.');
+    return;
+  }
+  if(!confirm(`지금까지 스캔한 수량(${scanned}개)만으로 봉투 계산 후 명세표+라벨을 출력합니다.\n계속할까요?`)) return;
+  printCompletionLabel(company);
+  addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), '강제완료', true, `스캔수량 ${scanned}개 기준으로 라벨 출력`);
   focusInput();
 });
 
