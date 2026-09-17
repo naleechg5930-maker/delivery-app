@@ -889,11 +889,19 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
 
-    // 작업자 QR / 전표 QR / DLV QR 은 수량 로직 없이 바로 processScan으로
-    // (WK:숫자, 날짜/전표번호 형식, DLV| 형식)
-    if (/^WK[^0-9]*\d+$/i.test(raw) ||
-        /^\d{4}\/\d{2}\/\d{2}/.test(raw) ||
-        /^DLV\|/i.test(raw)) {
+    // 작업자 QR / 전표 QR / DLV QR 은 수량 로직 없이 바로 처리
+    if (/^WK[^0-9]*\d+$/i.test(raw)) {
+      // 작업자 QR → processScan 내부에서 처리
+      processScan(raw);
+      return;
+    }
+    if (raw.includes('/')) {
+      // 전표 QR → 작업자 차단 없이 바로 전표 조회
+      processDocumentLookup(raw);
+      return;
+    }
+    if (/^DLV\|/i.test(raw)) {
+      // 패킹완료 QR
       processScan(raw);
       return;
     }
@@ -927,8 +935,14 @@ document.addEventListener('DOMContentLoaded', function() {
     inputTimer = setTimeout(() => {
       const raw = tabletInput.value.trim();
       if (!raw) return;
-      // 스캐너 코드 길이(보통 8자 이상)이거나 엔터 없이 멈춘 경우
-      if (raw.length >= 6) handleTabletScan();
+      if (raw.length >= 6) {
+        tabletInput.value = '';
+        if (raw.includes('/')) {
+          processDocumentLookup(raw);
+        } else {
+          handleTabletScan();
+        }
+      }
     }, 80);
   });
 });
