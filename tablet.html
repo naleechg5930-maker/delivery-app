@@ -1005,6 +1005,16 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // 진열순서 시트에서 접두어/구역/순번 데이터를 불러온다
+function sortItemsByLocation() {
+  if (locationEntries.length === 0) return;
+  items.sort((a, b) => {
+    const la = findLocation(a.code);
+    const lb = findLocation(b.code);
+    if (la.zone !== lb.zone) return la.zone.localeCompare(lb.zone);
+    return la.seq - lb.seq;
+  });
+}
+
 async function loadLocationMap() {
   if (!gasWebhookUrl) return;
   try {
@@ -1013,6 +1023,11 @@ async function loadLocationMap() {
     if (data.ok && data.entries) {
       locationEntries = data.entries;
       console.log('진열순서 로드 완료:', locationEntries.length + '개 접두어');
+      // 이미 전표가 불러와진 상태라면 즉시 재정렬
+      if (items.length > 0) {
+        sortItemsByLocation();
+        renderTable();
+      }
     }
   } catch (err) {
     console.warn('진열순서 로드 실패(무시):', err);
@@ -1216,14 +1231,7 @@ function loadItems(rawList){
   items = order.map(key => merged[key]);
 
   // 태블릿 전용: 진열순서(locationEntries)가 있으면 구역+순번 기준으로 정렬
-  if (locationEntries.length > 0) {
-    items.sort((a, b) => {
-      const la = findLocation(a.code);
-      const lb = findLocation(b.code);
-      if (la.zone !== lb.zone) return la.zone.localeCompare(lb.zone);
-      return la.seq - lb.seq;
-    });
-  }
+  sortItemsByLocation();
 
   codeIndex = {};
   items.forEach(it => codeIndex[it.code.toUpperCase()] = it);
