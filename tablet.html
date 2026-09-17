@@ -558,7 +558,7 @@ body { padding: 0 !important; gap: 0 !important; }
   <div class="scan-panel" style="padding:0;">
     <div class="scan-input-wrap" style="display:none;">
       <label>바코드 스캔 입력 (스캐너로 찍으면 자동 입력됩니다)</label>
-      <input type="text" id="scanInput" placeholder="숫자 입력 후 엔터 = 수량 지정 / 바코드 스캔" autocomplete="off" style="position:fixed;left:-9999px;opacity:0;">
+      <input type="text" id="scanInput" autocomplete="off" style="display:none;position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;" aria-hidden="true" tabindex="-1">
     </div>
     <div id="tabletQtyBadge" style="display:none;"></div>
     <div style="display:none;">
@@ -650,7 +650,7 @@ body { padding: 0 !important; gap: 0 !important; }
   </div>
 </div>
 
-<div class="company-bar">
+<div class="company-bar" style="display:none;" aria-hidden="true">
   <label for="companyNameInput">업체명</label>
   <input type="text" id="companyNameInput" placeholder="예: 바띠소띠 — 붙여넣기 시 자동 인식 시도, 다르면 직접 수정하세요">
   <span id="orderTagBadge" style="display:none;"></span>
@@ -659,7 +659,7 @@ body { padding: 0 !important; gap: 0 !important; }
   <button id="zoneLookupBtn" type="button">🔍 찾기</button>
 </div>
 
-<div class="company-bar folder-bar">
+<div class="company-bar folder-bar" style="display:none;" aria-hidden="true">
   <label for="gasUrlInput">구글시트 연동</label>
   <input type="text" id="gasUrlInput" placeholder="Apps Script 웹앱 URL 붙여넣기 (…/exec)" style="flex:1;min-width:200px;">
   <button id="gasConnectBtn" type="button">🔗 연결</button>
@@ -886,6 +886,15 @@ document.addEventListener('DOMContentLoaded', function() {
         if (badge) { badge.textContent = '다음 스캔: ' + qty + '개 (낱개)'; badge.style.display = 'block'; }
         playOkSound();
       }
+      return;
+    }
+
+    // 작업자 QR / 전표 QR / DLV QR 은 수량 로직 없이 바로 processScan으로
+    // (WK:숫자, 날짜/전표번호 형식, DLV| 형식)
+    if (/^WK[^0-9]*\d+$/i.test(raw) ||
+        /^\d{4}\/\d{2}\/\d{2}/.test(raw) ||
+        /^DLV\|/i.test(raw)) {
+      processScan(raw);
       return;
     }
 
@@ -1414,7 +1423,7 @@ function focusInput(){
   if(ti){ ti.focus(); return; }
   scanInput.focus();
 }
-scanInput.addEventListener('blur', ()=> setTimeout(focusInput, 150));
+scanInput.addEventListener('blur', ()=>{ /* 태블릿: tabletScanInput이 포커스 담당, 여기선 아무것도 안 함 */ });
 document.addEventListener('click', focusInput);
 focusInput();
 
@@ -1979,12 +1988,22 @@ function updateGasStatus(){
   const el = document.getElementById('gasStatus');
   if(!el) return;
   if(gasWebhookUrl){
-    el.textContent = '✅ 연결됨 · 검수완료 시 구글시트에 자동 기록됩니다';
+    el.textContent = '✅ 연결됨';
     el.className = 'folder-status ok';
   } else {
-    el.textContent = '미연결 · 구글시트에는 기록되지 않습니다';
+    el.textContent = '미연결';
     el.className = 'folder-status';
   }
+}
+
+// 태블릿 전용 — 전표 불러왔을 때 상단 업체명/구역 표시 업데이트
+function updateTabletInfoBar() {
+  const company = (document.getElementById('companyNameInput').value || '').trim();
+  const zone = (document.getElementById('deliveryZoneInput').value || '').trim();
+  const compEl = document.getElementById('tabletCompanyDisplay');
+  const zoneEl = document.getElementById('tabletZoneDisplay');
+  if (compEl) compEl.textContent = company || '';
+  if (zoneEl) zoneEl.textContent = zone ? '· ' + zone : '';
 }
 
 // 배송구역/봉투캐파시티 참고표를 구글시트에서 가져와서 반영한다.
@@ -2428,6 +2447,7 @@ async function processDocumentLookup(raw){
     // 소매처 참고표(거래처등록 마스터) 매칭을 우선시하고, 못 찾으면 판매현황 시트의 배송구역을 대신 사용
     const zoneFromLookup = guessZoneForCompany(data.company);
     document.getElementById('deliveryZoneInput').value = zoneFromLookup || '';
+    updateTabletInfoBar(); // 태블릿 상단 표시줄 업데이트
     document.getElementById('orderInfo').innerHTML =
       `<b>전표 조회로 불러온 주문서</b> · <b>전표:</b> ${data.key || raw} · <b>품목수:</b> ${list.length}개`;
     currentOrderTag = data.hasPrice ? '' : 'S/P';
