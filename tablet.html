@@ -870,16 +870,15 @@ document.addEventListener('DOMContentLoaded', function() {
   });
   setTimeout(() => tabletInput.focus(), 600);
 
-  tabletInput.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
+  // 스캔 처리 공통 함수
+  function handleTabletScan() {
     const raw = tabletInput.value.trim();
-    tabletInput.value = '';
     if (!raw) return;
+    tabletInput.value = '';
 
     const badge = document.getElementById('tabletQtyBadge');
 
-    // 숫자만 입력 → 다음 스캔에 적용할 수량 예약
+    // 숫자만 → 수량 예약
     if (/^\d+$/.test(raw)) {
       const qty = parseInt(raw, 10);
       if (qty > 0 && qty <= 9999) {
@@ -890,7 +889,7 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
 
-    // 바코드 스캔 — pendingBulkQty만큼 낱개로 반복 처리 (박스 아님)
+    // 바코드 스캔 — 낱개로 반복 처리
     const applyQty = pendingBulkQty;
     pendingBulkQty = 1;
     if (badge) badge.style.display = 'none';
@@ -900,6 +899,28 @@ document.addEventListener('DOMContentLoaded', function() {
     } else {
       processScan(raw);
     }
+  }
+
+  // keydown (일반 키보드 / 대부분 스캐너)
+  tabletInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    handleTabletScan();
+  });
+
+  // input 이벤트 — 삼성 인터넷/일부 안드로이드 브라우저에서
+  // 스캐너 자동 엔터가 keydown 대신 input 이벤트로 들어오는 경우를 처리
+  let inputTimer = null;
+  tabletInput.addEventListener('input', () => {
+    clearTimeout(inputTimer);
+    // 스캐너는 한 번에 전체 코드를 붙여넣고 엔터를 보내므로,
+    // 50ms 대기 후에도 새 입력이 없으면 스캔 완료로 판단
+    inputTimer = setTimeout(() => {
+      const raw = tabletInput.value.trim();
+      if (!raw) return;
+      // 스캐너 코드 길이(보통 8자 이상)이거나 엔터 없이 멈춘 경우
+      if (raw.length >= 6) handleTabletScan();
+    }, 80);
   });
 });
 
