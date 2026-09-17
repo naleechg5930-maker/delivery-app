@@ -498,6 +498,7 @@ body { padding: 0 !important; gap: 0 !important; }
     </label>
     <button id="moreMenuBtn" style="margin-left:8px;">☰ 더보기</button>
     <button id="restBtn" style="margin-left:8px;">⏸ 휴식</button>
+    <button id="tabletSettingsBtn" style="margin-left:8px;background:#2D3570;color:#8890C0;border-color:#2D3570;">⚙️ 설정</button>
   </div>
   <div id="moreMenuPanel" style="display:none; border:1px solid var(--line); border-radius:10px; padding:10px; margin-top:8px; background:var(--panel);">
     <div style="display:flex; flex-wrap:wrap; gap:8px;">
@@ -527,6 +528,22 @@ body { padding: 0 !important; gap: 0 !important; }
 <div id="workerReminderBanner" style="display:none; position:fixed; inset:0; z-index:9999; background:#DC2626; color:#fff; align-items:center; justify-content:center; text-align:center; padding:24px; font-size:56px; font-weight:900; animation:workerReminderBlink 1s infinite; pointer-events:none;">
   👤 작업자를 입력하세요!
 </div>
+<div id="tabletSettingsModal" style="display:none;position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.7);align-items:center;justify-content:center;">
+  <div style="background:#161D65;border-radius:16px;padding:28px;width:90%;max-width:540px;display:flex;flex-direction:column;gap:16px;">
+    <div style="color:#fff;font-size:20px;font-weight:700;">⚙️ 태블릿 설정</div>
+    <div>
+      <div style="color:#8890C0;font-size:14px;margin-bottom:8px;">구글시트 연동 주소 (Apps Script 웹앱 URL)</div>
+      <input type="text" id="tabletGasUrlInput" placeholder="https://script.google.com/macros/s/.../exec"
+        style="width:100%;box-sizing:border-box;background:#0A0E2E;color:#fff;border:1px solid #2D3570;border-radius:10px;padding:14px;font-size:15px;">
+      <div id="tabletGasStatusText" style="font-size:13px;margin-top:6px;color:#8890C0;"></div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button id="tabletSettingsCancelBtn" style="background:#2D3570;color:#8890C0;border-color:#2D3570;padding:12px 20px;">취소</button>
+      <button id="tabletSettingsSaveBtn" style="background:#FFB200;color:#1A1300;border-color:#FFB200;padding:12px 20px;font-weight:700;">저장</button>
+    </div>
+  </div>
+</div>
+
 <div id="workerBlockOverlay" style="display:none; position:fixed; inset:0; z-index:9998; background:rgba(220,38,38,0.96); color:#fff; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px;">
   <div style="font-size:20px;">🔒</div>
   <div style="font-size:22px; font-weight:800; margin-top:8px;">작업자를 먼저 찍어주세요</div>
@@ -3524,6 +3541,41 @@ document.getElementById('adminForceUnlockBtn').addEventListener('click', functio
   document.getElementById('workerBlockOverlay').style.display = 'none';
   addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), '관리자 강제 진행', true, '작업자 미지정 상태로 스캔 허용됨');
   focusInput();
+});
+
+// ⚙️ 태블릿 설정 모달
+document.getElementById('tabletSettingsBtn').addEventListener('click', () => {
+  const modal = document.getElementById('tabletSettingsModal');
+  const input = document.getElementById('tabletGasUrlInput');
+  const statusText = document.getElementById('tabletGasStatusText');
+  input.value = gasWebhookUrl || '';
+  statusText.textContent = gasWebhookUrl ? '✅ 현재 연결됨' : '미연결 상태입니다';
+  modal.style.display = 'flex';
+  setTimeout(() => input.focus(), 100);
+});
+
+document.getElementById('tabletSettingsCancelBtn').addEventListener('click', () => {
+  document.getElementById('tabletSettingsModal').style.display = 'none';
+  focusInput();
+});
+
+document.getElementById('tabletSettingsSaveBtn').addEventListener('click', async () => {
+  const input = document.getElementById('tabletGasUrlInput');
+  const url = input.value.trim();
+  if (!url) {
+    alert('주소를 입력해주세요.');
+    return;
+  }
+  gasWebhookUrl = url;
+  try { await idbSet('gasWebhookUrl', url); } catch(e) { console.warn(e); }
+  updateGasStatus();
+  loadLocationMap();
+  document.getElementById('tabletSettingsModal').style.display = 'none';
+  // gasUrlInput도 동기화 (기존 연결 로직 호환)
+  const gasInput = document.getElementById('gasUrlInput');
+  if (gasInput) gasInput.value = url;
+  focusInput();
+  alert('구글시트 연동 주소가 저장됐습니다.');
 });
 
 document.getElementById('restBtn').addEventListener('click', async function(){
