@@ -908,8 +908,36 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 작업자 QR / 전표 QR / DLV QR 은 수량 로직 없이 바로 처리
     if (/^WK[^0-9]*\d+$/i.test(raw)) {
-      // 작업자 QR → processScan 내부에서 처리
-      processScan(raw);
+      // 작업자 QR — processScan의 작업자 차단을 우회해서 직접 처리
+      const workerMatch = raw.match(/^WK[^0-9]*(\d+)$/i);
+      if (workerMatch) {
+        const workerCode = workerMatch[1];
+        const workerName = WORKER_CODE_MAP[workerCode];
+        if (workerName) {
+          currentWorker = workerName;
+          adminForceUnlocked = false;
+          if (currentDocumentKey) {
+            documentWorkerMap[normalizeDocKeyForWorkerMap(currentDocumentKey)] = workerName;
+            saveDocumentWorkerMapToStorage();
+          }
+          inspectionStartTime = new Date();
+          hideWorkerReminderBanner();
+          document.getElementById('workerBlockOverlay').style.display = 'none';
+          showBanner('ok', '작업자 확인', workerName, '지금부터 작업시간이 측정됩니다', '👤');
+          addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), 'WK:'+workerCode, true, `작업 시작 (${workerName})`);
+          playOkSound();
+          speakKorean(`${workerName}님 작업 시작`);
+          if (gasWebhookUrl && currentDocumentKey) {
+            fetch(gasWebhookUrl, {
+              method:'POST',
+              body: JSON.stringify({ type:'startWork', documentKey: currentDocumentKey, worker: workerName }),
+            }).catch(e => console.warn(e));
+          }
+        } else {
+          showBanner('err', '알 수 없는 작업자 QR', raw, 'WORKER_CODE_MAP에 등록되지 않은 코드입니다', '❌');
+          playErrSound();
+        }
+      }
       return;
     }
     if (raw.includes('/')) {
