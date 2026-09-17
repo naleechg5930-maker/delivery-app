@@ -942,25 +942,37 @@ document.addEventListener('DOMContentLoaded', function() {
     handleTabletScan();
   });
 
+  // keydown에서 엔터가 오면 input 타이머 취소 (중복 실행 방지)
+  tabletInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') clearTimeout(inputTimer);
+  });
+
   // input 이벤트 — 삼성 인터넷/일부 안드로이드 브라우저에서
   // 스캐너 자동 엔터가 keydown 대신 input 이벤트로 들어오는 경우를 처리
   let inputTimer = null;
   tabletInput.addEventListener('input', () => {
     clearTimeout(inputTimer);
-    // 스캐너는 한 번에 전체 코드를 붙여넣고 엔터를 보내므로,
-    // 50ms 대기 후에도 새 입력이 없으면 스캔 완료로 판단
     inputTimer = setTimeout(() => {
       const raw = tabletInput.value.trim();
       if (!raw) return;
+
+      // 전표 QR: 반드시 완전한 형식(YYYY/MM/DD-숫자)이어야 처리
+      // 형식이 완성되지 않았으면 더 기다림
+      if (raw.includes('/')) {
+        if (/^\d{4}\/\d{2}\/\d{2}-\d+$/.test(raw)) {
+          tabletInput.value = '';
+          processDocumentLookup(raw);
+        }
+        // 형식 미완성이면 무시 (더 기다리거나 keydown 엔터가 올 것)
+        return;
+      }
+
+      // 품목코드/작업자QR 등 — 6자 이상이면 처리
       if (raw.length >= 6) {
         tabletInput.value = '';
-        if (raw.includes('/')) {
-          processDocumentLookup(raw);
-        } else {
-          handleTabletScan();
-        }
+        handleTabletScan();
       }
-    }, 80);
+    }, 300); // 300ms — 스캐너가 전체 코드를 다 보낼 때까지 충분히 대기
   });
 });
 
