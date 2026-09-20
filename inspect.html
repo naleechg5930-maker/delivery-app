@@ -3295,7 +3295,7 @@ document.getElementById('partialCompleteBtn').addEventListener('click', function
   // 남은 품목의 orderQty를 scannedQty로 맞춰서 전부 완료 상태로 만든 뒤 checkAllComplete 호출
   items.forEach(it => { it.orderQty = it.scannedQty; });
   renderTable();
-  updateProgressBar();
+  updateMiniStats();
   checkAllComplete();
   focusInput();
 });
