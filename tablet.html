@@ -1010,8 +1010,11 @@ function sortItemsByLocation() {
   items.sort((a, b) => {
     const la = findLocation(a.code);
     const lb = findLocation(b.code);
+    // 순번(seq)을 최우선으로 정렬 — 사용자가 진열순서 탭에 매긴 순번 그대로 따름
+    if (la.seq !== lb.seq) return la.seq - lb.seq;
+    // 순번이 같으면 구역, 그다음 품목코드 순
     if (la.zone !== lb.zone) return la.zone.localeCompare(lb.zone);
-    return la.seq - lb.seq;
+    return a.code.localeCompare(b.code);
   });
 }
 
