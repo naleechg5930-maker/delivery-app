@@ -443,6 +443,15 @@
   <div style="font-size:14px; margin-top:6px; opacity:0.9;">품목 스캔은 작업자 지정 후 가능합니다</div>
   <button id="adminForceUnlockBtn" style="margin-top:18px; font-size:13px; padding:8px 16px; background:#fff; color:#DC2626; border:none; border-radius:8px; font-weight:700; cursor:pointer;">관리자 강제 진행</button>
 </div>
+
+<!-- 오피킹/초과스캔 전체화면 경고 배너 (5초 후 자동 사라짐) -->
+<div id="mispickFullOverlay" style="display:none; position:fixed; inset:0; z-index:9997; background:rgba(180,0,0,0.97); color:#fff; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:32px; pointer-events:none;">
+  <div id="mispickOverlayIcon" style="font-size:72px; line-height:1;">⚠️</div>
+  <div id="mispickOverlayTitle" style="font-size:36px; font-weight:900; margin-top:16px; letter-spacing:1px;">오피킹</div>
+  <div id="mispickOverlayCode" style="font-size:28px; font-weight:700; margin-top:12px; font-family:monospace; opacity:0.9;"></div>
+  <div id="mispickOverlayDesc" style="font-size:20px; margin-top:10px; opacity:0.85; max-width:600px; line-height:1.5;"></div>
+  <div id="mispickOverlayTimer" style="font-size:16px; margin-top:24px; opacity:0.6;"></div>
+</div>
 <style>
 @keyframes workerReminderBlink { 0%,100% { opacity:1; } 50% { opacity:0.55; } }
 </style>
@@ -1366,6 +1375,7 @@ function processScan(rawCode){
     errCount++;
     errorSkuDetails.push({ code, qty: 1, type: '미등록품번' });
     showBanner('err', '오피킹', displayCode, '주문서에 없는 품번입니다', '❌');
+    showMispickOverlay('오피킹', displayCode, '주문서에 없는 품번입니다');
     addLog(timeStr, displayCode, false, '미등록 품번');
     playErrSound();
     updateMiniStats();
@@ -1395,6 +1405,7 @@ function processScan(rawCode){
     errCount += bulkQty;
     errorSkuDetails.push({ code: item.code, qty: bulkQty, type: '초과스캔(완료됨)' });
     showBanner('err', '오피킹', displayCode, `${item.name} / ${item.spec} — 주문 수량(${item.orderQty}개)을 초과 스캔했습니다`, '⚠️');
+    showMispickOverlay('초과 스캔', displayCode, `${item.name} / ${item.spec} — 주문 수량(${item.orderQty}개) 초과`);
     addLog(timeStr, displayCode, false, `초과 스캔 (${item.scannedQty}/${item.orderQty})`);
     playErrSound();
     speakKorean(`${bulkQty}개 과송`);
@@ -1509,6 +1520,31 @@ function formatMsShort(ms){
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
   return m > 0 ? `${m}분 ${s}초` : `${s}초`;
+}
+
+// 오피킹/초과스캔 발생 시 화면 꽉 채운 경고 배너 5초 표시
+let mispickOverlayTimer = null;
+function showMispickOverlay(title, code, desc) {
+  const overlay = document.getElementById('mispickFullOverlay');
+  if (!overlay) return;
+  document.getElementById('mispickOverlayTitle').textContent = title;
+  document.getElementById('mispickOverlayCode').textContent = code;
+  document.getElementById('mispickOverlayDesc').textContent = desc;
+  overlay.style.display = 'flex';
+  // 5초 카운트다운
+  let remaining = 5;
+  const timerEl = document.getElementById('mispickOverlayTimer');
+  timerEl.textContent = remaining + '초 후 사라집니다';
+  clearInterval(mispickOverlayTimer);
+  mispickOverlayTimer = setInterval(function() {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(mispickOverlayTimer);
+      overlay.style.display = 'none';
+    } else {
+      timerEl.textContent = remaining + '초 후 사라집니다';
+    }
+  }, 1000);
 }
 
 function showBanner(kind, verdict, code, descText, icon){
