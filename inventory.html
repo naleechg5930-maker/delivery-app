@@ -127,6 +127,31 @@
   }
   .log-del:hover{border-color:var(--bad);color:var(--bad);}
   .log-empty{text-align:center;color:var(--sub);font-size:12px;padding:24px 0;}
+
+  /* 품목 클릭 시 펼쳐지는 개별 스캔 로그 패널 */
+  .clickable-cell{cursor:pointer;}
+  .clickable-cell:hover{text-decoration:underline;text-decoration-style:dotted;text-decoration-color:var(--accent);}
+  tr.detail-row td{background:var(--panel-2);padding:0;border-bottom:1px solid var(--line);}
+  .detail-panel{padding:14px 18px;}
+  .detail-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px;}
+  .detail-qty{font-size:13px;color:var(--sub);}
+  .detail-qty b{font-family:var(--mono);color:var(--accent);font-size:16px;}
+  .qty-edit{display:flex;align-items:center;gap:6px;}
+  .qty-edit input{
+    width:72px;background:var(--bg);border:1px solid var(--line);color:var(--text);
+    padding:7px 8px;border-radius:6px;font-family:var(--mono);text-align:center;outline:none;font-size:14px;
+  }
+  .qty-edit input:focus{border-color:var(--accent);}
+  .detail-log{max-height:240px;overflow-y:auto;border-top:1px dashed var(--line);padding-top:8px;}
+  .detail-log-row{display:flex;align-items:center;gap:10px;padding:6px 2px;font-size:12px;border-bottom:1px dashed var(--line);}
+  .detail-log-row:last-child{border-bottom:none;}
+  .detail-log-row.removed{opacity:.4;}
+  .detail-log-row .dl-time{font-family:var(--mono);color:var(--sub);width:70px;flex-shrink:0;}
+  .detail-log-row .dl-delta{font-family:var(--mono);font-weight:700;width:46px;flex-shrink:0;}
+  .detail-log-row .dl-type{color:var(--sub);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .detail-log-row .dl-total{color:var(--text);font-family:var(--mono);width:70px;flex-shrink:0;text-align:right;}
+  .detail-log-row .dl-warn{color:var(--warn);font-size:14px;flex-shrink:0;}
+  .detail-log-empty{font-size:12px;color:var(--sub);padding:10px 0;text-align:center;}
   .msg{font-size:12px;margin-top:12px;padding:10px 12px;border-radius:8px;line-height:1.5;}
   .msg.error{background:var(--bad-bg);color:var(--bad);}
   .msg.ok{background:#0f2e26;color:var(--ok);}
@@ -933,6 +958,8 @@
     return out;
   }
 
+  let expandedCode = null; // 지금 펼쳐서 로그를 보여주고 있는 상품코드 (한 번에 하나만)
+
   function renderTable(){
     const rows = applyFilters(buildRows());
     if (rows.length === 0){
@@ -950,15 +977,84 @@
       else if (r.diff > 0) tag = '<span class="tag over">초과</span>';
       else if (r.diff < 0) tag = '<span class="tag missing">부족</span>';
 
-      return '<tr>' +
-        '<td class="code">' + escapeHtml(r.code) + '</td>' +
-        '<td>' + escapeHtml(r.name) + (r.spec ? '<br><span style="color:var(--sub);font-size:11px;">'+escapeHtml(r.spec)+'</span>' : '') + '</td>' +
+      const mainRow = '<tr>' +
+        '<td class="code clickable-cell" data-code="' + escapeHtml(r.code) + '">' + escapeHtml(r.code) + '</td>' +
+        '<td class="clickable-cell" data-code="' + escapeHtml(r.code) + '">' + escapeHtml(r.name) + (r.spec ? '<br><span style="color:var(--sub);font-size:11px;">'+escapeHtml(r.spec)+'</span>' : '') + '</td>' +
         '<td class="num">' + r.sheetQty + '</td>' +
         '<td class="num">' + r.scannedQty + '</td>' +
         '<td class="num ' + diffClass + '">' + diffText + '</td>' +
         '<td>' + tag + '</td>' +
         '</tr>';
+
+      if (r.code === expandedCode){
+        return mainRow + '<tr class="detail-row"><td colspan="6">' + buildDetailPanelHtml(r) + '</td></tr>';
+      }
+      return mainRow;
     }).join('');
+  }
+
+  function buildDetailPanelHtml(r){
+    const entries = scanLog.filter(e => e.productCode === r.code).slice().reverse(); // 시간순(오래된 것 먼저)
+    let logHtml;
+    if (entries.length === 0){
+      logHtml = '<div class="detail-log-empty">이 상품에 대한 스캔 기록이 없습니다.</div>';
+    } else {
+      let running = 0;
+      let prevTime = null;
+      logHtml = entries.map(e => {
+        const isWarn = prevTime !== null && !e.removed && (e.time - prevTime) < 2000;
+        if (!e.removed) running += e.qty;
+        prevTime = e.removed ? prevTime : e.time;
+        const time = new Date(e.time).toLocaleTimeString('ko-KR', { hour12:false });
+        const deltaText = (e.qty > 0 ? '+' + e.qty : String(e.qty));
+        return '<div class="detail-log-row' + (e.removed ? ' removed' : '') + '">' +
+          '<span class="dl-time">' + time + '</span>' +
+          '<span class="dl-delta">' + deltaText + '</span>' +
+          '<span class="dl-type">' + escapeHtml(e.type || '') + (e.removed ? ' · 취소됨' : '') + '</span>' +
+          (isWarn ? '<span class="dl-warn" title="2초 이내 연속 스캔">⚠️</span>' : '') +
+          '<span class="dl-total">누계 ' + running + '</span>' +
+          '</div>';
+      }).join('');
+    }
+
+    const currentQty = r.scannedQty;
+
+    return '<div class="detail-panel">' +
+      '<div class="detail-header">' +
+        '<span class="detail-qty">현재 수량: <b>' + currentQty + '개</b></span>' +
+        '<div class="qty-edit">' +
+          '<input type="number" min="0" class="qty-edit-input" id="qtyEditInput" value="' + currentQty + '">' +
+          '<button class="btn secondary small qty-edit-btn" data-code="' + escapeHtml(r.code) + '">수정</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="detail-log">' + logHtml + '</div>' +
+      '</div>';
+  }
+
+  function applyQuantityEdit(code, newValueRaw){
+    const newValue = parseInt(newValueRaw, 10);
+    if (isNaN(newValue) || newValue < 0){
+      showMsg(mainMsg, 'error', '올바른 수량(0 이상 정수)을 입력해주세요.');
+      return;
+    }
+    const item = inventoryMap[code];
+    const matched = !!item;
+    const current = matched ? (scanned[code] || 0) : (unknown[code] || 0);
+    const delta = newValue - current;
+    if (delta === 0) return;
+
+    if (matched) scanned[code] = newValue;
+    else unknown[code] = newValue;
+
+    scanLog.unshift({
+      id: ++logIdCounter, raw: '(수량수정)', productCode: code, qty: delta,
+      type: '수량수정(' + current + '→' + newValue + ')', ok:true, matched,
+      label: item ? ((item.name ? item.name + ' ' : '') + (item.spec || '')).trim() : null,
+      time: Date.now(), removed:false
+    });
+
+    saveSession();
+    renderAll(); // expandedCode를 유지하므로 패널은 열린 채로 갱신됨
   }
 
   function renderStats(){
@@ -1156,6 +1252,7 @@
     lastScannedCode = null;
     firstScanTime = null;
     logIdCounter = 0;
+    expandedCode = null;
     multiplierPersistToggle.checked = false;
     resetMultiplierInput();
     updateQuickAddUI();
@@ -1183,6 +1280,31 @@
     if (!btn) return;
     const id = Number(btn.dataset.logid);
     removeLogEntry(id);
+  });
+
+  tableBody.addEventListener('click', (e) => {
+    const editBtn = e.target.closest('.qty-edit-btn');
+    if (editBtn){
+      const input = el('qtyEditInput');
+      applyQuantityEdit(editBtn.dataset.code, input ? input.value : '');
+      scanInput.focus();
+      return;
+    }
+    const cell = e.target.closest('.clickable-cell');
+    if (cell){
+      const code = cell.dataset.code;
+      expandedCode = (expandedCode === code) ? null : code;
+      renderTable();
+      return;
+    }
+  });
+
+  // 수량 수정칸에서 Enter 키로도 확정 가능하게
+  tableBody.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.id === 'qtyEditInput'){
+      const btn = tableBody.querySelector('.qty-edit-btn');
+      if (btn) applyQuantityEdit(btn.dataset.code, e.target.value);
+    }
   });
 
   soundToggle.addEventListener('change', () => {
