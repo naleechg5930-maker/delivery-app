@@ -2167,6 +2167,16 @@ function buildSalesKeyJS(raw){
 }
 
 // 판매현황 전체를 통째로 받아와서 캐시에 저장한다 (20분 자동갱신 또는 수동 새로고침 시 호출됨)
+// 판매현황 저장본을 5분마다 뒤에서 미리 받아둔다 (스캔을 멈추지 않음, 수정된 전표도 최대 5분 안에 반영)
+let salesCacheRefreshing = false;
+async function refreshSalesCacheInBackground(){
+  if(salesCacheRefreshing) return;
+  salesCacheRefreshing = true;
+  try{ await refreshSalesCache(); }finally{ salesCacheRefreshing = false; }
+}
+setTimeout(refreshSalesCacheInBackground, 3000); // 페이지 열고 연동주소 복원된 뒤 첫 수신
+setInterval(refreshSalesCacheInBackground, 5 * 60 * 1000);
+
 async function refreshSalesCache(){
   if(!gasWebhookUrl) return false;
   try{
@@ -2236,22 +2246,16 @@ async function processDocumentLookup(raw){
   resetPickingReloadPanel(); // 새 전표 조회 시작하면 이전 재입고 목록은 비운다
   showBanner('idle', '전표 조회중...', raw, '판매현황에서 찾는 중입니다...', '🔎');
   try{
-    // 1) 캐시가 없거나 20분 넘게 낡았으면, 먼저 최신으로 받아온다
-    const cacheStale = !salesCache || (salesCacheFetchedAt < getMostRecent20MinBoundary());
-    if(cacheStale) await refreshSalesCache();
+    // 1) 판매현황 저장본은 5분마다 뒤에서 미리 받아둔다(아래 setInterval). 스캔할 때는 기다리지 않는다.
+    //    이 컴퓨터에서 한 번도 못 받아온 경우에만 처음 한 번 기다려서 받는다.
+    if(!salesCache) await refreshSalesCache();
 
-    // 2) 캐시에서 찾아본다 (시트 재조회 없이 즉시 처리되어 빠름)
+    // 2) 저장본에서 찾아본다 (서버를 안 거쳐서 즉시 처리됨)
     let data = findInSalesCache(raw);
     let fromCache = !!data;
 
-    // 3) 캐시에 없으면(예: 캐시 받아온 뒤 새로 추가된 전표), 한 번 더 강제로 최신화하고 재시도
-    if(!data){
-      await refreshSalesCache();
-      data = findInSalesCache(raw);
-      fromCache = !!data;
-    }
-
-    // 4) 그래도 없으면, 최후의 수단으로 서버가 직접 찾는 기존 방식을 그대로 사용
+    // 3) 저장본에 없으면(방금 새로 붙여넣은 전표 등) 판매현황 전체를 다시 받지 않고,
+    //    서버에 이 전표 하나만 바로 물어본다 (요청 1번으로 끝)
     if(!data){
       const res = await fetch(gasWebhookUrl + '?lookup=' + encodeURIComponent(raw));
       data = await res.json();
