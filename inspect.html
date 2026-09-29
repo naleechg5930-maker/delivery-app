@@ -2336,9 +2336,38 @@ document.getElementById('gasConnectBtn').addEventListener('click', async ()=>{
   focusInput();
 });
 
+// 검수완료 기록 전송 (함수 이름은 예전 그대로 두었지만, 이제 스크린샷은 찍지 않는다)
+// K열에는 스크린샷 대신 "📋 스캔로그 보기" 링크가 들어가고, 누르면 검수_스캔로그 파일의 해당 전표 줄로 이동한다.
 async function autoCaptureAndSave(companyName, stamp, meta){
-  // 스크린샷 단계에서 실패해 전송 자체를 못 하는 경우에도 스캔로그는 잃지 않도록 보관해둔다
-  const keepScanLogForLater = () => {
+  if(!gasWebhookUrl) return;
+  try{
+    await fetch(gasWebhookUrl, {
+      method: 'POST',
+      body: JSON.stringify({
+        company: companyName,
+        startTime: (meta && meta.startTime) || '',
+        time: (meta && meta.displayTime) || new Date().toLocaleString('ko-KR'),
+        elapsedMs: (meta && meta.elapsedMs) || 0,
+        worker: (meta && meta.worker) || '',
+        spTag: currentOrderTag === 'S/P' ? 'SP' : '정식',
+        errorSkuDetails: (meta && meta.errorSkuDetails) || [],
+        itemCount: (meta && meta.itemCount) || '',
+        totalQty: (meta && meta.totalQty) || '',
+        bagCount: (meta && meta.bagCount) || '',
+        documentKey: (meta && meta.documentKey) || '',
+        bagContentLists: (meta && meta.bagContentLists) || [],
+        errCount: (meta && meta.errCount) || 0,
+        errLog: (meta && meta.errLog) || '',
+        scanLog: (meta && meta.scanLog) || '',
+        scanCount: (meta && meta.scanCount) || 0,
+        rapidCount: (meta && meta.rapidCount) || 0,
+      })
+    });
+    console.log('구글시트 업로드 완료');
+    flushPendingScanLogs(); // 예전에 실패해서 보관해둔 스캔로그가 있으면 이어서 전송
+  }catch(err){
+    console.warn('구글시트 업로드 실패:', err);
+    // 네트워크 문제로 못 보낸 스캔로그는 이 기기에 보관했다가 다음 검수완료 때 다시 보낸다
     if(meta && meta.scanLog){
       queuePendingScanLog({
         recordedAt: Date.now(), documentKey: meta.documentKey || '', company: companyName,
@@ -2346,56 +2375,6 @@ async function autoCaptureAndSave(companyName, stamp, meta){
         scanCount: meta.scanCount || 0, rapidCount: meta.rapidCount || 0, errCount: meta.errCount || 0,
         scanLog: meta.scanLog,
       });
-    }
-  };
-  if(typeof html2canvas === 'undefined'){
-    console.warn('html2canvas 로드 실패로 자동 스크린샷을 저장하지 못했습니다.');
-    keepScanLogForLater();
-    return;
-  }
-  let canvas;
-  try{
-    canvas = await html2canvas(document.getElementById('completeCaptureArea'), {backgroundColor:'#0d1526', scale:2});
-  }catch(err){
-    console.error('스크린샷 캡처 실패:', err);
-    keepScanLogForLater();
-    return;
-  }
-  const filename = `검수완료_${sanitizeFilename(companyName)}_${stamp}.png`;
-  const dataUrl = canvas.toDataURL('image/png');
-
-  // 구글시트 연동이 설정되어 있으면 이미지 + 기록을 함께 업로드
-  if(gasWebhookUrl){
-    try{
-      await fetch(gasWebhookUrl, {
-        method: 'POST',
-        body: JSON.stringify({
-          company: companyName,
-          startTime: (meta && meta.startTime) || '',
-          time: (meta && meta.displayTime) || new Date().toLocaleString('ko-KR'),
-          elapsedMs: (meta && meta.elapsedMs) || 0,
-          worker: (meta && meta.worker) || '',
-          spTag: currentOrderTag === 'S/P' ? 'SP' : '정식',
-          errorSkuDetails: (meta && meta.errorSkuDetails) || [],
-          itemCount: (meta && meta.itemCount) || '',
-          totalQty: (meta && meta.totalQty) || '',
-          bagCount: (meta && meta.bagCount) || '',
-          documentKey: (meta && meta.documentKey) || '',
-          bagContentLists: (meta && meta.bagContentLists) || [],
-          errCount: (meta && meta.errCount) || 0,
-          errLog: (meta && meta.errLog) || '',
-          scanLog: (meta && meta.scanLog) || '',
-          scanCount: (meta && meta.scanCount) || 0,
-          rapidCount: (meta && meta.rapidCount) || 0,
-          filename,
-          image: dataUrl
-        })
-      });
-      console.log('구글시트 업로드 완료');
-      flushPendingScanLogs(); // 예전에 실패해서 보관해둔 스캔로그가 있으면 이어서 전송
-    }catch(err){
-      console.warn('구글시트 업로드 실패:', err);
-      keepScanLogForLater();
     }
   }
 }
