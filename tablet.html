@@ -550,6 +550,14 @@ body { padding: 0 !important; gap: 0 !important; }
   <div style="font-size:14px; margin-top:6px; opacity:0.9;">품목 스캔은 작업자 지정 후 가능합니다</div>
   <button id="adminForceUnlockBtn" style="margin-top:18px; font-size:13px; padding:8px 16px; background:#fff; color:#DC2626; border:none; border-radius:8px; font-weight:700; cursor:pointer;">관리자 강제 진행</button>
 </div>
+<!-- 오피킹/초과스캔 전체화면 경고 배너 (5초 후 자동 사라짐) -->
+<div id="mispickFullOverlay" style="display:none; position:fixed; inset:0; z-index:9997; background:rgba(180,0,0,0.97); color:#fff; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:32px; pointer-events:none;">
+  <div id="mispickOverlayIcon" style="font-size:72px; line-height:1;">⚠️</div>
+  <div id="mispickOverlayTitle" style="font-size:36px; font-weight:900; margin-top:16px; letter-spacing:1px;">오피킹</div>
+  <div id="mispickOverlayCode" style="font-size:28px; font-weight:700; margin-top:12px; font-family:monospace; opacity:0.9;"></div>
+  <div id="mispickOverlayDesc" style="font-size:20px; margin-top:10px; opacity:0.85; max-width:600px; line-height:1.5;"></div>
+  <div id="mispickOverlayTimer" style="font-size:16px; margin-top:24px; opacity:0.6;"></div>
+</div>
 <style>
 @keyframes workerReminderBlink { 0%,100% { opacity:1; } 50% { opacity:0.55; } }
 </style>
@@ -1081,7 +1089,7 @@ document.getElementById('bundleContinuousToggle').addEventListener('change', fun
     updateBundleModeUI();
   }
 });
-const BUNDLE_DEFAULT_QTY = 10;
+const BUNDLE_DEFAULT_QTY = 5; // 묶음수량표에 없는 품번의 기본 묶음 개수
 
 function findBundleQty(code){
   const upper = String(code || '').toUpperCase();
@@ -1251,6 +1259,7 @@ function loadItems(rawList){
 
   lastScannedItem = null;
   scanSequence = [];
+  resetScanLogBuffer();
   printedPackingBagCount = 0;
   printedBoxEventCount = 0;
   boxScanEvents = [];
@@ -1699,6 +1708,7 @@ function processScan(rawCode, overrideQty){
     errCount++;
     errorSkuDetails.push({ code, qty: 1, type: '미등록품번' });
     showBanner('err', '오피킹', displayCode, '주문서에 없는 품번입니다', '❌');
+    showMispickOverlay('오피킹', displayCode, '주문서에 없는 품번입니다');
     addLog(timeStr, displayCode, false, '미등록 품번');
     playErrSound();
     updateMiniStats();
@@ -1728,6 +1738,7 @@ function processScan(rawCode, overrideQty){
     errCount += bulkQty;
     errorSkuDetails.push({ code: item.code, qty: bulkQty, type: '초과스캔(완료됨)' });
     showBanner('err', '오피킹', displayCode, `${item.name} / ${item.spec} — 주문 수량(${item.orderQty}개)을 초과 스캔했습니다`, '⚠️');
+    showMispickOverlay('초과 스캔', displayCode, `${item.name} / ${item.spec} — 주문 수량(${item.orderQty}개) 초과`);
     addLog(timeStr, displayCode, false, `초과 스캔 (${item.scannedQty}/${item.orderQty})`);
     playErrSound();
     speakKorean(`${bulkQty}개 과송`);
@@ -1912,7 +1923,189 @@ document.querySelectorAll('.qa-btn').forEach(btn=>{
   btn.addEventListener('click', ()=> adjustLastScanned(Number(btn.dataset.amt)));
 });
 
+// 오피킹/초과스캔 발생 시 화면 꽉 채운 경고 배너 5초 표시
+let mispickOverlayTimer = null;
+function showMispickOverlay(title, code, desc) {
+  const overlay = document.getElementById('mispickFullOverlay');
+  if (!overlay) return;
+  document.getElementById('mispickOverlayTitle').textContent = title;
+  document.getElementById('mispickOverlayCode').textContent = code;
+  document.getElementById('mispickOverlayDesc').textContent = desc;
+  overlay.style.display = 'flex';
+  // 5초 카운트다운
+  let remaining = 5;
+  const timerEl = document.getElementById('mispickOverlayTimer');
+  timerEl.textContent = remaining + '초 후 사라집니다';
+  clearInterval(mispickOverlayTimer);
+  mispickOverlayTimer = setInterval(function() {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(mispickOverlayTimer);
+      overlay.style.display = 'none';
+    } else {
+      timerEl.textContent = remaining + '초 후 사라집니다';
+    }
+  }, 1000);
+}
+
+function showBanner(kind, verdict, code, descText, icon){
+  statusBanner.className = `status-banner ${kind}`;
+  statusBanner.innerHTML = `
+    <div class="icon">${icon}</div>
+    <div class="verdict">${verdict}</div>
+    <div class="code">${code}</div>
+    <div class="desc">${descText}</div>
+  `;
+}
+
+function showQuickAdd(item){
+  document.getElementById('quickAdd').style.display = '';
+  document.getElementById('qaCode').textContent = item.code;
+  document.getElementById('qaName').textContent = `${item.name}${item.spec ? ' / '+item.spec : ''}`;
+}
+
+function adjustLastScanned(amount){
+  const item = lastScannedItem;
+  if(!item) return;
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('ko-KR', {hour12:false});
+  const remaining = item.orderQty - item.scannedQty;
+
+  if(remaining <= 0){
+    errCount += amount;
+    errorSkuDetails.push({ code: item.code, qty: amount, type: '수량버튼(완료됨)' });
+    showBanner('err', '오피킹', item.code, `${item.name} / ${item.spec} — 이미 주문 수량(${item.orderQty}개)을 모두 채웠습니다`, '⚠️');
+    addLog(timeStr, item.code, false, `수량버튼 +${amount} 시도 → 이미 완료된 품목`);
+    playErrSound();
+  } else if(amount <= remaining){
+    item.scannedQty += amount;
+    okCount += amount;
+    scanSequence.push({ code: item.code, qty: amount });
+    const bagsFilled = addToLiveBag(item, amount);
+    const done = item.scannedQty >= item.orderQty;
+    showBanner('ok', '정상피킹', item.code, `${item.name} / ${item.spec}  (+${amount}) → ${item.scannedQty}/${item.orderQty}`, '✅');
+    addLog(timeStr, item.code, true, `수량버튼 +${amount}${done ? ' (완료)' : ''} (${item.scannedQty}/${item.orderQty})`);
+    if(done){ playCompleteSound(); speakKorean('품목 완료'); } else playOkSound();
+    if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
+  } else {
+    const overBy = amount - remaining;
+    item.scannedQty = item.orderQty;
+    okCount += remaining;
+    errCount += overBy;
+    errorSkuDetails.push({ code: item.code, qty: overBy, type: '수량버튼(부분초과)' });
+    let bagsFilled = 0;
+    if(remaining > 0){
+      scanSequence.push({ code: item.code, qty: remaining });
+      bagsFilled = addToLiveBag(item, remaining);
+    }
+    showBanner('err', '오피킹', item.code, `${item.name} / ${item.spec} — 남은 수량 ${remaining}개인데 ${amount}개를 추가하려 했습니다 (초과 ${overBy}개)`, '⚠️');
+    addLog(timeStr, item.code, false, `수량버튼 +${amount} 시도 → ${remaining}개만 반영, ${overBy}개 초과`);
+    playErrSound();
+    if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
+  }
+
+  showQuickAdd(item);
+  updateMiniStats();
+  updateRow(item);
+  updateProgress();
+  checkAllComplete();
+  focusInput();
+}
+
+document.querySelectorAll('.qa-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=> adjustLastScanned(Number(btn.dataset.amt)));
+});
+
+/* ===================== 스캔로그 기록 (전표 1건 = 1줄, 검수완료 때 한 번에 전송) ===================== */
+// 같은 품번이 이 시간(ms) 안에 연속으로 찍히면 "⚠연속" 표시만 남긴다 (화면 경고는 없음)
+// 스캔로그 시트에는 품목 1개 = 1행, 스캔 1회 = 오른쪽 한 칸으로 기록된다 (서버에서 정리)
+const RAPID_SCAN_MS = 1000;
+let scanLogBuffer = [];   // 품목 스캔 이벤트만: [{t, code, qty, prog, ok, bundle, box, button, over, unreg, skip, rapid}]
+let scanLogRapidCount = 0;
+
+function resetScanLogBuffer(){
+  scanLogBuffer = [];
+  scanLogRapidCount = 0;
+}
+
+// 화면 로그에 찍히는 표시용 코드("NTA… [묶음처리 5개]", "별칭 → 실제코드")에서 실제 품번과 수량을 뽑는다
+function parseScanLogCode(displayCode){
+  let c = String(displayCode || '');
+  let qty = 1, bundle = false, box = false;
+  let m = c.match(/\s*\[묶음처리 (\d+)개\]/);
+  if(m){ qty = Number(m[1]); bundle = true; c = c.replace(m[0], ''); }
+  m = c.match(/\s*\[박스\/마대 수량 (\d+)\]/);
+  if(m){ qty = Number(m[1]); box = true; c = c.replace(m[0], ''); }
+  if(c.indexOf('→') !== -1) c = c.split('→').pop();
+  return { base: c.trim().toUpperCase(), qty, bundle, box };
+}
+
+function recordScanLog(code, ok, note){
+  const c = String(code || '');
+  const n = String(note || '');
+  // 품목이 아닌 기록(작업자QR, 전표조회, 다른 전표 패킹완료, 강제처리 안내)은 품목 행에 넣지 않는다
+  if(c.indexOf('DLV|') === 0 || c.indexOf('WK:') === 0 || c === '관리자 강제 진행' || c === '강제완료') return;
+  if(n.indexOf('전표 조회') === 0) return;
+
+  const parsed = parseScanLogCode(c);
+  const button = n.indexOf('수량버튼') === 0;
+  const skip = n.indexOf('미스캔 제외') === 0;
+  const unreg = n.indexOf('미등록 품번') !== -1;
+  let qty = parsed.qty;
+  if(button){ const bm = n.match(/수량버튼 \+(\d+)/); if(bm) qty = Number(bm[1]); }
+  let over = 0;
+  const om = n.match(/(\d+)개 초과/);
+  if(om) over = Number(om[1]);
+  else if(n.indexOf('초과 스캔') !== -1 || n.indexOf('이미 완료된 품목') !== -1) over = qty;
+
+  const item = codeIndex[parsed.base];
+  const prog = item ? `${Math.min(item.scannedQty, item.orderQty)}/${item.orderQty}` : '';
+  const t = Date.now();
+
+  let rapid = false;
+  if(!button && !skip){
+    for(let i = scanLogBuffer.length - 1; i >= 0; i--){
+      const prev = scanLogBuffer[i];
+      if(prev.button || prev.skip) continue;
+      rapid = prev.code === parsed.base && (t - prev.t) < RAPID_SCAN_MS;
+      break;
+    }
+  }
+  if(rapid) scanLogRapidCount++;
+  scanLogBuffer.push({ t, code: parsed.base, qty, prog, ok: !!ok, bundle: parsed.bundle, box: parsed.box, button, over, unreg, skip, rapid });
+}
+
+// 검수완료 시점의 품목별 주문/스캔 수량 (한 번도 안 찍힌 품목도 "미스캔" 행으로 남기기 위해 같이 보낸다)
+function buildScanLogItems(){
+  return items.map(it => ({ code: it.code, orderQty: it.orderQty, scannedQty: it.scannedQty }));
+}
+
+function countScanLogScans(){
+  return scanLogBuffer.filter(e => !e.button && !e.skip).length;
+}
+
+// 검수완료 전송이 실패한 스캔로그는 이 기기에 보관했다가, 다음 검수완료가 성공하면 몰아서 다시 보낸다
+async function queuePendingScanLog(entry){
+  try{
+    const list = (await idbGet('pendingScanLogs')) || [];
+    list.push(entry);
+    await idbSet('pendingScanLogs', list.slice(-200));
+  }catch(err){ console.warn('스캔로그 임시보관 실패:', err); }
+}
+
+async function flushPendingScanLogs(){
+  if(!gasWebhookUrl) return;
+  try{
+    const list = (await idbGet('pendingScanLogs')) || [];
+    if(!list.length) return;
+    const resp = await fetch(gasWebhookUrl, { method:'POST', body: JSON.stringify({ type:'saveScanLogs', logs: list }) });
+    const result = await resp.json();
+    if(result && result.ok) await idbSet('pendingScanLogs', []);
+  }catch(err){ console.warn('보관된 스캔로그 재전송 실패(다음에 다시 시도):', err); }
+}
+
 function addLog(timeStr, code, ok, note){
+  recordScanLog(code, ok, note);
   const row = document.createElement('div');
   row.className = 'log-row ' + (ok ? 'ok' : 'err');
   row.innerHTML = `<span class="t">${timeStr}</span><span class="v">${ok ? '정상' : '오피킹'}</span><span>${code}</span><span style="color:#6c7fa5;">${note}</span>`;
@@ -2407,6 +2600,16 @@ function buildSalesKeyJS(raw){
 }
 
 // 판매현황 전체를 통째로 받아와서 캐시에 저장한다 (20분 자동갱신 또는 수동 새로고침 시 호출됨)
+// 판매현황 저장본을 5분마다 뒤에서 미리 받아둔다 (스캔을 멈추지 않음, 수정된 전표도 최대 5분 안에 반영)
+let salesCacheRefreshing = false;
+async function refreshSalesCacheInBackground(){
+  if(salesCacheRefreshing) return;
+  salesCacheRefreshing = true;
+  try{ await refreshSalesCache(); }finally{ salesCacheRefreshing = false; }
+}
+setTimeout(refreshSalesCacheInBackground, 3000); // 페이지 열고 연동주소 복원된 뒤 첫 수신
+setInterval(refreshSalesCacheInBackground, 5 * 60 * 1000);
+
 async function refreshSalesCache(){
   if(!gasWebhookUrl) return false;
   try{
@@ -2474,22 +2677,16 @@ async function processDocumentLookup(raw){
   resetPickingReloadPanel(); // 새 전표 조회 시작하면 이전 재입고 목록은 비운다
   showBanner('idle', '전표 조회중...', raw, '판매현황에서 찾는 중입니다...', '🔎');
   try{
-    // 1) 캐시가 없거나 20분 넘게 낡았으면, 먼저 최신으로 받아온다
-    const cacheStale = !salesCache || (salesCacheFetchedAt < getMostRecent20MinBoundary());
-    if(cacheStale) await refreshSalesCache();
+    // 1) 판매현황 저장본은 5분마다 뒤에서 미리 받아둔다(아래 setInterval). 스캔할 때는 기다리지 않는다.
+    //    이 컴퓨터에서 한 번도 못 받아온 경우에만 처음 한 번 기다려서 받는다.
+    if(!salesCache) await refreshSalesCache();
 
-    // 2) 캐시에서 찾아본다 (시트 재조회 없이 즉시 처리되어 빠름)
+    // 2) 저장본에서 찾아본다 (서버를 안 거쳐서 즉시 처리됨)
     let data = findInSalesCache(raw);
     let fromCache = !!data;
 
-    // 3) 캐시에 없으면(예: 캐시 받아온 뒤 새로 추가된 전표), 한 번 더 강제로 최신화하고 재시도
-    if(!data){
-      await refreshSalesCache();
-      data = findInSalesCache(raw);
-      fromCache = !!data;
-    }
-
-    // 4) 그래도 없으면, 최후의 수단으로 서버가 직접 찾는 기존 방식을 그대로 사용
+    // 3) 저장본에 없으면(방금 새로 붙여넣은 전표 등) 판매현황 전체를 다시 받지 않고,
+    //    서버에 이 전표 하나만 바로 물어본다 (요청 1번으로 끝)
     if(!data){
       const res = await fetch(gasWebhookUrl + '?lookup=' + encodeURIComponent(raw));
       data = await res.json();
@@ -2582,48 +2779,44 @@ document.getElementById('gasConnectBtn').addEventListener('click', async ()=>{
   focusInput();
 });
 
+// 검수완료 기록 전송 (함수 이름은 예전 그대로 두었지만, 이제 스크린샷은 찍지 않는다)
+// K열에는 스크린샷 대신 "📋 스캔로그 보기" 링크가 들어가고, 누르면 검수_스캔로그 파일의 해당 전표 줄로 이동한다.
 async function autoCaptureAndSave(companyName, stamp, meta){
-  if(typeof html2canvas === 'undefined'){
-    console.warn('html2canvas 로드 실패로 자동 스크린샷을 저장하지 못했습니다.');
-    return;
-  }
-  let canvas;
+  if(!gasWebhookUrl) return;
   try{
-    canvas = await html2canvas(document.getElementById('completeCaptureArea'), {backgroundColor:'#0d1526', scale:2});
+    await fetch(gasWebhookUrl, {
+      method: 'POST',
+      body: JSON.stringify({
+        company: companyName,
+        startTime: (meta && meta.startTime) || '',
+        time: (meta && meta.displayTime) || new Date().toLocaleString('ko-KR'),
+        elapsedMs: (meta && meta.elapsedMs) || 0,
+        worker: (meta && meta.worker) || '',
+        spTag: currentOrderTag === 'S/P' ? 'SP' : '정식',
+        errorSkuDetails: (meta && meta.errorSkuDetails) || [],
+        itemCount: (meta && meta.itemCount) || '',
+        totalQty: (meta && meta.totalQty) || '',
+        bagCount: (meta && meta.bagCount) || '',
+        documentKey: (meta && meta.documentKey) || '',
+        bagContentLists: (meta && meta.bagContentLists) || [],
+        errCount: (meta && meta.errCount) || 0,
+        errLog: (meta && meta.errLog) || '',
+        scanEvents: (meta && meta.scanEvents) || [],
+        scanItems: (meta && meta.scanItems) || [],
+        scanCount: (meta && meta.scanCount) || 0,
+        rapidCount: (meta && meta.rapidCount) || 0,
+      })
+    });
+    console.log('구글시트 업로드 완료');
+    flushPendingScanLogs(); // 예전에 실패해서 보관해둔 스캔로그가 있으면 이어서 전송
   }catch(err){
-    console.error('스크린샷 캡처 실패:', err);
-    return;
-  }
-  const filename = `검수완료_${sanitizeFilename(companyName)}_${stamp}.png`;
-  const dataUrl = canvas.toDataURL('image/png');
-
-  // 구글시트 연동이 설정되어 있으면 이미지 + 기록을 함께 업로드
-  if(gasWebhookUrl){
-    try{
-      await fetch(gasWebhookUrl, {
-        method: 'POST',
-        body: JSON.stringify({
-          company: companyName,
-          startTime: (meta && meta.startTime) || '',
-          time: (meta && meta.displayTime) || new Date().toLocaleString('ko-KR'),
-          elapsedMs: (meta && meta.elapsedMs) || 0,
-          worker: (meta && meta.worker) || '',
-          spTag: currentOrderTag === 'S/P' ? 'SP' : '정식',
-          errorSkuDetails: (meta && meta.errorSkuDetails) || [],
-          itemCount: (meta && meta.itemCount) || '',
-          totalQty: (meta && meta.totalQty) || '',
-          bagCount: (meta && meta.bagCount) || '',
-          documentKey: (meta && meta.documentKey) || '',
-          bagContentLists: (meta && meta.bagContentLists) || [],
-          errCount: (meta && meta.errCount) || 0,
-          errLog: (meta && meta.errLog) || '',
-          filename,
-          image: dataUrl
-        })
+    console.warn('구글시트 업로드 실패:', err);
+    // 네트워크 문제로 못 보낸 스캔로그는 이 기기에 보관했다가 다음 검수완료 때 다시 보낸다
+    if(meta && ((meta.scanEvents && meta.scanEvents.length) || (meta.scanItems && meta.scanItems.length))){
+      queuePendingScanLog({
+        recordedAt: Date.now(), documentKey: meta.documentKey || '', company: companyName,
+        worker: meta.worker || '', scanEvents: meta.scanEvents || [], scanItems: meta.scanItems || [],
       });
-      console.log('구글시트 업로드 완료');
-    }catch(err){
-      console.warn('구글시트 업로드 실패:', err);
     }
   }
 }
@@ -3268,7 +3461,11 @@ function checkAllComplete(){
         const startTime = inspectionStartTime ? inspectionStartTime.toLocaleTimeString('ko-KR', {hour12:false}) : '';
         const elapsedMs = inspectionStartTime ? (now.getTime() - inspectionStartTime.getTime()) : 0;
         const errLog = errLogEntries.join('\n');
-        autoCaptureAndSave(company, nowStamp(), { displayTime: completeTimeOnly, startTime, elapsedMs, itemCount, totalQty, errCount, errLog, bagCount, documentKey: currentDocumentKey, bagContentLists, worker: currentWorker, errorSkuDetails });
+        const scanEvents = scanLogBuffer.slice();
+        const scanItems = buildScanLogItems();
+        const scanCount = countScanLogScans();
+        const rapidCount = scanLogRapidCount;
+        autoCaptureAndSave(company, nowStamp(), { displayTime: completeTimeOnly, startTime, elapsedMs, itemCount, totalQty, errCount, errLog, bagCount, documentKey: currentDocumentKey, bagContentLists, worker: currentWorker, errorSkuDetails, scanEvents, scanItems, scanCount, rapidCount });
         // 클릭 없이도 자동으로 팝업이 닫히도록 처리 (원하면 먼저 확인 버튼으로 닫아도 됨)
         setTimeout(()=>{
           document.getElementById('overlay').classList.remove('show');
@@ -3300,6 +3497,7 @@ function doReset(){
   items.forEach(it => it.scannedQty = 0);
   okCount = 0; errCount = 0;
   scanSequence = [];
+  resetScanLogBuffer();
   boxScanEvents = [];
   inspectionStartTime = new Date();
   errLogEntries = [];
