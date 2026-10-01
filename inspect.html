@@ -924,9 +924,16 @@ let errorSkuDetails = [];       // 오출고(오피킹) 발생한 품번별 수�
 let soundOn = true;
 let audioCtx = null;
 
+// 주문서 품목코드 뒤에 붙은 "HP" / "FA" 꼬리표는 무시한다 (실제 바코드에는 없음)
+// 예: NTA8001A112HP, NTA8001A112 FA, NTA8001A112(FA) → NTA8001A112
+// (숫자로 끝나는 품번 바로 뒤에 붙은 경우만 떼어내므로, SFA처럼 품번 앞쪽의 FA는 건드리지 않음)
+function stripOrderCodeSuffix(code){
+  return String(code || '').trim().replace(/(\d)[\s\-_()]*(HP|FA)\)?\s*$/i, '$1');
+}
+
 function loadItems(rawList){
   const parsed = rawList.map(it => ({
-    code: String(it.code).trim(),
+    code: stripOrderCodeSuffix(it.code),
     name: it.name || '',
     spec: it.spec || '',
     orderQty: Number(it.qty) || 0,
