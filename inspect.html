@@ -1630,9 +1630,13 @@ const RAPID_SCAN_MS = 1000;
 let scanLogBuffer = [];   // 품목 스캔 이벤트만: [{t, code, qty, prog, ok, bundle, box, button, over, unreg, skip, rapid}]
 let scanLogRapidCount = 0;
 
+// ⚡미스캔 제외 강제완료로 처리한 전표면, 원래 주문수량과 실제 스캔(출고)수량을 담아둔다 (검수기록 주황색·R열, 스캔로그 주황색 표시용)
+let partialCompleteInfo = null; // { items: [{code, orderQty, scannedQty}] }
+
 function resetScanLogBuffer(){
   scanLogBuffer = [];
   scanLogRapidCount = 0;
+  partialCompleteInfo = null;
 }
 
 // 화면 로그에 찍히는 표시용 코드("NTA… [묶음처리 5개]", "별칭 → 실제코드")에서 실제 품번과 수량을 뽑는다
@@ -1684,7 +1688,22 @@ function recordScanLog(code, ok, note){
 
 // 검수완료 시점의 품목별 주문/스캔 수량 (한 번도 안 찍힌 품목도 "미스캔" 행으로 남기기 위해 같이 보낸다)
 function buildScanLogItems(){
-  return items.map(it => ({ code: it.code, orderQty: it.orderQty, scannedQty: it.scannedQty }));
+  const shortMap = {};
+  (partialCompleteInfo ? partialCompleteInfo.items : []).forEach(p => { shortMap[p.code.toUpperCase()] = p; });
+  const list = items.map(it => {
+    const p = shortMap[it.code.toUpperCase()];
+    // 미스캔 제외로 주문수량이 줄어든 품목은 "원래 주문수량"으로 보낸다
+    return p ? { code: it.code, orderQty: p.orderQty, scannedQty: it.scannedQty, partial: true }
+             : { code: it.code, orderQty: it.orderQty, scannedQty: it.scannedQty };
+  });
+  // 미스캔 제외로 목록에서 아예 빠진 품목(0개 스캔)도 행으로 남긴다
+  Object.keys(shortMap).forEach(k => {
+    if(!items.some(it => it.code.toUpperCase() === k)){
+      const p = shortMap[k];
+      list.push({ code: p.code, orderQty: p.orderQty, scannedQty: 0, partial: true });
+    }
+  });
+  return list;
 }
 
 function countScanLogScans(){
@@ -2389,6 +2408,7 @@ async function autoCaptureAndSave(companyName, stamp, meta){
         errLog: (meta && meta.errLog) || '',
         scanEvents: (meta && meta.scanEvents) || [],
         scanItems: (meta && meta.scanItems) || [],
+        partialComplete: (meta && meta.partialComplete) || null,
         scanCount: (meta && meta.scanCount) || 0,
         rapidCount: (meta && meta.rapidCount) || 0,
       })
@@ -3049,9 +3069,10 @@ function checkAllComplete(){
         const errLog = errLogEntries.join('\n');
         const scanEvents = scanLogBuffer.slice();
         const scanItems = buildScanLogItems();
+        const partialComplete = partialCompleteInfo;
         const scanCount = countScanLogScans();
         const rapidCount = scanLogRapidCount;
-        autoCaptureAndSave(company, nowStamp(), { displayTime: completeTimeOnly, startTime, elapsedMs, itemCount, totalQty, errCount, errLog, bagCount, documentKey: currentDocumentKey, bagContentLists, worker: currentWorker, errorSkuDetails, scanEvents, scanItems, scanCount, rapidCount });
+        autoCaptureAndSave(company, nowStamp(), { displayTime: completeTimeOnly, startTime, elapsedMs, itemCount, totalQty, errCount, errLog, bagCount, documentKey: currentDocumentKey, bagContentLists, worker: currentWorker, errorSkuDetails, scanEvents, scanItems, scanCount, rapidCount, partialComplete });
         // 클릭 없이도 자동으로 팝업이 닫히도록 처리 (원하면 먼저 확인 버튼으로 닫아도 됨)
         setTimeout(()=>{
           document.getElementById('overlay').classList.remove('show');
@@ -3408,12 +3429,16 @@ document.getElementById('partialCompleteBtn').addEventListener('click', function
     alert('스캔된 품목이 없습니다.'); return;
   }
 
-  const unscannedList = unscanned.map(it => `• ${it.code} (주문 ${it.orderQty}개)`).join('\n');
-  const msg = unscanned.length > 0
-    ? `다음 ${unscanned.length}개 품목은 스캔 기록이 없어 제외됩니다:\n${unscannedList}\n\n스캔된 ${scanned.length}개 품목만으로 검수완료 처리할까요?`
+  // 덜 찍힌 품목(0개 포함) = 원래 주문보다 적게 나가는 품목
+  const shortItems = items.filter(it => it.scannedQty < it.orderQty)
+    .map(it => ({ code: it.code, orderQty: it.orderQty, scannedQty: it.scannedQty }));
+  const shortList = shortItems.map(it => `• ${it.code} (주문 ${it.orderQty}개 → 출고 ${it.scannedQty}개)`).join('\n');
+  const msg = shortItems.length > 0
+    ? `다음 ${shortItems.length}개 품목은 주문보다 적게 나갑니다:\n${shortList}\n\n스캔된 수량만으로 검수완료 처리할까요?`
     : `모든 품목이 스캔됐습니다. 검수완료 처리할까요?`;
 
   if(!confirm(msg)) return;
+  partialCompleteInfo = shortItems.length ? { items: shortItems } : null;
 
   // 스캔 안 된 품목 제거 (품목 리스트와 인덱스에서)
   if(unscanned.length > 0){
