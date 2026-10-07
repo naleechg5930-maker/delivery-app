@@ -273,7 +273,7 @@
     max-height:150px;display:flex;flex-direction:column;
   }
   .log-panel h2{font-size:13px;margin:0 0 8px;font-weight:800;}
-  .log-list{overflow-y:auto;font-family:var(--mono);font-size:12px;display:flex;flex-direction:column-reverse;gap:4px;}
+  .log-list{overflow-y:auto;font-family:var(--mono);font-size:12px;display:flex;flex-direction:column;gap:4px;}
   .log-row{display:flex;gap:10px;color:var(--sub);}
   .log-row .t{color:#516488;}
   .log-row.ok .v{color:var(--ok);font-weight:700;}
@@ -1200,16 +1200,23 @@ refreshServerWorkerAssignments();
 setInterval(refreshServerWorkerAssignments, 180000); // 3분마다 - 서버 부하를 줄이기 위해 1분에서 늘림, 스캔할 때는 절대 서버 안 물어봄
 
 // 작업자 QR 코드(숫자) -> 실제 이름. QR엔 한글 대신 이 숫자만 들어있어서 스캐너가 깨질 일이 없다.
-const WORKER_CODE_MAP = { '1': '최희강', '2': '이시안', '3': '김태형', '4': '오영삼' };
+const WORKER_CODE_MAP = { '1': '최희강', '2': '이시안', '3': '김태형', '4': '오영삼', '5': '매니저' };
 let errLogEntries = [];         // 오피킹 상세 로그 (구글시트에 함께 기록)
 let errorSkuDetails = [];       // 오출고(오피킹) 발생한 품번별 수량 (SKU-유형별 집계용, {code, qty} 배열)
 
 let soundOn = true;
 let audioCtx = null;
 
+// 주문서 품목코드 뒤에 붙은 "HP" / "FA" 꼬리표는 무시한다 (실제 바코드에는 없음)
+// 예: NTA8001A112HP, NTA8001A112 FA, NTA8001A112(FA) → NTA8001A112
+// (숫자로 끝나는 품번 바로 뒤에 붙은 경우만 떼어내므로, SFA처럼 품번 앞쪽의 FA는 건드리지 않음)
+function stripOrderCodeSuffix(code){
+  return String(code || '').trim().replace(/(\d)[\s\-_()]*(HP|FA)\)?\s*$/i, '$1');
+}
+
 function loadItems(rawList){
   const parsed = rawList.map(it => ({
-    code: String(it.code).trim(),
+    code: stripOrderCodeSuffix(it.code),
     name: it.name || '',
     spec: it.spec || '',
     orderQty: Number(it.qty) || 0,
@@ -2109,9 +2116,10 @@ function addLog(timeStr, code, ok, note){
   const row = document.createElement('div');
   row.className = 'log-row ' + (ok ? 'ok' : 'err');
   row.innerHTML = `<span class="t">${timeStr}</span><span class="v">${ok ? '정상' : '오피킹'}</span><span>${code}</span><span style="color:#6c7fa5;">${note}</span>`;
-  logList.appendChild(row);
-  logList.scrollTop = logList.scrollHeight;
-  while(logList.children.length > 200) logList.removeChild(logList.firstChild);
+  // 최신 기록이 항상 맨 위에 오도록 앞에 끼워넣고, 스크롤도 맨 위로 고정한다 (화면이 아래로 끌려 내려가지 않게)
+  logList.insertBefore(row, logList.firstChild);
+  logList.scrollTop = 0;
+  while(logList.children.length > 200) logList.removeChild(logList.lastChild); // 오래된 것(맨 아래)부터 정리
 
   if(!ok){
     errLogEntries.push(`[${timeStr}] ${code} - ${note}`);
