@@ -917,7 +917,7 @@ refreshServerWorkerAssignments();
 setInterval(refreshServerWorkerAssignments, 180000); // 3분마다 - 서버 부하를 줄이기 위해 1분에서 늘림, 스캔할 때는 절대 서버 안 물어봄
 
 // 작업자 QR 코드(숫자) -> 실제 이름. QR엔 한글 대신 이 숫자만 들어있어서 스캐너가 깨질 일이 없다.
-const WORKER_CODE_MAP = { '1': '최희강', '2': '이시안', '3': '김태형', '4': '오영삼', '5': '매니저' };
+const WORKER_CODE_MAP = { '1': '최희강', '2': '이시안', '3': '김태형', '4': '오영삼', '5': '정진재', '6': '김성훈' };
 let errLogEntries = [];         // 오피킹 상세 로그 (구글시트에 함께 기록)
 let errorSkuDetails = [];       // 오출고(오피킹) 발생한 품번별 수량 (SKU-유형별 집계용, {code, qty} 배열)
 
