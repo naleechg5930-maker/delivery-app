@@ -1197,7 +1197,71 @@ async function refreshServerWorkerAssignments(){
   }
 }
 refreshServerWorkerAssignments();
-setInterval(refreshServerWorkerAssignments, 180000); // 3분마다 - 서버 부하를 줄이기 위해 1분에서 늘림, 스캔할 때는 절대 서버 안 물어봄
+setInterval(refreshServerWorkerAssignments, 180000);
+
+// ===== 이미 처리된 전표 차단 =====
+// 오늘(+어제) 검수기록에 이미 올라간 전표번호 목록. 3분마다 뒤에서 받아두고, 스캔할 땐 이 목록만 본다.
+let processedDocMap = {};
+function canonicalDocKeyJS(raw){
+  const m = String(raw || '').match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})\D+(\d+)/);
+  if(!m) return '';
+  const pad = v => ('0' + Number(v)).slice(-2);
+  return m[1] + '/' + pad(m[2]) + '/' + pad(m[3]) + '-' + String(Number(m[4]));
+}
+function docKeyFromScan(raw){
+  const k = buildSalesKeyJS(raw);
+  return k ? canonicalDocKeyJS(k.displayKey) : canonicalDocKeyJS(raw);
+}
+async function refreshProcessedDocs(){
+  if(!gasWebhookUrl) return processedDocMap;
+  try{
+    const resp = await fetch(gasWebhookUrl + '?action=getProcessedDocKeys');
+    const data = await resp.json();
+    if(data.ok && data.map){
+      // 이 기기에서 방금 완료해서 아직 서버에 반영 안 된 것도 지워지지 않게 합친다
+      Object.keys(processedDocMap).forEach(k => { if(processedDocMap[k].local && !data.map[k]) data.map[k] = processedDocMap[k]; });
+      processedDocMap = data.map;
+    }
+  }catch(err){ console.warn('처리완료 전표 목록 동기화 실패(무시):', err); }
+  return processedDocMap;
+}
+setTimeout(refreshProcessedDocs, 4000);
+setInterval(refreshProcessedDocs, 180000); // 3분마다
+function markDocProcessedLocally(docKey, worker){
+  const k = canonicalDocKeyJS(docKey);
+  if(!k) return;
+  const now = new Date();
+  processedDocMap[k] = { time: now.toLocaleTimeString('ko-KR', {hour12:false}), worker: worker || '', local: true };
+}
+// 같은 처리완료 전표를 10초 안에 한 번 더 찍으면 "그래도 다시 검수할지" 물어본다 (재검수가 꼭 필요할 때용)
+let lastBlockedDoc = { key:'', at:0 };
+let processedOverrideKey = '';
+function processedInfoText(info){
+  const parts = [];
+  if(info.date && info.date !== getBusinessDateStrForWorkerMap()) parts.push(info.date);
+  if(info.time) parts.push(info.time);
+  if(info.worker) parts.push(info.worker);
+  return parts.length ? ' (' + parts.join(' / ') + ')' : '';
+}
+function blockProcessedDoc(raw, key, info){
+  const now = Date.now();
+  if(lastBlockedDoc.key === key && now - lastBlockedDoc.at < 10000){
+    lastBlockedDoc = { key:'', at:0 };
+    if(confirm('이미 처리된 전표입니다' + processedInfoText(info) + '\n\n그래도 다시 검수하시겠습니까?')){
+      processedOverrideKey = key;
+      return false; // 차단 해제 → 그대로 불러오기
+    }
+    focusInput();
+    return true;
+  }
+  lastBlockedDoc = { key, at: now };
+  showBanner('err', '이미 처리된 전표', raw, '이미 처리된 전표입니다' + processedInfoText(info), '⛔');
+  showMispickOverlay('이미 처리된 전표입니다', key, '이미 검수완료된 전표라 불러오지 않았습니다' + processedInfoText(info));
+  addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), raw, false, '이미 처리된 전표' + processedInfoText(info));
+  playErrSound();
+  focusInput();
+  return true;
+} // 3분마다 - 서버 부하를 줄이기 위해 1분에서 늘림, 스캔할 때는 절대 서버 안 물어봄
 
 // 작업자 QR 코드(숫자) -> 실제 이름. QR엔 한글 대신 이 숫자만 들어있어서 스캐너가 깨질 일이 없다.
 const WORKER_CODE_MAP = { '1': '최희강', '2': '이시안', '3': '김태형', '4': '오영삼', '5': '정진재', '6': '김성훈' };
@@ -2663,6 +2727,11 @@ async function processDocumentLookup(raw){
     focusInput();
     return;
   }
+  // 이미 검수완료된 전표면 불러오지 않는다 (지금 하던 작업도 그대로 유지됨)
+  const scannedDocKey = docKeyFromScan(raw);
+  if(scannedDocKey && processedDocMap[scannedDocKey] && processedOverrideKey !== scannedDocKey){
+    if(blockProcessedDoc(raw, scannedDocKey, processedDocMap[scannedDocKey])) return;
+  }
   // 새 전표 조회를 "시작"하는 이 시점에 바로(비동기 요청 전에) 작업자 정보를 리셋한다.
   // loadItems() 안에서 리셋하면, 조회가 끝나기 전에 사용자가 이름QR을 먼저 찍었을 때
   // 나중에 조회가 끝나면서 그 값을 도로 지워버리는 순서 문제가 생길 수 있어서 여기서 미리 처리한다.
@@ -2711,6 +2780,22 @@ async function processDocumentLookup(raw){
     const list = data.rows.map(r => ({ code: r.code, name: r.name, spec: r.spec, qty: r.qty }));
     loadItems(list);
     currentDocumentKey = data.key || raw;
+    // 방금 다른 기기에서 완료된 전표일 수도 있어서(목록은 3분마다 갱신), 뒤에서 한 번 더 확인한다
+    (function verifyNotProcessed(loadedKey){
+      const ck = canonicalDocKeyJS(loadedKey) || scannedDocKey;
+      if(!ck || processedOverrideKey === ck) return;
+      refreshProcessedDocs().then(map => {
+        const info = map[ck];
+        if(!info || info.local) return;
+        if(canonicalDocKeyJS(currentDocumentKey) !== ck) return; // 그새 다른 전표로 넘어갔으면 무시
+        loadItems([]);
+        currentDocumentKey = '';
+        document.getElementById('companyNameInput').value = '';
+        document.getElementById('workerBlockOverlay').style.display = 'none';
+        lastBlockedDoc = { key:'', at:0 };
+        blockProcessedDoc(raw, ck, info);
+      });
+    })(currentDocumentKey);
     // 오늘 이 전표에 작업자를 찍은 적이 있다면 - 이 컴퓨터에서 찍었든(documentWorkerMap),
     // 다른 노트북에서 찍었든(serverWorkerAssignments, 1분마다 백그라운드로 동기화됨) - 되살린다.
     // 표기가 미묘하게 다를 수 있어서(예: "2026/09/06 -7" vs "2026/09/06-7") 공백은 무시하고 비교한다.
@@ -2791,6 +2876,10 @@ document.getElementById('gasConnectBtn').addEventListener('click', async ()=>{
 // K열에는 스크린샷 대신 "📋 스캔로그 보기" 링크가 들어가고, 누르면 검수_스캔로그 파일의 해당 전표 줄로 이동한다.
 async function autoCaptureAndSave(companyName, stamp, meta){
   if(!gasWebhookUrl) return;
+  if(meta && meta.documentKey){
+    markDocProcessedLocally(meta.documentKey, meta.worker);
+    if(processedOverrideKey === canonicalDocKeyJS(meta.documentKey)) processedOverrideKey = '';
+  }
   try{
     await fetch(gasWebhookUrl, {
       method: 'POST',
