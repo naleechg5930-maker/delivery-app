@@ -183,6 +183,8 @@
   .status-banner .code{font-family:var(--mono);font-size:16px;color:var(--sub);}
   .status-banner .desc{font-size:15px;font-weight:700;}
   .status-banner .reason{font-size:12.5px;color:var(--sub);}
+  .status-banner.pick{background:radial-gradient(ellipse at center, rgba(37,99,235,0.18), var(--panel)); border-color:#2563EB;}
+  .status-banner.pick .verdict{color:#2563EB;}
   .status-banner.idle .verdict{color:var(--sub);font-size:17px;font-weight:700;}
 
   .mini-stats{display:flex;gap:10px;}
@@ -1233,6 +1235,112 @@ function markDocProcessedLocally(docKey, worker){
   const now = new Date();
   processedDocMap[k] = { time: now.toLocaleTimeString('ko-KR', {hour12:false}), worker: worker || '', local: true };
 }
+// ===== 피킹 단계 (전표 1번째 스캔: 피킹 시작 / 2번째: 피킹 완료 / 3번째: 검수 시작) =====
+// 단계는 서버(물류작업시간분석 > 피킹진행상태)에 저장되어 어느 기기에서 찍어도 이어진다.
+let pickingStateCache = {};   // { 전표표준키: {state:'started'|'done', worker} } - 1분마다 서버에서 받아둠
+let pendingPickStart = null;  // 1번째 스캔 후 피킹자 QR을 기다리는 중인 전표 {key, raw, at}
+let pickingScanBusy = '';     // 같은 전표가 스캐너에서 연달아 두 번 들어오는 것 방지
+const PICK_PENDING_MS = 60 * 1000;
+async function refreshPickingStates(){
+  if(!gasWebhookUrl) return;
+  try{
+    const resp = await fetch(gasWebhookUrl + '?action=getPickingStates');
+    const data = await resp.json();
+    if(data.ok && data.map) pickingStateCache = data.map;
+  }catch(err){ console.warn('피킹 단계 목록 동기화 실패(무시):', err); }
+}
+setTimeout(refreshPickingStates, 5000);
+setInterval(refreshPickingStates, 60000);
+function salesQtyFromCache(raw){
+  try{
+    const d = findInSalesCache(raw);
+    if(!d || !d.rows) return { totalQty:0, itemCount:0 };
+    const codes = {};
+    let qty = 0;
+    d.rows.forEach(r => { qty += Number(r.qty) || 0; codes[String(r.code).toUpperCase()] = true; });
+    return { totalQty: qty, itemCount: Object.keys(codes).length };
+  }catch(err){ return { totalQty:0, itemCount:0 }; }
+}
+// true를 돌려주면 "피킹 단계로 처리했으니 품목은 불러오지 않음", false면 검수 시작(품목 불러오기)으로 진행
+async function handlePickingStage(raw, key){
+  const cached = pickingStateCache[key];
+  if(cached && cached.state === 'done'){ pendingPickStart = null; return false; } // 3번째 스캔: 바로 검수
+  if(pickingScanBusy === key) return true;
+  pickingScanBusy = key;
+  showBanner('idle', '전표 확인중...', raw, '피킹 단계를 확인하는 중입니다', '🔎');
+  let res;
+  try{
+    const q = salesQtyFromCache(raw);
+    const resp = await fetch(gasWebhookUrl, {
+      method:'POST',
+      body: JSON.stringify({ type:'pickingScan', documentKey:key, totalQty:q.totalQty, itemCount:q.itemCount }),
+    });
+    res = await resp.json();
+  }catch(err){
+    res = { ok:false, error: String(err) };
+  }finally{
+    setTimeout(() => { if(pickingScanBusy === key) pickingScanBusy = ''; }, 800);
+  }
+  const t = new Date().toLocaleTimeString('ko-KR', {hour12:false});
+  if(!res || !res.ok){
+    // 서버 확인이 안 되면 작업이 멈추지 않도록 그냥 검수로 진행
+    addLog(t, raw, false, '피킹 단계 확인 실패 → 바로 검수로 진행 (' + ((res && res.error) || '') + ')');
+    pendingPickStart = null;
+    return false;
+  }
+  if(res.phase === 'needWorker'){
+    pendingPickStart = { key, raw, at: Date.now() };
+    showBanner('pick', '🛒 피킹 시작', key, '피킹자 QR을 찍어주세요 (피킹 끝나면 전표를 다시 찍기)', '🛒');
+    addLog(t, raw, true, '피킹 시작 대기 - 피킹자 QR을 찍어주세요');
+    playOkSound();
+    speakKorean('피킹 시작. 작업자 큐알을 찍어주세요');
+    focusInput();
+    return true;
+  }
+  if(res.phase === 'pickDone'){
+    pendingPickStart = null;
+    pickingStateCache[key] = { state:'done', worker: res.worker || '' };
+    const dur = res.unmeasured ? '시간 미측정' : formatMsShort(res.seconds * 1000);
+    showBanner('ok', '✅ 피킹 완료', key, `${res.worker || ''} · ${dur} — 검수할 때 전표를 한 번 더 찍어주세요`, '🛒');
+    addLog(t, raw, true, `피킹 완료 (${res.worker || ''} ${dur})`);
+    playOkSound();
+    speakKorean('피킹 완료');
+    focusInput();
+    return true;
+  }
+  // inspect
+  pendingPickStart = null;
+  pickingStateCache[key] = { state:'done', worker: res.worker || '' };
+  return false;
+}
+// 1번째 스캔 뒤에 찍은 작업자 QR → 피킹 시작 기록 (지금 화면의 검수 작업자는 건드리지 않음)
+function consumePendingPickStart(workerName, workerCode){
+  if(!pendingPickStart || Date.now() - pendingPickStart.at > PICK_PENDING_MS){ pendingPickStart = null; return false; }
+  const p = pendingPickStart;
+  pendingPickStart = null;
+  pickingStateCache[p.key] = { state:'started', worker: workerName };
+  const t = new Date().toLocaleTimeString('ko-KR', {hour12:false});
+  showBanner('pick', '🛒 피킹 시작', p.key, `${workerName} — 피킹 끝나면 전표를 다시 찍어주세요`, '🛒');
+  addLog(t, 'WK:' + workerCode, true, `피킹 시작 (${workerName}) ${p.key}`);
+  playOkSound();
+  speakKorean(`${workerName}님 피킹 시작`);
+  fetch(gasWebhookUrl, { method:'POST', body: JSON.stringify({ type:'pickingStart', documentKey:p.key, worker:workerName }) })
+    .then(r => r.json())
+    .then(d => {
+      if(!d.ok){
+        delete pickingStateCache[p.key];
+        showBanner('err', '피킹 시작 기록 실패', p.key, (d.error || '') + ' — 전표를 다시 찍어주세요', '❌');
+        playErrSound();
+      }
+    })
+    .catch(err => {
+      delete pickingStateCache[p.key];
+      showBanner('err', '피킹 시작 기록 실패', p.key, '네트워크 오류 — 전표를 다시 찍어주세요', '❌');
+      playErrSound();
+    });
+  return true;
+}
+
 // 같은 처리완료 전표를 10초 안에 한 번 더 찍으면 "그래도 다시 검수할지" 물어본다 (재검수가 꼭 필요할 때용)
 let lastBlockedDoc = { key:'', at:0 };
 let processedOverrideKey = '';
@@ -1669,6 +1777,10 @@ scanInput.addEventListener('keydown', (e)=>{
     if(workerMatch){
       const workerCode = workerMatch[1];
       const workerName = WORKER_CODE_MAP[workerCode];
+      if(workerName && consumePendingPickStart(workerName, workerCode)){
+        focusInput();
+        return;
+      }
       if(workerName){
         currentWorker = workerName;
         if(currentDocumentKey){
@@ -2732,6 +2844,12 @@ async function processDocumentLookup(raw){
   if(scannedDocKey && processedDocMap[scannedDocKey] && processedOverrideKey !== scannedDocKey){
     if(blockProcessedDoc(raw, scannedDocKey, processedDocMap[scannedDocKey])) return;
   }
+  // 피킹 단계: 1번째 스캔=피킹 시작, 2번째=피킹 완료 (둘 다 품목은 안 불러옴), 3번째부터 검수 시작
+  // (지금 화면에 올라와 있는 전표를 다시 찍은 경우와 처리완료 전표 재검수는 예전처럼 바로 검수)
+  if(scannedDocKey && canonicalDocKeyJS(currentDocumentKey) !== scannedDocKey && processedOverrideKey !== scannedDocKey){
+    if(await handlePickingStage(raw, scannedDocKey)) return;
+  }
+  pendingPickStart = null;
   // 새 전표 조회를 "시작"하는 이 시점에 바로(비동기 요청 전에) 작업자 정보를 리셋한다.
   // loadItems() 안에서 리셋하면, 조회가 끝나기 전에 사용자가 이름QR을 먼저 찍었을 때
   // 나중에 조회가 끝나면서 그 값을 도로 지워버리는 순서 문제가 생길 수 있어서 여기서 미리 처리한다.
