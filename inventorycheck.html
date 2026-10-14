@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>재고조회</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --navy:#161D65; --bg:#F5F6FB; --panel:#ffffff; --line:#DDE1EE; --text:#15171c; --sub:#5b6175;
+    --ok:#15803D; --err:#B91C1C; --in:#1D4ED8; --inbg:#E8F0FF; --warnbg:#FFF4E5; --warn:#9A3412;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif;font-size:16px}
+  header{background:var(--navy);color:#fff;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px;position:sticky;top:0;z-index:10}
+  header h1{margin:0;font-size:19px;font-weight:900}
+  header .meta{font-size:12px;opacity:.85;text-align:right;line-height:1.35}
+  nav{display:flex;background:#fff;border-bottom:1px solid var(--line)}
+  nav button{flex:1;border:0;background:none;padding:12px 0;font-size:15px;font-weight:800;color:var(--sub);border-bottom:3px solid transparent;cursor:pointer;font-family:inherit}
+  nav button.on{color:var(--navy);border-bottom-color:var(--navy)}
+  main{max-width:640px;margin:0 auto;padding:14px 16px 40px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+  .row{display:flex;gap:8px;align-items:center}
+  input[type=text],textarea,input[type=date]{width:100%;border:2px solid var(--line);border-radius:10px;padding:12px;font-size:17px;font-family:inherit;background:#fff;color:var(--text)}
+  input[type=text]:focus,textarea:focus{outline:none;border-color:var(--navy)}
+  textarea{font-size:13px;min-height:140px;font-family:Consolas,monospace}
+  .btn{border:0;border-radius:10px;padding:12px 16px;font-size:16px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .btn.primary{background:var(--navy);color:#fff}
+  .btn.ghost{background:#fff;color:var(--navy);border:2px solid var(--navy)}
+  .btn.danger{background:#fff;color:var(--err);border:1.5px solid var(--err);padding:6px 10px;font-size:13px}
+  .btn:disabled{opacity:.5;cursor:default}
+  #reader{width:100%;border-radius:12px;overflow:hidden;background:#000;display:none;margin-bottom:10px}
+  .hint{font-size:13px;color:var(--sub);line-height:1.5}
+  .status{font-size:14px;padding:10px 12px;border-radius:10px;margin-top:10px;line-height:1.5;white-space:pre-line}
+  .status.ok{background:#E9F7EF;color:var(--ok)} .status.err{background:#FDECEC;color:var(--err)} .status.info{background:var(--inbg);color:var(--in)}
+  .result .code{font-size:22px;font-weight:900;letter-spacing:.5px}
+  .result .name{font-size:15px;color:var(--sub);margin-top:2px}
+  .big{display:flex;align-items:baseline;justify-content:space-between;margin:14px 0 10px;padding:12px 14px;background:var(--navy);color:#fff;border-radius:12px}
+  .big .lab{font-size:15px;font-weight:700}
+  .big .num{font-size:40px;font-weight:900}
+  .line{display:flex;justify-content:space-between;align-items:baseline;padding:9px 2px;border-bottom:1px solid var(--line);font-size:17px}
+  .line .v{font-weight:900;font-size:20px}
+  .line .sm{font-size:12px;color:var(--sub);display:block;margin-top:2px}
+  .line.inb{background:var(--inbg);border-radius:10px;padding:10px 12px;border:0;margin:6px 0;color:var(--in)}
+  .line.inb .v{color:var(--in)}
+  .line.out .v{color:var(--err)}
+  .note{font-size:13px;color:var(--warn);background:var(--warnbg);border-radius:8px;padding:8px 10px;margin-top:8px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+  .chip{border:1.5px solid var(--line);background:#fff;border-radius:999px;padding:6px 10px;font-size:13px;cursor:pointer;font-family:inherit;color:var(--text)}
+  .chip.cur{border-color:var(--navy);background:var(--navy);color:#fff}
+  .list button{display:flex;justify-content:space-between;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;padding:10px 4px;font-size:15px;cursor:pointer;font-family:inherit;color:var(--text)}
+  .list .q{font-weight:900}
+  h2{font-size:17px;margin:0 0 6px;color:var(--navy)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left}
+  .tag{display:inline-block;white-space:nowrap;font-size:12px;font-weight:800;border-radius:6px;padding:2px 6px;color:#fff}
+  .tag.입고{background:var(--in)} .tag.반품{background:var(--ok)}
+  .hidden{display:none}
+  details summary{cursor:pointer;font-size:13px;color:var(--sub)}
+</style>
+</head>
+<body>
+<header>
+  <h1>재고조회</h1>
+  <div class="meta" id="metaText">불러오는 중...</div>
+</header>
+<nav>
+  <button type="button" id="tabFind" class="on">조회</button>
+  <button type="button" id="tabReg">등록 (마감재고·입고·반품)</button>
+</nav>
+
+<main>
+<!-- ===================== 조회 ===================== -->
+<section id="viewFind">
+  <div class="panel">
+    <div id="reader"></div>
+    <div class="row">
+      <input type="text" id="codeInput" placeholder="품목코드 또는 품번 일부 (예: 3507)" autocomplete="off" autocapitalize="characters">
+      <button type="button" class="btn primary" id="searchBtn">찾기</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button type="button" class="btn ghost" id="camBtn" style="flex:1">카메라로 찍기</button>
+      <button type="button" class="btn ghost" id="refreshBtn">새로고침</button>
+    </div>
+    <div id="findStatus"></div>
+  </div>
+  <div id="resultArea"></div>
+</section>
+
+<!-- ===================== 등록 ===================== -->
+<section id="viewReg" class="hidden">
+  <div class="panel">
+    <h2>1. 전날 마감재고 (매일 아침 1번)</h2>
+    <div class="hint">이카운트 재고현황 엑셀을 <b>전날 날짜로 조회</b>해서 받은 파일을 올려주세요. 올리면 기존 재고현황은 통째로 바뀌어요.</div>
+    <input type="file" id="baseFile" accept=".xlsx,.xls" style="margin-top:10px">
+    <div id="baseStatus"></div>
+    <button type="button" class="btn primary hidden" id="baseUploadBtn" style="margin-top:8px;width:100%">마감재고 등록</button>
+  </div>
+
+  <div class="panel">
+    <h2>2. 반품 창고이동전표 붙여넣기</h2>
+    <div class="hint">이카운트 창고이동전표 화면을 전표번호부터 마지막 품목까지 긁어서 붙여넣으세요. 같은 전표는 두 번 넣어도 한 번만 들어가요.</div>
+    <textarea id="moveText" placeholder="창고이동전표&#10;전표번호&#10; 2026/10/14 -3 [ 1 / 1 ]&#10;출고처&#10; 반품창고(101)&#10;..."></textarea>
+    <div id="moveStatus"></div>
+    <button type="button" class="btn primary" id="moveBtn" style="margin-top:8px;width:100%">반품 등록</button>
+  </div>
+
+  <div class="panel">
+    <h2>3. 입고 엑셀 (하루 여러 번 가능)</h2>
+    <div class="hint">입고 패킹리스트 엑셀을 올리면 "수량디테일"(3번째) 탭의 품번+사이즈를 품목코드로 바꿔서 오늘 입고로 넣어요. 같은 파일을 또 올리면 중복으로 막아요.</div>
+    <input type="file" id="inFile" accept=".xlsx,.xls" style="margin-top:10px">
+    <div id="inStatus"></div>
+    <button type="button" class="btn primary hidden" id="inUploadBtn" style="margin-top:8px;width:100%">입고 등록</button>
+  </div>
+
+  <div class="panel">
+    <h2>등록된 반품·입고 (마감 기준일 이후)</h2>
+    <div id="batchList" class="hint">불러오는 중...</div>
+  </div>
+
+  <div class="panel">
+    <details>
+      <summary>연동 주소 (서버 바뀌었을 때만)</summary>
+      <input type="text" id="urlInput" style="margin-top:8px;font-size:12px">
+      <button type="button" class="btn ghost" id="urlSaveBtn" style="margin-top:8px">저장</button>
+    </details>
+  </div>
+</section>
+</main>
+
+<script>
+const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbzn0Um-dDJXIxorjlU7AnMd4BXV0tzHmwz19GRdobP4V5xDOwDhNt0K9qKcvW9BGE8i/exec';
+let gasUrl = DEFAULT_URL;
+try { gasUrl = localStorage.getItem('stockGasUrl') || DEFAULT_URL; } catch (e) {}
+
+let stock = null;          // 서버 계산 결과 {baseDate, today, items:{code:{...}}}
+let lastCode = '';
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => Number(n || 0).toLocaleString('ko-KR');
+
+function businessToday(){
+  const now = new Date(); const d = new Date(now);
+  if(now.getHours() < 5) d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function md(ymd){ const p = String(ymd || '').split('-'); return p.length === 3 ? `${Number(p[1])}/${Number(p[2])}` : ymd; }
+function setStatus(el, kind, text){ $(el).innerHTML = text ? `<div class="status ${kind}">${esc(text)}</div>` : ''; }
+
+/* ---------- 탭 ---------- */
+function showTab(which){
+  $('tabFind').classList.toggle('on', which === 'find');
+  $('tabReg').classList.toggle('on', which === 'reg');
+  $('viewFind').classList.toggle('hidden', which !== 'find');
+  $('viewReg').classList.toggle('hidden', which !== 'reg');
+  if(which === 'reg'){ stopCamera(); loadBatches(); }
+}
+$('tabFind').addEventListener('click', () => showTab('find'));
+$('tabReg').addEventListener('click', () => showTab('reg'));
+
+/* ---------- 서버 ---------- */
+async function getJson(params){
+  const res = await fetch(gasUrl + '?' + params);
+  return res.json();
+}
+async function postJson(body){
+  const res = await fetch(gasUrl, { method:'POST', body: JSON.stringify(body) });
+  return res.json();
+}
+
+async function loadStock(force){
+  $('metaText').textContent = '불러오는 중...';
+  try{
+    const data = await getJson('action=getStockStatus' + (force ? '&force=1' : ''));
+    if(!data.ok) throw new Error(data.error || '알 수 없는 오류');
+    stock = data;
+    $('metaText').innerHTML = `${esc(md(data.baseDate))} 마감 기준<br>${esc(data.updatedAt)} 갱신`;
+    if(lastCode) showItem(lastCode, true);
+  }catch(err){
+    $('metaText').textContent = '불러오기 실패';
+    setStatus('findStatus', 'err', '재고 정보를 불러오지 못했어요: ' + err.message);
+  }
+}
+loadStock(false);
+setInterval(() => { if(!document.hidden) loadStock(false); }, 120000); // 2분마다 (검수완료 반영)
+$('refreshBtn').addEventListener('click', () => loadStock(true));
+
+/* ---------- 조회 ---------- */
+function normalizeCode(raw){
+  let c = String(raw || '').trim().toUpperCase().replace(/(\d)[\s\-_()]*(HP|FA)\)?\s*$/i, '$1');
+  // QR 안에 다른 글자가 섞여 있으면 품목코드 모양(영문3+영숫자4+영숫자2+숫자2)만 뽑는다
+  if(stock && !stock.items[c]){
+    const m = c.match(/[A-Z]{3}[A-Z0-9]{4}[A-Z0-9]{2}\d{2}/);
+    if(m && stock.items[m[0]]) c = m[0];
+  }
+  return c;
+}
+
+function lookup(raw){
+  setStatus('findStatus', '', '');
+  if(!stock){ setStatus('findStatus', 'err', '재고 정보를 아직 못 불러왔어요. 새로고침을 눌러주세요.'); return; }
+  const q = normalizeCode(raw);
+  if(!q) return;
+  if(stock.items[q]){ showItem(q); return; }
+  // 일부만 입력한 경우: 품목코드나 품목명(TT-3507-C2BA)에 포함된 것들
+  const qq = q.replace(/[\s\-]/g, '');
+  const hits = Object.keys(stock.items).filter(c => c.includes(qq) || String(stock.items[c].n || '').replace(/-/g, '').toUpperCase().includes(qq)).sort();
+  if(!hits.length){ $('resultArea').innerHTML = ''; setStatus('findStatus', 'err', `"${q}" 품목을 찾지 못했어요.`); return; }
+  if(hits.length === 1){ showItem(hits[0]); return; }
+  const shown = hits.slice(0, 40);
+  $('resultArea').innerHTML = `<div class="panel list"><div class="hint" style="margin-bottom:4px">${hits.length}개 품목${hits.length > 40 ? ' (앞 40개만)' : ''}</div>` +
+    shown.map(c => { const it = stock.items[c]; return `<button type="button" data-code="${esc(c)}"><span>${esc(c)} <span class="hint">${esc(it.s || '')}</span></span><span class="q">${fmt(it.e || 0)}</span></button>`; }).join('') + '</div>';
+  $('resultArea').querySelectorAll('button[data-code]').forEach(b => b.addEventListener('click', () => showItem(b.dataset.code)));
+}
+
+function showItem(code, quiet){
+  const it = stock.items[code] || {};
+  lastCode = code;
+  const b = it.b || 0, r = it.r || 0, c = it.c || 0, i = it.i || 0, o = it.o || 0;
+  const existing = b + r + c;
+  const expected = existing + i - o;
+  let breakdown = `마감 ${fmt(b)}`;
+  if(r) breakdown += r > 0 ? ` + 반품 ${fmt(r)}` : ` − 반품 ${fmt(-r)}`;
+  if(c) breakdown += ` + 이월 미검수 ${fmt(c)}`;
+  let html = `<div class="panel result">
+    <div class="code">${esc(code)}</div>
+    <div class="name">${esc(it.n || '')}${it.s ? ' / ' + esc(it.s) : ''}</div>
+    <div class="big"><span class="lab">지금 있어야 할 수량</span><span class="num">${fmt(expected)}</span></div>
+    <div class="line"><span>기존 창고재고<span class="sm">${esc(breakdown)}</span></span><span class="v">${fmt(existing)}</span></div>`;
+  if(i){
+    const batches = (it.inb || []).map(x => `${x[0]} ${x[1]} ${fmt(x[2])}개`).join(' · ');
+    html += `<div class="line inb"><span>오늘 입고 <b>(입고분에서 찾기)</b><span class="sm" style="color:var(--in)">${esc(batches)}</span></span><span class="v">+${fmt(i)}</span></div>`;
+  } else {
+    html += `<div class="line"><span>오늘 입고</span><span class="v">0</span></div>`;
+  }
+  html += `<div class="line out"><span>오늘 검수완료</span><span class="v">${o ? '−' + fmt(o) : '0'}</span></div>`;
+  if(it.pend) html += `<div class="note">판매 등록됐지만 아직 검수 전: ${fmt(it.pend)}개 (창고에 있고, 곧 나갈 예정)</div>`;
+  if(!stock.items[code]) html += `<div class="note">재고현황(${esc(md(stock.baseDate))} 마감)에 없는 품목코드예요.</div>`;
+
+  // 같은 품번(색상·기장) 다른 사이즈
+  const stem = code.slice(0, -1);
+  const sibs = Object.keys(stock.items).filter(x => x.length === code.length && x.slice(0, -1) === stem).sort();
+  if(sibs.length > 1){
+    html += `<div class="chips">` + sibs.map(x => {
+      const s = stock.items[x]; const size = String(s.s || '').split('-').pop() || x.slice(-1);
+      return `<button type="button" class="chip${x === code ? ' cur' : ''}" data-code="${esc(x)}">${esc(size)} ${fmt(s.e || 0)}</button>`;
+    }).join('') + `</div>`;
+  }
+  html += `</div>`;
+  $('resultArea').innerHTML = html;
+  $('resultArea').querySelectorAll('.chip[data-code]').forEach(btn => btn.addEventListener('click', () => showItem(btn.dataset.code)));
+  if(!quiet) $('codeInput').value = code;
+}
+
+$('searchBtn').addEventListener('click', () => lookup($('codeInput').value));
+$('codeInput').addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); lookup($('codeInput').value); } });
+
+/* ---------- 카메라 ---------- */
+let scanner = null, scanning = false, lastScan = { t:'', at:0 };
+async function startCamera(){
+  if(typeof Html5Qrcode === 'undefined'){ setStatus('findStatus', 'err', '카메라 기능을 불러오지 못했어요 (인터넷 연결 확인).'); return; }
+  $('reader').style.display = 'block';
+  const F = Html5QrcodeSupportedFormats;
+  scanner = scanner || new Html5Qrcode('reader', { formatsToSupport: [F.QR_CODE, F.CODE_128, F.CODE_39, F.EAN_13, F.DATA_MATRIX], experimentalFeatures: { useBarCodeDetectorIfSupported: true } });
+  try{
+    await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: (w, h) => ({ width: Math.floor(w * 0.8), height: Math.floor(Math.min(h, w) * 0.5) }) }, onScan, () => {});
+    scanning = true;
+    $('camBtn').textContent = '카메라 끄기';
+  }catch(err){
+    $('reader').style.display = 'none';
+    setStatus('findStatus', 'err', '카메라를 켜지 못했어요. 브라우저에서 카메라 권한을 허용했는지, 주소가 https인지 확인해주세요.\n' + err);
+  }
+}
+async function stopCamera(){
+  if(scanner && scanning){ try{ await scanner.stop(); }catch(e){} }
+  scanning = false;
+  $('reader').style.display = 'none';
+  $('camBtn').textContent = '카메라로 찍기';
+}
+function onScan(text){
+  const now = Date.now();
+  if(text === lastScan.t && now - lastScan.at < 2500) return; // 같은 걸 계속 비추고 있을 때 반복 조회 방지
+  lastScan = { t: text, at: now };
+  if(navigator.vibrate) navigator.vibrate(60);
+  lookup(text);
+}
+$('camBtn').addEventListener('click', () => scanning ? stopCamera() : startCamera());
+
+/* ---------- 등록: 엑셀 공통 ---------- */
+function readWorkbook(file){
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = e => { try{ resolve(XLSX.read(new Uint8Array(e.target.result), { type: 'array' })); }catch(err){ reject(err); } };
+    fr.onerror = reject;
+    fr.readAsArrayBuffer(file);
+  });
+}
+function sheetRows(ws){ return XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true }); }
+function hashText(s){ let h = 5381; for(let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return h.toString(36); }
+
+/* ---------- 1. 마감재고 ---------- */
+let pendingBase = null;
+$('baseFile').addEventListener('change', async e => {
+  pendingBase = null; $('baseUploadBtn').classList.add('hidden'); setStatus('baseStatus', '', '');
+  const file = e.target.files[0]; if(!file) return;
+  try{
+    const wb = await readWorkbook(file);
+    const rows = sheetRows(wb.Sheets[wb.SheetNames[0]]);
+    let baseDate = '', hi = -1;
+    for(let k = 0; k < Math.min(5, rows.length); k++){
+      const joined = (rows[k] || []).join(' ');
+      const m = joined.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+      if(!baseDate && /회사명/.test(joined) && m) baseDate = `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+      if((rows[k] || []).some(v => String(v).trim() === '품목코드')){ hi = k; break; }
+    }
+    if(hi < 0) throw new Error('"품목코드" 머리글을 찾지 못했어요. 이카운트 재고현황 파일이 맞는지 확인해주세요.');
+    const head = rows[hi].map(v => String(v == null ? '' : v).trim());
+    const ci = head.indexOf('품목코드'), ni = head.indexOf('품목명'), si = head.indexOf('규격');
+    let qi = head.indexOf('본사창고'); if(qi < 0) qi = head.indexOf('합계');
+    if(qi < 0) throw new Error('수량 열(본사창고/합계)을 찾지 못했어요.');
+    const out = [];
+    for(let k = hi + 1; k < rows.length; k++){
+      const r = rows[k] || []; const code = String(r[ci] || '').trim();
+      if(!code || code === '합계' || !/^[A-Za-z]/.test(code)) continue;
+      out.push([code, r[ni] || '', r[si] || '', Number(String(r[qi] == null ? 0 : r[qi]).replace(/,/g, '')) || 0]);
+    }
+    if(!baseDate) throw new Error('파일 첫 줄에서 날짜를 찾지 못했어요.');
+    pendingBase = { baseDate, rows: out };
+    const total = out.reduce((s, r) => s + r[3], 0);
+    let msg = `기준일 ${baseDate} · ${fmt(out.length)}품목 · 총 ${fmt(total)}개`;
+    if(baseDate >= businessToday()) msg += `\n⚠ 기준일이 오늘이에요. 전날 날짜로 조회해서 받은 파일인지 확인해주세요.`;
+    setStatus('baseStatus', baseDate >= businessToday() ? 'err' : 'info', msg);
+    $('baseUploadBtn').classList.remove('hidden');
+  }catch(err){ setStatus('baseStatus', 'err', String(err.message || err)); }
+});
+$('baseUploadBtn').addEventListener('click', async () => {
+  if(!pendingBase) return;
+  const btn = $('baseUploadBtn'); btn.disabled = true; btn.textContent = '등록 중...';
+  try{
+    const res = await postJson({ type: 'uploadBaseStock', baseDate: pendingBase.baseDate, rows: pendingBase.rows });
+    if(!res.ok) throw new Error(res.error);
+    setStatus('baseStatus', 'ok', `등록 완료: ${res.baseDate} 마감 ${fmt(res.count)}품목`);
+    btn.classList.add('hidden'); $('baseFile').value = ''; pendingBase = null;
+    loadStock(true); loadBatches();
+  }catch(err){ setStatus('baseStatus', 'err', '등록 실패: ' + err.message); }
+  finally{ btn.disabled = false; btn.textContent = '마감재고 등록'; }
+});
+
+/* ---------- 2. 반품 창고이동전표 ---------- */
+function parseMoveSlip(text){
+  const lines = String(text || '').split(/\r?\n/);
+  const after = label => { for(let k = 0; k < lines.length; k++){ if(lines[k].trim() === label){ for(let j = k + 1; j < lines.length; j++){ if(lines[j].trim()) return lines[j].trim(); } } } return ''; };
+  const slipNo = after('전표번호');
+  const from = after('출고처'), to = after('입고처');
+  const dateText = after('DATE') || slipNo;
+  const dm = dateText.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+  const date = dm ? `${dm[1]}-${String(dm[2]).padStart(2,'0')}-${String(dm[3]).padStart(2,'0')}` : '';
+  let sign = 0;
+  if(/본사창고/.test(to)) sign = 1; else if(/본사창고/.test(from)) sign = -1;
+  const map = {}, names = {};
+  lines.forEach(l => {
+    let m = null;
+    const cells = l.split('\t').map(x => x.trim());
+    // 탭으로 나뉜 줄: 순번 | 품목코드 | 품목명[규격] | 수량 | 적요(있어도 무시)
+    if(cells.length >= 4 && /^\d+$/.test(cells[0]) && /^[A-Za-z][A-Za-z0-9]{5,}$/.test(cells[1]) && /^-?[\d,]+$/.test(cells[3])) m = [l, cells[1], cells[2], cells[3]];
+    if(!m) m = l.match(/^\s*\d+\s+([A-Za-z][A-Za-z0-9]{5,})\s+(.+?\])\s+(-?[\d,]+)(?:\s.*)?$/) || l.match(/^\s*\d+\s+([A-Za-z][A-Za-z0-9]{5,})\s+(.+?)\s+(-?[\d,]+)\s*$/);
+    if(!m) return;
+    const code = m[1].toUpperCase(); const q = Number(m[3].replace(/,/g, '')) || 0;
+    map[code] = (map[code] || 0) + q;
+    const nm = m[2].match(/^(.*?)\s*\[(.*)\]\s*$/);
+    names[code] = nm ? { name: nm[1].trim(), spec: nm[2].trim() } : { name: m[2].trim(), spec: '' };
+  });
+  return { slipNo, from, to, date, sign, items: Object.keys(map).map(c => ({ code: c, qty: map[c] * sign, name: names[c].name, spec: names[c].spec })) };
+}
+$('moveBtn').addEventListener('click', async () => {
+  const p = parseMoveSlip($('moveText').value);
+  if(!p.slipNo){ setStatus('moveStatus', 'err', '"전표번호"를 찾지 못했어요. 전표번호 줄부터 같이 긁어서 붙여넣어 주세요.'); return; }
+  if(!p.sign){ setStatus('moveStatus', 'err', `출고처/입고처에 "본사창고"가 없어요. (출고처: ${p.from || '?'} / 입고처: ${p.to || '?'})`); return; }
+  if(!p.items.length){ setStatus('moveStatus', 'err', '품목 줄을 찾지 못했어요. 순번·품목코드·품목명·수량 줄까지 같이 긁어주세요.'); return; }
+  if(!p.date){ setStatus('moveStatus', 'err', 'DATE(날짜)를 찾지 못했어요.'); return; }
+  const total = p.items.reduce((s, it) => s + it.qty, 0);
+  const btn = $('moveBtn'); btn.disabled = true; btn.textContent = '등록 중...';
+  try{
+    const res = await postJson({ type: 'addStockMovement', kind: '반품', docKey: '이동 ' + p.slipNo.replace(/\s+/g, ' '), date: p.date, source: `창고이동 ${p.slipNo.split('[')[0].trim()} (${p.from}→${p.to})`, items: p.items });
+    if(!res.ok) throw new Error(res.error);
+    if(res.duplicate) setStatus('moveStatus', 'info', `이미 등록된 전표예요: ${p.slipNo}`);
+    else { setStatus('moveStatus', 'ok', `등록 완료: ${p.slipNo} · ${p.items.length}품목 · ${total > 0 ? '+' : ''}${fmt(total)}개 (${p.from} → ${p.to})`); $('moveText').value = ''; }
+    loadStock(true); loadBatches();
+  }catch(err){ setStatus('moveStatus', 'err', '등록 실패: ' + err.message); }
+  finally{ btn.disabled = false; btn.textContent = '반품 등록'; }
+});
+
+/* ---------- 3. 입고 엑셀 ---------- */
+// 품번(TT-3507-C2BA) + 사이즈 → 품목코드(TTA3507C213)
+// 앞2글자 + A + 번호4 + 색상2 + 기장(BA=1, LO=2, SH=3) + 사이즈(S1 M2 L3 XL4 2XL5 3XL6 F1=7 F2=8)
+const LENGTH_DIGIT = { BA:'1', LO:'2', SH:'3' };
+const SIZE_DIGIT = { S:'1', M:'2', L:'3', XL:'4', '2XL':'5', '3XL':'6', F1:'7', F2:'8' };
+function styleToCode(style, size){
+  const m = String(style || '').trim().toUpperCase().match(/^([A-Z]{2})-([A-Z0-9]{4})-([A-Z0-9]{2})([A-Z]{2})$/);
+  if(!m || !LENGTH_DIGIT[m[4]] || !SIZE_DIGIT[size]) return '';
+  return m[1] + 'A' + m[2] + m[3] + LENGTH_DIGIT[m[4]] + SIZE_DIGIT[size];
+}
+let pendingIn = null;
+$('inFile').addEventListener('change', async e => {
+  pendingIn = null; $('inUploadBtn').classList.add('hidden'); setStatus('inStatus', '', '');
+  const file = e.target.files[0]; if(!file) return;
+  try{
+    const wb = await readWorkbook(file);
+    const name = wb.SheetNames.find(n => /수량\s*디테일/.test(n)) || wb.SheetNames[2];
+    if(!name) throw new Error('3번째 탭(수량디테일)이 없어요.');
+    const rows = sheetRows(wb.Sheets[name]);
+    // 사이즈 머리글 줄 찾기 (F1 F2 S M L ...)
+    let sr = -1;
+    for(let k = 0; k < Math.min(6, rows.length); k++){ if((rows[k] || []).some(v => String(v).trim() === 'S') && (rows[k] || []).some(v => String(v).trim() === 'M')){ sr = k; break; } }
+    if(sr < 0) throw new Error('사이즈 머리글(S, M, L...)을 찾지 못했어요.');
+    const sizeCols = {};
+    rows[sr].forEach((v, idx) => { const s = String(v == null ? '' : v).trim().toUpperCase(); if(s && /^(F\d|S|M|L|XL|\dXL)$/.test(s)) sizeCols[idx] = s; });
+    const map = {}, unmapped = [];
+    let fileTotal = 0, listedTotal = null;
+    for(let k = sr + 1; k < rows.length; k++){
+      const r = rows[k] || []; const style = String(r[0] || '').trim();
+      if(!style) continue;
+      if(/^TOTAL$/i.test(style)){ listedTotal = Number(r[r.length - 1]) || null; continue; }
+      Object.keys(sizeCols).forEach(idx => {
+        const q = Number(r[idx]) || 0; if(!q) return;
+        fileTotal += q;
+        const code = styleToCode(style, sizeCols[idx]);
+        if(!code){ unmapped.push(`${style} ${sizeCols[idx]} ${q}개`); return; }
+        map[code] = (map[code] || 0) + q;
+      });
+    }
+    const items = Object.keys(map).sort().map(c => ({ code: c, qty: map[c], name: '', spec: '' }));
+    if(!items.length) throw new Error('입고 품목을 찾지 못했어요.');
+    const stem = file.name.replace(/\.[^.]+$/, '');
+    const mappedTotal = items.reduce((s, it) => s + it.qty, 0);
+    const docKey = `입고 ${stem} #${hashText(items.map(it => it.code + ':' + it.qty).join(','))}`;
+    pendingIn = { docKey, source: stem.split(/[\s_(]/)[0] || stem, items };
+    const notInStock = stock ? items.filter(it => !stock.items[it.code]).map(it => it.code) : [];
+    let msg = `${name} 탭 · ${items.length}개 품목코드 · 총 ${fmt(mappedTotal)}개` + (listedTotal != null ? ` (파일 TOTAL ${fmt(listedTotal)})` : '');
+    if(unmapped.length) msg += `\n⚠ 품목코드로 못 바꾼 줄 ${unmapped.length}개 (등록 안 됨): ${unmapped.slice(0, 5).join(', ')}${unmapped.length > 5 ? ' ...' : ''}`;
+    if(notInStock.length) msg += `\n참고: 재고현황에 없는 새 품목코드 ${notInStock.length}개: ${notInStock.slice(0, 5).join(', ')}${notInStock.length > 5 ? ' ...' : ''}`;
+    if(listedTotal != null && listedTotal !== fileTotal) msg += `\n⚠ 사이즈별 합계(${fmt(fileTotal)})와 TOTAL(${fmt(listedTotal)})이 달라요.`;
+    setStatus('inStatus', unmapped.length ? 'err' : 'info', msg);
+    $('inUploadBtn').classList.remove('hidden');
+  }catch(err){ setStatus('inStatus', 'err', String(err.message || err)); }
+});
+$('inUploadBtn').addEventListener('click', async () => {
+  if(!pendingIn) return;
+  const btn = $('inUploadBtn'); btn.disabled = true; btn.textContent = '등록 중...';
+  try{
+    const res = await postJson({ type: 'addStockMovement', kind: '입고', docKey: pendingIn.docKey, date: businessToday(), source: pendingIn.source, items: pendingIn.items });
+    if(!res.ok) throw new Error(res.error);
+    if(res.duplicate) setStatus('inStatus', 'info', '이미 등록된 입고 파일이에요 (같은 내용).');
+    else setStatus('inStatus', 'ok', `등록 완료: ${pendingIn.source} · ${fmt(res.lines)}품목 · +${fmt(res.total)}개`);
+    btn.classList.add('hidden'); $('inFile').value = ''; pendingIn = null;
+    loadStock(true); loadBatches();
+  }catch(err){ setStatus('inStatus', 'err', '등록 실패: ' + err.message); }
+  finally{ btn.disabled = false; btn.textContent = '입고 등록'; }
+});
+
+/* ---------- 등록 내역 ---------- */
+async function loadBatches(){
+  try{
+    const data = await getJson('action=getStockMovements');
+    if(!data.ok) throw new Error(data.error);
+    const head = data.baseDate ? `마감재고: ${data.baseDate} (${fmt(data.baseCount)}품목)` : '마감재고가 아직 없어요.';
+    if(!data.batches.length){ $('batchList').innerHTML = `${esc(head)}<br>이후 등록된 반품·입고가 없어요.`; return; }
+    $('batchList').innerHTML = `<div style="margin-bottom:6px">${esc(head)}</div><table><tr><th>구분</th><th>내용</th><th>수량</th><th></th></tr>` +
+      data.batches.map(b => `<tr><td><span class="tag ${esc(b.kind)}">${esc(b.kind)}</span></td><td>${esc(b.source || b.docKey)}<br><span class="hint">${esc(b.at)} · ${b.lines}품목</span></td><td><b>${b.total > 0 ? '+' : ''}${fmt(b.total)}</b></td><td><button type="button" class="btn danger" data-key="${esc(b.docKey)}">삭제</button></td></tr>`).join('') + '</table>';
+    $('batchList').querySelectorAll('button[data-key]').forEach(btn => btn.addEventListener('click', async () => {
+      if(!confirm(`이 등록을 삭제할까요?\n${btn.dataset.key}`)) return;
+      btn.disabled = true;
+      const res = await postJson({ type: 'deleteStockMovement', docKey: btn.dataset.key });
+      if(!res.ok) alert('삭제 실패: ' + res.error);
+      loadStock(true); loadBatches();
+    }));
+  }catch(err){ $('batchList').textContent = '불러오기 실패: ' + err.message; }
+}
+
+/* ---------- 연동 주소 ---------- */
+$('urlInput').value = gasUrl;
+$('urlSaveBtn').addEventListener('click', () => {
+  gasUrl = $('urlInput').value.trim() || DEFAULT_URL;
+  try{ localStorage.setItem('stockGasUrl', gasUrl); }catch(e){}
+  loadStock(true); loadBatches();
+});
+</script>
+</body>
+</html>
