@@ -1290,7 +1290,7 @@ async function handlePickingStage(raw, key){
   }
   if(res.phase === 'needWorker'){
     pendingPickStart = { key, raw, at: Date.now() };
-    showBanner('pick', '🛒 피킹 시작', key, '피킹자 QR을 찍어주세요 (피킹 끝나면 전표를 다시 찍기)', '🛒');
+    showBanner('pick', '피킹 시작', key, '피킹자 QR을 찍어주세요 (피킹 끝나면 전표를 다시 찍기)', '🛒');
     addLog(t, raw, true, '피킹 시작 대기 - 피킹자 QR을 찍어주세요');
     playOkSound();
     speakKorean('피킹 시작. 작업자 큐알을 찍어주세요');
@@ -1301,7 +1301,7 @@ async function handlePickingStage(raw, key){
     pendingPickStart = null;
     pickingStateCache[key] = { state:'done', worker: res.worker || '' };
     const dur = res.unmeasured ? '시간 미측정' : formatMsShort(res.seconds * 1000);
-    showBanner('ok', '✅ 피킹 완료', key, `${res.worker || ''} · ${dur} — 검수할 때 전표를 한 번 더 찍어주세요`, '🛒');
+    showBanner('ok', '피킹 완료', key, `${res.worker || ''} · ${dur} — 검수할 때 전표를 한 번 더 찍어주세요`, '🛒');
     addLog(t, raw, true, `피킹 완료 (${res.worker || ''} ${dur})`);
     playOkSound();
     speakKorean('피킹 완료');
@@ -1320,7 +1320,7 @@ function consumePendingPickStart(workerName, workerCode){
   pendingPickStart = null;
   pickingStateCache[p.key] = { state:'started', worker: workerName };
   const t = new Date().toLocaleTimeString('ko-KR', {hour12:false});
-  showBanner('pick', '🛒 피킹 시작', p.key, `${workerName} — 피킹 끝나면 전표를 다시 찍어주세요`, '🛒');
+  showBanner('pick', '피킹 시작', p.key, `${workerName} — 피킹 끝나면 전표를 다시 찍어주세요`, '🛒');
   addLog(t, 'WK:' + workerCode, true, `피킹 시작 (${workerName}) ${p.key}`);
   playOkSound();
   speakKorean(`${workerName}님 피킹 시작`);
