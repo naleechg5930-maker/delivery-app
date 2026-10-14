@@ -378,8 +378,10 @@
       width:100%; display:flex; align-items:flex-end;
     }
     .label-zone{ flex:1 1 50%; font-size:11mm; font-weight:700; color:#000; text-align:left; }
-    .label-bagnum{ flex:1 1 50%; font-size:13mm; font-weight:800; color:#000; text-align:right; }
-    .label-star{ font-size:20mm; font-weight:900; line-height:0; position:relative; top:2mm; }
+    /* 봉투번호는 QR(가운데 24mm) 오른쪽 칸 안에서만 오른쪽 정렬 → 마지막 봉투 별표가 붙어도 숫자 위치가 안 바뀌게
+       별표는 숫자 "위"에 따로 띄운다 (예전엔 숫자 오른쪽에 붙어서 숫자가 왼쪽으로 밀리며 QR에 가려졌음) */
+    .label-bagnum{ flex:0 0 40mm; font-size:13mm; font-weight:800; color:#000; text-align:right; white-space:nowrap; position:relative; }
+    .label-star{ position:absolute; right:0; bottom:100%; margin-bottom:-7mm; font-size:20mm; font-weight:900; line-height:1; }
     .label-delivery-qr{ width:24mm; height:24mm; position:absolute; top:60%; left:50%; transform:translate(-50%,-50%); background:#fff; z-index:5; }
 
     .packing-list-page{ align-items:stretch; justify-content:flex-start; }
@@ -3038,7 +3040,7 @@ function buildLabelPageHTML(companyName, zoneValue, bagLabelText, isLast, delive
   const fontSize = fitVendorFontSize(name);
   const { x, y } = getLabelOffsets();
   const bagNumHtml = bagLabelText
-    ? `${escapeHtml(bagLabelText)}${isLast ? ' <span class="label-star">*</span>' : ''}`
+    ? `${escapeHtml(bagLabelText)}${isLast ? '<span class="label-star">*</span>' : ''}`
     : '';
   const qrHtml = deliveryQrPayload
     ? `<img class="label-delivery-qr delivery-qr-img" src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&ecc=H&data=${encodeURIComponent(deliveryQrPayload)}" alt="배송 QR">`
@@ -3048,7 +3050,7 @@ function buildLabelPageHTML(companyName, zoneValue, bagLabelText, isLast, delive
       <div class="label-vendor" style="font-size:${fontSize};">${escapeHtml(name)}</div>
       <div class="label-bottom-row">
         <span class="label-zone">${zoneValue ? escapeHtml(zoneValue) : ''}</span>
-        <span class="label-bagnum">${bagNumHtml}</span>
+        <span class="label-bagnum"${bagLabelText && String(bagLabelText).length >= 5 ? ' style="font-size:10.5mm"' : ''}>${bagNumHtml}</span>
       </div>
       ${qrHtml}
       <div class="label-supplier">-루나앤솔-</div>
