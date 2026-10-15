@@ -57,6 +57,19 @@
   .tag{display:inline-block;white-space:nowrap;font-size:12px;font-weight:800;border-radius:6px;padding:2px 6px;color:#fff}
   .tag.입고{background:var(--in)} .tag.반품{background:var(--ok)}
   .hidden{display:none}
+  .line.plusl .v{color:var(--in)}
+  .livebtn{margin-top:12px;width:100%;display:block;text-align:left;background:#E6F6F3;border:1.5px solid #0F766E;border-radius:12px;padding:12px 14px;color:#0F766E;font-family:inherit;cursor:pointer}
+  .livebtn .lt{display:flex;justify-content:space-between;font-size:16px;font-weight:800}
+  .livebtn .ls{display:block;font-size:14px;font-weight:700;color:#134e48;margin-top:4px}
+  #sheetWrap{position:fixed;inset:0;z-index:50}
+  .sheetDim{position:absolute;inset:0;background:rgba(10,14,40,.45)}
+  .sheet{position:absolute;left:0;right:0;bottom:0;max-width:640px;margin:0 auto;background:#fff;border-radius:18px 18px 0 0;padding:16px 16px 22px;box-shadow:0 -6px 20px rgba(0,0,0,.2);max-height:85vh;overflow:auto}
+  .sheet .grab{width:44px;height:5px;border-radius:3px;background:#cfd3de;margin:0 auto 10px}
+  .sheet h3{margin:0;font-size:18px;color:#0F766E}.sheet .sub{font-size:12.5px;color:var(--sub);margin:2px 0 10px}
+  .st{display:grid;grid-template-columns:12px minmax(0,1fr) auto;gap:10px;align-items:center;padding:11px 2px;border-bottom:1px solid #EEF0F4}
+  .st:last-child{border-bottom:0}
+  .st .dot{width:12px;height:12px;border-radius:6px}.st .t{font-size:17px;font-weight:900}.st .t small{display:block;font-size:12.5px;color:var(--sub);font-weight:500;margin-top:2px;line-height:1.45}
+  .st .q{font-size:26px;font-weight:900}
   details summary{cursor:pointer;font-size:13px;color:var(--sub)}
 </style>
 </head>
@@ -67,9 +80,13 @@
 </header>
 <nav>
   <button type="button" id="tabFind" class="on">조회</button>
-  <button type="button" id="tabReg">등록 (마감재고·입고·반품)</button>
+  <button type="button" id="tabReg">입고 등록</button>
 </nav>
 
+<div id="sheetWrap" class="hidden">
+  <div class="sheetDim" id="sheetDim"></div>
+  <div class="sheet"><div class="grab"></div><div id="sheetBody"></div><button type="button" class="btn ghost" id="sheetClose" style="width:100%;margin-top:12px">닫기</button></div>
+</div>
 <main>
 <!-- ===================== 조회 ===================== -->
 <section id="viewFind">
@@ -82,10 +99,10 @@
       <button type="button" class="btn primary" id="searchBtn">찾기</button>
     </div>
     <div class="row" style="margin-top:8px">
-      <button type="button" class="btn ghost" id="camBtn" style="flex:1">카메라로 찍기</button>
-      <label class="btn ghost" for="photoInput" style="flex:1;text-align:center">사진으로 읽기</label>
+      <button type="button" class="btn ghost" id="camBtn" style="flex:1;min-width:0;padding:12px 6px">카메라로 찍기</button>
+      <label class="btn ghost" for="photoInput" style="flex:1;min-width:0;padding:12px 6px;text-align:center">사진으로 읽기</label>
       <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
-      <button type="button" class="btn ghost" id="refreshBtn">새로고침</button>
+      <button type="button" class="btn ghost" id="refreshBtn" aria-label="새로고침" style="padding:12px 12px">⟳</button>
     </div>
     <div id="findStatus"></div>
   </div>
@@ -95,32 +112,15 @@
 <!-- ===================== 등록 ===================== -->
 <section id="viewReg" class="hidden">
   <div class="panel">
-    <h2>1. 전날 마감재고 (매일 아침 1번)</h2>
-    <div class="hint">이카운트 재고현황을 <b>전날 날짜로 조회</b>한 화면을 "회사명" 줄부터 끝까지 긁어서 붙여넣으세요. 등록하면 기존 재고현황은 통째로 바뀌어요.</div>
-    <textarea id="baseText" placeholder="회사명 : 루나앤솔 / 본사창고 / 2026/10/14&#10;품목코드	품목명	규격	합계	본사창고 ...&#10;LPA4000J111	LP-4000-J1BA	흑청-기본-S	14	14 ..."></textarea>
-    <details style="margin-top:6px"><summary>엑셀 파일로 올리기</summary><input type="file" id="baseFile" accept=".xlsx,.xls" style="margin-top:8px"></details>
-    <div id="baseStatus"></div>
-    <button type="button" class="btn primary hidden" id="baseUploadBtn" style="margin-top:8px;width:100%">마감재고 등록</button>
-  </div>
-
-  <div class="panel">
-    <h2>2. 반품 창고이동전표 붙여넣기</h2>
-    <div class="hint">이카운트 창고이동전표 화면을 전표번호부터 마지막 품목까지 긁어서 붙여넣으세요. 같은 전표는 두 번 넣어도 한 번만 들어가요.</div>
-    <textarea id="moveText" placeholder="창고이동전표&#10;전표번호&#10; 2026/10/14 -3 [ 1 / 1 ]&#10;출고처&#10; 반품창고(101)&#10;..."></textarea>
-    <div id="moveStatus"></div>
-    <button type="button" class="btn primary" id="moveBtn" style="margin-top:8px;width:100%">반품 등록</button>
-  </div>
-
-  <div class="panel">
-    <h2>3. 입고 붙여넣기 (하루 여러 번 가능)</h2>
-    <div class="hint">이카운트 입고 화면(일자-No · 품목코드 · 패킹넘버 · 수량 · 적요)을 머리글 줄부터 긁어서 붙여넣으세요. <b>적요(공장) + 패킹넘버(박스)</b>별로 저장돼서 조회할 때 "YL 268번 박스"처럼 보여요. 이미 넣은 박스 줄은 다시 붙여넣어도 자동으로 빠져요.</div>
+    <h2>오늘 입고 붙여넣기 (하루 여러 번 가능)</h2>
+    <div class="hint">이카운트 입고 화면(일자-No · 품목코드 · 패킹넘버 · 수량 · 적요)을 머리글 줄부터 긁어서 붙여넣으세요. <b>적요(공장) + 패킹넘버(CTN)</b>별로 저장돼서 조회할 때 "YL 268 CTN"처럼 보여요. 이미 넣은 CTN 줄은 다시 붙여넣어도 자동으로 빠져요.</div>
     <textarea id="inText" placeholder="일자-No.	품목별납기일자	품목코드	품목명	규격	패킹넘버	수량	...	거래처	적요&#10;2026/10/10 -2	2026/10/21	NTA8004B111	NT-8004-B1BA	차콜-기본-S	1	1	...	CNK	FY"></textarea>
     <div id="inStatus"></div>
     <button type="button" class="btn primary" id="inUploadBtn" style="margin-top:8px;width:100%">입고 등록</button>
   </div>
 
   <div class="panel">
-    <h2>등록된 반품·입고 (마감 기준일 이후)</h2>
+    <h2>오늘 등록된 입고</h2>
     <div id="batchList" class="hint">불러오는 중...</div>
   </div>
 
@@ -183,7 +183,7 @@ async function loadStock(force){
     const data = await getJson('action=getStockStatus' + (force ? '&force=1' : ''));
     if(!data.ok) throw new Error(data.error || '알 수 없는 오류');
     stock = data;
-    $('metaText').innerHTML = `${esc(md(data.baseDate))} 마감 기준<br>${esc(data.updatedAt)} 갱신`;
+    $('metaText').innerHTML = `이카운트 ${esc(data.liveUpdatedAt || '?')} 갱신<br>조회 ${esc(String(data.updatedAt || '').slice(0, 5))}`;
     if(lastCode) showItem(lastCode, true);
     else if(initialCode){ const c0 = initialCode; initialCode = ''; lookup(c0); }
   }catch(err){
@@ -237,53 +237,72 @@ function boxSummaryHtml(inb){
     while(k < arr.length){
       let j = k;
       while(j + 1 < arr.length && arr[j + 1].n === arr[j].n + 1 && arr[j + 1].q === arr[k].q) j++;
-      parts.push(j > k ? `${arr[k].n}~${arr[j].n}번 각 ${fmt(arr[k].q)}` : `${arr[k].n}번 ${fmt(arr[k].q)}`);
+      parts.push(j > k ? `${arr[k].n}~${arr[j].n} CTN 각 ${fmt(arr[k].q)}` : `${arr[k].n} CTN ${fmt(arr[k].q)}`);
       k = j + 1;
     }
     const tot = arr.reduce((s, a) => s + a.q, 0);
-    return `<div style="margin-top:6px;font-size:15px"><span class="tag 입고" style="font-size:14px">${esc(f)}</span> <b>${esc(parts.join(' · '))}</b> <span class="hint" style="color:var(--in)">(${arr.length}박스 ${fmt(tot)}개)</span></div>`;
+    return `<div style="margin-top:6px;font-size:15px"><span class="tag 입고" style="font-size:14px">${esc(f)}</span> <b>${esc(parts.join(' · '))}</b> <span class="hint" style="color:var(--in)">(${arr.length}CTN ${fmt(tot)}개)</span></div>`;
   });
   if(other.length) lines.push(`<div class="sm" style="color:var(--in);margin-top:4px">${esc(other.join(' · '))}</div>`);
   return lines.join('');
 }
 
+function sumQty(list){ return (list || []).reduce((a, x) => a + (Number(x[1]) || 0), 0); }
 function showItem(code, quiet){
   const it = stock.items[code] || {};
   lastCode = code;
-  const b = it.b || 0, r = it.r || 0, c = it.c || 0, i = it.i || 0, o = it.o || 0;
-  const existing = b + r + c;
-  const expected = existing + i - o;
-  let breakdown = `마감 ${fmt(b)}`;
-  if(r) breakdown += r > 0 ? ` + 반품 ${fmt(r)}` : ` − 반품 ${fmt(-r)}`;
-  if(c) breakdown += ` + 이월 미검수 ${fmt(c)}`;
+  const live = it.live || 0, p = it.p || 0, k = it.k || 0;
+  const expected = it.e != null ? it.e : live + p - k;
+  const st = it.st || { pre:[], ing:[], picked:[], insp:[], done:0, doneSlips:0 };
+  const nPre = sumQty(st.pre), nIng = sumQty(st.ing), nPicked = sumQty(st.picked) + sumQty(st.insp), nDone = st.done || 0;
   let html = `<div class="panel result">
     <div class="code">${esc(code)}</div>
     <div class="name">${esc(it.n || '')}${it.s ? ' / ' + esc(it.s) : ''}</div>
-    <div class="big"><span class="lab">지금 있어야 할 수량</span><span class="num">${fmt(expected)}</span></div>
-    <div class="line"><span>기존 창고재고<span class="sm">${esc(breakdown)}</span></span><span class="v">${fmt(existing)}</span></div>`;
-  if(i){
-    html += `<div class="line inb" style="display:block"><div style="display:flex;justify-content:space-between;align-items:baseline"><span>오늘 입고 <b>(박스에서 찾기)</b></span><span class="v">+${fmt(i)}</span></div>${boxSummaryHtml(it.inb || [])}</div>`;
-  } else {
-    html += `<div class="line"><span>오늘 입고</span><span class="v">0</span></div>`;
+    <div class="big"><span class="lab">지금 있어야 할 수량<span style="display:block;font-size:12px;color:#c9cdf0;font-weight:500">선반 기준</span></span><span class="num">${fmt(expected)}</span></div>
+    <div class="line"><span>이카운트 재고<span class="sm">${esc(stock.liveUpdatedAt || '')} 기준</span></span><span class="v">${fmt(live)}</span></div>
+    <div class="line plusl"><span>+ 판매현황 등록<span class="sm">아직 검수 안 끝난 전표</span></span><span class="v">+${fmt(p)}</span></div>
+    <div class="line out"><span>− 피킹완료<span class="sm">이미 선반에서 가져간 수량</span></span><span class="v">${k ? '−' + fmt(k) : '0'}</span></div>
+    <button type="button" class="livebtn" id="liveBtn"><span class="lt"><span>실재고 움직임 보기</span><span>▸</span></span>
+      <span class="ls">피킹 전 ${fmt(nPre)}${nIng ? ' · 피킹 중 ' + fmt(nIng) : ''} · 피킹완료 ${fmt(nPicked)} · 검수완료 ${fmt(nDone)}</span></button>`;
+  if(it.i){
+    html += `<div class="line inb" style="display:block"><div style="display:flex;justify-content:space-between;align-items:baseline"><span>오늘 입고</span><span class="v">+${fmt(it.i)}</span></div>${boxSummaryHtml(it.inb || [])}</div>`;
   }
-  html += `<div class="line out"><span>오늘 검수완료</span><span class="v">${o ? '−' + fmt(o) : '0'}</span></div>`;
-  if(it.pend) html += `<div class="note">판매 등록됐지만 아직 검수 전: ${fmt(it.pend)}개 (창고에 있고, 곧 나갈 예정)</div>`;
-  if(!stock.items[code]) html += `<div class="note">재고현황(${esc(md(stock.baseDate))} 마감)에 없는 품목코드예요.</div>`;
-
-  // 같은 품번(색상·기장) 다른 사이즈
+  if(!stock.items[code]) html += `<div class="note">이카운트 재고에 없는 품목코드예요 (재고 0이거나 코드가 다를 수 있어요).</div>`;
   const stem = code.slice(0, -1);
   const sibs = Object.keys(stock.items).filter(x => x.length === code.length && x.slice(0, -1) === stem).sort();
   if(sibs.length > 1){
     html += `<div class="chips">` + sibs.map(x => {
-      const s = stock.items[x]; const size = String(s.s || '').split('-').pop() || x.slice(-1);
-      return `<button type="button" class="chip${x === code ? ' cur' : ''}" data-code="${esc(x)}">${esc(size)} ${fmt(s.e || 0)}</button>`;
+      const s2 = stock.items[x]; const size = String(s2.s || '').split('-').pop() || x.slice(-1);
+      return `<button type="button" class="chip${x === code ? ' cur' : ''}" data-code="${esc(x)}">${esc(size)} ${fmt(s2.e || 0)}</button>`;
     }).join('') + `</div>`;
   }
   html += `</div>`;
   $('resultArea').innerHTML = html;
   $('resultArea').querySelectorAll('.chip[data-code]').forEach(btn => btn.addEventListener('click', () => showItem(btn.dataset.code)));
+  $('liveBtn').addEventListener('click', () => openLiveSheet(code));
   if(!quiet) $('codeInput').value = code;
 }
+
+// 실재고 움직임 배너 (아래에서 올라오는 창)
+function openLiveSheet(code){
+  const it = stock.items[code] || {};
+  const st = it.st || { pre:[], ing:[], picked:[], insp:[], done:0, doneSlips:0 };
+  const who = list => list.map(x => esc(x[0]) + ' ' + fmt(x[1])).join(' · ');
+  const rows = [
+    ['#9AA3B8', '피킹 전', '선반에 있음' + (st.pre.length ? ' · ' + who(st.pre) : ''), sumQty(st.pre)],
+  ];
+  if(st.ing.length) rows.push(['#D97706', '피킹 중', '가져오는 중 · ' + st.ing.map(x => `${esc(x[0])} ${fmt(x[1])} (${esc(x[2])})`).join(' · '), sumQty(st.ing)]);
+  const pickedDesc = [].concat(
+    st.picked.map(x => `${esc(x[0])} ${fmt(x[1])} (${esc(x[2])}${x[3] ? ' ' + esc(x[3]) : ''})`),
+    st.insp.map(x => `${esc(x[0])} ${fmt(x[1])} (검수 중 · ${esc(x[2])})`)
+  ).join(' · ');
+  rows.push(['#2563EB', '피킹완료', '검수대에 있음' + (pickedDesc ? ' · ' + pickedDesc : ''), sumQty(st.picked) + sumQty(st.insp)]);
+  rows.push(['#15803D', '검수완료', `오늘 출고${st.doneSlips ? ' · 전표 ' + st.doneSlips + '건' : ''}`, st.done || 0]);
+  $('sheetBody').innerHTML = `<h3>실재고 움직임 · ${esc(code)}</h3><div class="sub">판매현황 전표 기준 · 이카운트 ${esc(stock.liveUpdatedAt || '')}</div>` +
+    rows.map(r => `<div class="st"><span class="dot" style="background:${r[0]}"></span><span class="t">${r[1]}<small>${r[2]}</small></span><span class="q">${fmt(r[3])}</span></div>`).join('');
+  $('sheetWrap').classList.remove('hidden');
+}
+function closeLiveSheet(){ $('sheetWrap').classList.add('hidden'); }
 
 $('searchBtn').addEventListener('click', () => lookup($('codeInput').value));
 $('codeInput').addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); lookup($('codeInput').value); } });
@@ -382,115 +401,8 @@ function readWorkbook(file){
 function sheetRows(ws){ return XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true }); }
 function hashText(s){ let h = 5381; for(let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return h.toString(36); }
 
-/* ---------- 1. 마감재고 ---------- */
-let pendingBase = null;
-// rows: [[셀,셀,...], ...] (엑셀이든 붙여넣은 화면이든 같은 모양으로 바꿔서 처리)
-function parseBaseRows(rows){
-  let baseDate = '', hi = -1;
-  for(let k = 0; k < Math.min(8, rows.length); k++){
-    const joined = (rows[k] || []).join(' ');
-    const m = joined.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
-    if(!baseDate && /회사명/.test(joined) && m) baseDate = `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-    if((rows[k] || []).some(v => String(v == null ? '' : v).trim() === '품목코드')){ hi = k; break; }
-  }
-  if(hi < 0) throw new Error('"품목코드" 머리글 줄을 찾지 못했어요. 머리글 줄까지 같이 긁어주세요.');
-  const head = rows[hi].map(v => String(v == null ? '' : v).trim());
-  const ci = head.indexOf('품목코드'), ni = head.indexOf('품목명'), si = head.indexOf('규격');
-  let qi = head.indexOf('본사창고'); if(qi < 0) qi = head.indexOf('합계');
-  if(qi < 0) throw new Error('수량 열(본사창고/합계)을 찾지 못했어요.');
-  const out = [];
-  for(let k = hi + 1; k < rows.length; k++){
-    const r = rows[k] || []; const code = String(r[ci] == null ? '' : r[ci]).trim();
-    if(!code || code === '합계' || !/^[A-Za-z][A-Za-z0-9]{4,}$/.test(code)) continue;
-    const qv = r[qi] == null ? '' : String(r[qi]).trim();
-    out.push([code, String(r[ni] == null ? '' : r[ni]).trim(), String(r[si] == null ? '' : r[si]).trim(), Number(qv.replace(/,/g, '')) || 0]);
-  }
-  if(!baseDate) throw new Error('"회사명 : 루나앤솔 / 본사창고 / 날짜" 줄에서 날짜를 찾지 못했어요. 그 줄부터 긁어주세요.');
-  if(!out.length) throw new Error('품목 줄을 찾지 못했어요.');
-  return { baseDate, rows: out };
-}
-function showBasePreview(parsed){
-  pendingBase = parsed;
-  const total = parsed.rows.reduce((s, r) => s + r[3], 0);
-  let msg = `기준일 ${parsed.baseDate} · ${fmt(parsed.rows.length)}품목 · 총 ${fmt(total)}개`;
-  const isToday = parsed.baseDate >= businessToday();
-  if(isToday) msg += `\n⚠ 기준일이 오늘이에요. 전날 날짜로 조회한 화면인지 확인해주세요.`;
-  setStatus('baseStatus', isToday ? 'err' : 'info', msg);
-  $('baseUploadBtn').classList.remove('hidden');
-}
+/* ---------- 입고 붙여넣기 ---------- */
 function textToRows(text){ return String(text || '').replace(/\r/g, '').split('\n').map(l => l.split('\t')); }
-$('baseText').addEventListener('input', () => {
-  pendingBase = null; $('baseUploadBtn').classList.add('hidden'); setStatus('baseStatus', '', '');
-  if(!$('baseText').value.trim()) return;
-  try{ showBasePreview(parseBaseRows(textToRows($('baseText').value))); }
-  catch(err){ setStatus('baseStatus', 'err', String(err.message || err)); }
-});
-$('baseFile').addEventListener('change', async e => {
-  pendingBase = null; $('baseUploadBtn').classList.add('hidden'); setStatus('baseStatus', '', '');
-  const file = e.target.files[0]; if(!file) return;
-  try{
-    const wb = await readWorkbook(file);
-    showBasePreview(parseBaseRows(sheetRows(wb.Sheets[wb.SheetNames[0]])));
-  }catch(err){ setStatus('baseStatus', 'err', String(err.message || err)); }
-});
-$('baseUploadBtn').addEventListener('click', async () => {
-  if(!pendingBase) return;
-  const btn = $('baseUploadBtn'); btn.disabled = true; btn.textContent = '등록 중...';
-  try{
-    const res = await postJson({ type: 'uploadBaseStock', baseDate: pendingBase.baseDate, rows: pendingBase.rows });
-    if(!res.ok) throw new Error(res.error);
-    setStatus('baseStatus', 'ok', `등록 완료: ${res.baseDate} 마감 ${fmt(res.count)}품목`);
-    btn.classList.add('hidden'); $('baseFile').value = ''; $('baseText').value = ''; pendingBase = null;
-    loadStock(true); loadBatches();
-  }catch(err){ setStatus('baseStatus', 'err', '등록 실패: ' + err.message); }
-  finally{ btn.disabled = false; btn.textContent = '마감재고 등록'; }
-});
-
-/* ---------- 2. 반품 창고이동전표 ---------- */
-function parseMoveSlip(text){
-  const lines = String(text || '').split(/\r?\n/);
-  const after = label => { for(let k = 0; k < lines.length; k++){ if(lines[k].trim() === label){ for(let j = k + 1; j < lines.length; j++){ if(lines[j].trim()) return lines[j].trim(); } } } return ''; };
-  const slipNo = after('전표번호');
-  const from = after('출고처'), to = after('입고처');
-  const dateText = after('DATE') || slipNo;
-  const dm = dateText.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
-  const date = dm ? `${dm[1]}-${String(dm[2]).padStart(2,'0')}-${String(dm[3]).padStart(2,'0')}` : '';
-  let sign = 0;
-  if(/본사창고/.test(to)) sign = 1; else if(/본사창고/.test(from)) sign = -1;
-  const map = {}, names = {};
-  lines.forEach(l => {
-    let m = null;
-    const cells = l.split('\t').map(x => x.trim());
-    // 탭으로 나뉜 줄: 순번 | 품목코드 | 품목명[규격] | 수량 | 적요(있어도 무시)
-    if(cells.length >= 4 && /^\d+$/.test(cells[0]) && /^[A-Za-z][A-Za-z0-9]{5,}$/.test(cells[1]) && /^-?[\d,]+$/.test(cells[3])) m = [l, cells[1], cells[2], cells[3]];
-    if(!m) m = l.match(/^\s*\d+\s+([A-Za-z][A-Za-z0-9]{5,})\s+(.+?\])\s+(-?[\d,]+)(?:\s.*)?$/) || l.match(/^\s*\d+\s+([A-Za-z][A-Za-z0-9]{5,})\s+(.+?)\s+(-?[\d,]+)\s*$/);
-    if(!m) return;
-    const code = m[1].toUpperCase(); const q = Number(m[3].replace(/,/g, '')) || 0;
-    map[code] = (map[code] || 0) + q;
-    const nm = m[2].match(/^(.*?)\s*\[(.*)\]\s*$/);
-    names[code] = nm ? { name: nm[1].trim(), spec: nm[2].trim() } : { name: m[2].trim(), spec: '' };
-  });
-  return { slipNo, from, to, date, sign, items: Object.keys(map).map(c => ({ code: c, qty: map[c] * sign, name: names[c].name, spec: names[c].spec })) };
-}
-$('moveBtn').addEventListener('click', async () => {
-  const p = parseMoveSlip($('moveText').value);
-  if(!p.slipNo){ setStatus('moveStatus', 'err', '"전표번호"를 찾지 못했어요. 전표번호 줄부터 같이 긁어서 붙여넣어 주세요.'); return; }
-  if(!p.sign){ setStatus('moveStatus', 'err', `출고처/입고처에 "본사창고"가 없어요. (출고처: ${p.from || '?'} / 입고처: ${p.to || '?'})`); return; }
-  if(!p.items.length){ setStatus('moveStatus', 'err', '품목 줄을 찾지 못했어요. 순번·품목코드·품목명·수량 줄까지 같이 긁어주세요.'); return; }
-  if(!p.date){ setStatus('moveStatus', 'err', 'DATE(날짜)를 찾지 못했어요.'); return; }
-  const total = p.items.reduce((s, it) => s + it.qty, 0);
-  const btn = $('moveBtn'); btn.disabled = true; btn.textContent = '등록 중...';
-  try{
-    const res = await postJson({ type: 'addStockMovement', kind: '반품', docKey: '이동 ' + p.slipNo.replace(/\s+/g, ' '), date: p.date, source: `창고이동 ${p.slipNo.split('[')[0].trim()} (${p.from}→${p.to})`, items: p.items });
-    if(!res.ok) throw new Error(res.error);
-    if(res.duplicate) setStatus('moveStatus', 'info', `이미 등록된 전표예요: ${p.slipNo}`);
-    else { setStatus('moveStatus', 'ok', `등록 완료: ${p.slipNo} · ${p.items.length}품목 · ${total > 0 ? '+' : ''}${fmt(total)}개 (${p.from} → ${p.to})`); $('moveText').value = ''; }
-    loadStock(true); loadBatches();
-  }catch(err){ setStatus('moveStatus', 'err', '등록 실패: ' + err.message); }
-  finally{ btn.disabled = false; btn.textContent = '반품 등록'; }
-});
-
-/* ---------- 3. 입고 붙여넣기 ---------- */
 // 이카운트 화면: 일자-No. | 품목별납기일자 | 품목코드 | 품목명 | 규격 | 패킹넘버 | 수량 | 단품수량 | 장 수 | 단가 | 공급가액 | 거래처 | 적요
 // 적요 = 공장(FY, YL, YH ...), 패킹넘버 = 박스번호 → 박스 라벨 "YL268"
 let pendingIn = null;
@@ -535,8 +447,8 @@ $('inText').addEventListener('input', () => {
     const boxes = new Set(p.items.map(it => it.box)).size;
     const byFactory = {};
     p.items.forEach(it => { byFactory[it.factory] = byFactory[it.factory] || { q: 0, b: new Set() }; byFactory[it.factory].q += it.qty; byFactory[it.factory].b.add(it.box); });
-    let msg = `${fmt(p.items.length)}줄 · 박스 ${fmt(boxes)}개 · 총 ${fmt(total)}개` + (p.listedTotal != null ? ` (화면 합계 ${fmt(p.listedTotal)})` : '');
-    msg += '\n' + Object.keys(byFactory).map(f => `${f}: 박스 ${byFactory[f].b.size}개 · ${fmt(byFactory[f].q)}개`).join(' / ');
+    let msg = `${fmt(p.items.length)}줄 · ${fmt(boxes)} CTN · 총 ${fmt(total)}개` + (p.listedTotal != null ? ` (화면 합계 ${fmt(p.listedTotal)})` : '');
+    msg += '\n' + Object.keys(byFactory).map(f => `${f}: ${byFactory[f].b.size} CTN · ${fmt(byFactory[f].q)}개`).join(' / ');
     if(p.listedTotal != null && p.listedTotal !== total) msg += `\n⚠ 화면 합계와 달라요. 중간 줄이 빠지지 않았는지 확인해주세요.`;
     if(stock){ const nf = [...new Set(p.items.filter(it => !stock.items[it.code]).map(it => it.code))]; if(nf.length) msg += `\n참고: 재고현황에 없는 새 품목코드 ${nf.length}개: ${nf.slice(0, 5).join(', ')}${nf.length > 5 ? ' ...' : ''}`; }
     setStatus('inStatus', p.listedTotal != null && p.listedTotal !== total ? 'err' : 'info', msg);
@@ -569,10 +481,10 @@ async function loadBatches(){
   try{
     const data = await getJson('action=getStockMovements');
     if(!data.ok) throw new Error(data.error);
-    const head = data.baseDate ? `마감재고: ${data.baseDate} (${fmt(data.baseCount)}품목)` : '마감재고가 아직 없어요.';
-    if(!data.batches.length){ $('batchList').innerHTML = `${esc(head)}<br>이후 등록된 반품·입고가 없어요.`; return; }
+    const head = `${data.today || ''} 등록분`;
+    if(!data.batches.length){ $('batchList').innerHTML = `오늘 등록된 입고가 없어요.`; return; }
     $('batchList').innerHTML = `<div style="margin-bottom:6px">${esc(head)}</div><table><tr><th>구분</th><th>내용</th><th>수량</th><th></th></tr>` +
-      data.batches.map(b => `<tr><td><span class="tag ${esc(b.kind)}">${esc(b.kind)}</span></td><td>${esc(b.source || b.docKey)}<br><span class="hint">${esc(b.at)} · ${b.boxes ? fmt(b.boxes) + '박스 · ' : ''}${fmt(b.lines)}줄</span></td><td><b>${b.total > 0 ? '+' : ''}${fmt(b.total)}</b></td><td><button type="button" class="btn danger" data-key="${esc(b.docKey)}">삭제</button></td></tr>`).join('') + '</table>';
+      data.batches.map(b => `<tr><td><span class="tag ${esc(b.kind)}">${esc(b.kind)}</span></td><td>${esc(b.source || b.docKey)}<br><span class="hint">${esc(b.at)} · ${b.boxes ? fmt(b.boxes) + 'CTN · ' : ''}${fmt(b.lines)}줄</span></td><td><b>${b.total > 0 ? '+' : ''}${fmt(b.total)}</b></td><td><button type="button" class="btn danger" data-key="${esc(b.docKey)}">삭제</button></td></tr>`).join('') + '</table>';
     $('batchList').querySelectorAll('button[data-key]').forEach(btn => btn.addEventListener('click', async () => {
       if(!confirm(`이 등록을 삭제할까요?\n${btn.dataset.key}`)) return;
       btn.disabled = true;
@@ -593,6 +505,8 @@ $('urlSaveBtn').addEventListener('click', () => {
 
 // hub의 "재고 등록" 카드로 들어오면 등록 탭부터 (모든 변수가 준비된 맨 끝에서 실행)
 if(location.hash === '#reg') showTab('reg');
+$('sheetClose').addEventListener('click', closeLiveSheet);
+$('sheetDim').addEventListener('click', closeLiveSheet);
 </script>
 </body>
 </html>
