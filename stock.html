@@ -75,12 +75,16 @@
 <section id="viewFind">
   <div class="panel">
     <div id="reader"></div>
+    <div id="zoomRow" class="row hidden" style="margin:-4px 0 10px;gap:6px"><span class="hint">확대</span></div>
+    <div id="photoDecoder" style="display:none"></div>
     <div class="row">
       <input type="text" id="codeInput" placeholder="품목코드 또는 품번 일부 (예: 3507)" autocomplete="off" autocapitalize="characters">
       <button type="button" class="btn primary" id="searchBtn">찾기</button>
     </div>
     <div class="row" style="margin-top:8px">
       <button type="button" class="btn ghost" id="camBtn" style="flex:1">카메라로 찍기</button>
+      <label class="btn ghost" for="photoInput" style="flex:1;text-align:center">사진으로 읽기</label>
+      <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
       <button type="button" class="btn ghost" id="refreshBtn">새로고침</button>
     </div>
     <div id="findStatus"></div>
@@ -286,26 +290,77 @@ $('codeInput').addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preve
 
 /* ---------- 카메라 ---------- */
 let scanner = null, scanning = false, lastScan = { t:'', at:0 };
+const SCAN_FORMATS = () => { const F = Html5QrcodeSupportedFormats; return [F.QR_CODE, F.CODE_128, F.CODE_39, F.EAN_13, F.DATA_MATRIX]; };
 async function startCamera(){
   if(typeof Html5Qrcode === 'undefined'){ setStatus('findStatus', 'err', '카메라 기능을 불러오지 못했어요 (인터넷 연결 확인).'); return; }
   $('reader').style.display = 'block';
-  const F = Html5QrcodeSupportedFormats;
-  scanner = scanner || new Html5Qrcode('reader', { formatsToSupport: [F.QR_CODE, F.CODE_128, F.CODE_39, F.EAN_13, F.DATA_MATRIX], experimentalFeatures: { useBarCodeDetectorIfSupported: true } });
+  scanner = scanner || new Html5Qrcode('reader', { formatsToSupport: SCAN_FORMATS(), experimentalFeatures: { useBarCodeDetectorIfSupported: true }, verbose: false });
   try{
-    await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: (w, h) => ({ width: Math.floor(w * 0.8), height: Math.floor(Math.min(h, w) * 0.5) }) }, onScan, () => {});
+    // 작은 QR도 읽히게: 고해상도 + 연속 초점 요청, 인식 칸은 화면 가운데 정사각형
+    await scanner.start({ facingMode: 'environment' }, {
+      fps: 15,
+      qrbox: (w, h) => { const side = Math.floor(Math.min(w, h) * 0.7); return { width: side, height: side }; },
+      videoConstraints: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 }, advanced: [{ focusMode: 'continuous' }] },
+    }, onScan, () => {});
     scanning = true;
     $('camBtn').textContent = '카메라 끄기';
+    setupZoom();
   }catch(err){
     $('reader').style.display = 'none';
     setStatus('findStatus', 'err', '카메라를 켜지 못했어요. 브라우저에서 카메라 권한을 허용했는지, 주소가 https인지 확인해주세요.\n' + err);
   }
 }
+// 휴대폰이 줌을 지원하면(대부분 안드로이드) 확대 버튼을 보여준다.
+// 작은 QR은 가까이 대면 초점이 안 맞아서 안 읽히므로, 한 뼘 정도 떨어져서 2배 확대가 가장 잘 읽힌다.
+function setupZoom(){
+  const row = $('zoomRow');
+  row.querySelectorAll('button').forEach(b => b.remove());
+  row.classList.add('hidden');
+  let caps = null;
+  try{ caps = scanner.getRunningTrackCapabilities(); }catch(e){}
+  if(!caps || !caps.zoom || !(caps.zoom.max > 1)) return;
+  const max = caps.zoom.max;
+  const levels = [1, 1.5, 2, 3, 4].filter(z => z <= max);
+  const apply = z => {
+    scanner.applyVideoConstraints({ advanced: [{ zoom: z }] }).catch(() => {});
+    row.querySelectorAll('button').forEach(b => b.classList.toggle('primary', Number(b.dataset.z) === z));
+    row.querySelectorAll('button').forEach(b => b.classList.toggle('ghost', Number(b.dataset.z) !== z));
+  };
+  levels.forEach(z => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn ghost'; b.style.padding = '6px 12px'; b.style.fontSize = '14px';
+    b.dataset.z = z; b.textContent = z + '배';
+    b.addEventListener('click', () => apply(z));
+    row.appendChild(b);
+  });
+  row.classList.remove('hidden');
+  apply(levels.includes(2) ? 2 : levels[levels.length - 1]); // 기본 2배
+}
 async function stopCamera(){
   if(scanner && scanning){ try{ await scanner.stop(); }catch(e){} }
   scanning = false;
   $('reader').style.display = 'none';
+  $('zoomRow').classList.add('hidden');
   $('camBtn').textContent = '카메라로 찍기';
 }
+// 사진으로 읽기: 휴대폰 기본 카메라로 찍은 사진(고해상도·초점 맞춤)에서 QR/바코드를 찾는다 → 작은 QR에 가장 확실
+let photoDecoder = null;
+$('photoInput').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if(!file) return;
+  if(typeof Html5Qrcode === 'undefined'){ setStatus('findStatus', 'err', '읽기 기능을 불러오지 못했어요 (인터넷 연결 확인).'); return; }
+  if(scanning) await stopCamera();
+  setStatus('findStatus', 'info', '사진에서 QR을 찾는 중...');
+  photoDecoder = photoDecoder || new Html5Qrcode('photoDecoder', { formatsToSupport: SCAN_FORMATS(), experimentalFeatures: { useBarCodeDetectorIfSupported: true }, verbose: false });
+  try{
+    const text = await photoDecoder.scanFile(file, false);
+    setStatus('findStatus', '', '');
+    if(navigator.vibrate) navigator.vibrate(60);
+    lookup(text);
+  }catch(err){
+    setStatus('findStatus', 'err', '사진에서 QR을 찾지 못했어요. QR이 화면 가운데 오도록, 흔들리지 않게 다시 찍어주세요.');
+  }
+});
 function onScan(text){
   const now = Date.now();
   if(text === lastScan.t && now - lastScan.at < 2500) return; // 같은 걸 계속 비추고 있을 때 반복 조회 방지
