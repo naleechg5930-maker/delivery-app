@@ -918,10 +918,14 @@ document.addEventListener('DOMContentLoaded', function() {
     // 숫자만 → 수량 예약
     if (/^\d+$/.test(raw)) {
       const qty = parseInt(raw, 10);
-      if (qty > 0 && qty <= 9999) {
+      if (qty > 0 && qty < 1000) {
         pendingBulkQty = qty;
         if (badge) { badge.textContent = '다음 스캔: ' + qty + '개 (낱개)'; badge.style.display = 'block'; }
         playOkSound();
+      } else {
+        showBanner('err', '수량 인식 오류', raw, '수량이 너무 커요 — 기록하지 않았어요. 다시 입력해주세요', '⚠️');
+        addScreenOnlyLog(raw, '비정상 수량 입력 (기록 안 함)');
+        playErrSound();
       }
       return;
     }
@@ -933,6 +937,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (workerMatch) {
         const workerCode = workerMatch[1];
         const workerName = WORKER_CODE_MAP[workerCode];
+        if (workerName && consumePendingPickStart(workerName, workerCode)) return; // 피킹 시작 대기 중이면 피킹자로 기록
         if (workerName) {
           currentWorker = workerName;
           adminForceUnlocked = false;
@@ -977,6 +982,14 @@ document.addEventListener('DOMContentLoaded', function() {
     if (badge) badge.style.display = 'none';
 
     if (applyQty > 1) {
+      const r = resolveScannedCode(stripOrderCodeSuffix(raw.toUpperCase()));
+      const it = codeIndex[r.resolved];
+      if (it && applyQty - (it.orderQty - it.scannedQty) > 100) {
+        showBanner('err', '수량 인식 오류', raw, `${applyQty}개는 남은 수량보다 너무 많아요 — 기록하지 않았어요`, '⚠️');
+        addScreenOnlyLog(raw + ' ×' + applyQty, '비정상 수량 (기록 안 함)');
+        playErrSound();
+        return;
+      }
       for (let i = 0; i < applyQty; i++) processScan(raw);
     } else {
       processScan(raw);
@@ -984,10 +997,26 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // keydown (일반 키보드 / 대부분 스캐너)
+  // 박스합본 QR처럼 중간에 줄바꿈이 있으면 엔터가 여러 번 온다 → 80ms 기다렸다가 한 번에 묶어서 처리
+  let tabletLineBuffer = [], tabletJoinTimer = null;
+  function flushTabletBuffer(){
+    tabletJoinTimer = null;
+    const lines = tabletLineBuffer.map(l => l.trim()).filter(Boolean);
+    tabletLineBuffer = [];
+    if (!lines.length) return;
+    if (lines.length === 1) { tabletInput.value = lines[0]; handleTabletScan(); return; }
+    handleMultiLineScan(lines, l => { tabletInput.value = l; handleTabletScan(); });
+  }
   tabletInput.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     e.preventDefault();
-    handleTabletScan();
+    tabletLineBuffer.push(tabletInput.value);
+    tabletInput.value = '';
+    clearTimeout(tabletJoinTimer);
+    tabletJoinTimer = setTimeout(flushTabletBuffer, 80);
+  });
+  tabletInput.addEventListener('input', () => {
+    if (tabletJoinTimer) { clearTimeout(tabletJoinTimer); tabletJoinTimer = setTimeout(flushTabletBuffer, 80); }
   });
 
   // keydown에서 엔터가 오면 input 타이머 취소 (중복 실행 방지)
@@ -1875,6 +1904,55 @@ scanInput.addEventListener('keydown', (e)=>{
   }
 });
 
+// 여러 줄짜리 QR(박스합본 등): 줄마다 품목코드를 찾고, 그 뒤에 나오는 첫 숫자를 수량으로 본다.
+//  예) "NTA8000A117\n40"            → NTA8000A117 40개 (한 품목)
+//      "NTA8000A117 20\nNTA8000A118 20" → 두 품목을 각각 20개씩
+const PRODUCT_CODE_PATTERN = /[A-Z]{2,4}[A-Z0-9]{3,5}[A-Z0-9]{2}\d{2}/;
+function handleMultiLineScan(lines, singleHandler){
+  singleHandler = singleHandler || handleScanRaw;
+  lines = lines.map(l => containsHangul(l) ? hangulToEnglish(l) : l);
+  // 전표/작업자/배송라벨 QR이 섞여 들어온 경우는 줄마다 원래 방식대로 처리
+  if(lines.some(l => /^WK[^0-9]*\d+$/i.test(l) || /^dlv\|/i.test(l) || l.includes('/'))){
+    lines.forEach(l => singleHandler(l));
+    return;
+  }
+  const entries = [];
+  lines.forEach(line => {
+    const up = line.toUpperCase();
+    const tokens = up.split(/[\s,;|]+/).filter(Boolean);
+    let foundCode = '';
+    for(const tk of tokens){
+      const r = resolveScannedCode(stripOrderCodeSuffix(tk));
+      if(codeIndex[r.resolved]){ foundCode = r.resolved; break; }
+    }
+    if(!foundCode){ const m = up.match(PRODUCT_CODE_PATTERN); if(m) foundCode = m[0]; }
+    if(foundCode){
+      const after = up.slice(up.indexOf(foundCode) + foundCode.length);
+      const qm = after.match(/\d+/);
+      entries.push({ code: foundCode, qty: qm ? parseInt(qm[0], 10) : 0 });
+    } else if(entries.length && !entries[entries.length - 1].qty){
+      const qm = up.match(/^\D*(\d+)\D*$/); // 품목코드 다음 줄에 수량만 따로 있는 경우
+      if(qm) entries[entries.length - 1].qty = parseInt(qm[1], 10);
+    }
+  });
+  if(!entries.length){
+    showBanner('err', '인식 오류', lines.join(' / ').slice(0, 60), 'QR 안에서 품목코드를 찾지 못했어요 — 기록하지 않았어요', '⚠️');
+    addScreenOnlyLog(lines.join(' / ').slice(0, 60), 'QR 인식 오류 (기록 안 함)');
+    playErrSound();
+    return;
+  }
+  entries.forEach(en => processScan(en.qty > 1 ? en.code + en.qty : en.code));
+}
+
+// 화면 로그에만 남기고, 스캔로그/오피킹 통계에는 넣지 않는 기록 (인식 오류용)
+function addScreenOnlyLog(code, note){
+  const row = document.createElement('div');
+  row.className = 'log-row err';
+  row.innerHTML = `<span class="t">${new Date().toLocaleTimeString('ko-KR', {hour12:false})}</span><span class="v">인식오류</span><span>${escapeHtml(code)}</span><span style="color:#6c7fa5;">${escapeHtml(note)}</span>`;
+  logList.insertBefore(row, logList.firstChild);
+  logList.scrollTop = 0;
+}
+
 let okCount = 0, errCount = 0;
 let lastScannedItem = null;
 
@@ -1913,7 +1991,8 @@ function processScan(rawCode, overrideQty){
     // (묶음처리 모드가 켜져있으면, 사용자가 명시적으로 "이건 묶음이다"라고 지정한 것이므로
     // 박스/마대로 잘못 오인해서 캐파시티 계산을 건너뛰는 일이 없도록 이 자동 해석을 건너뛴다)
     const possibleCode = scannedRaw.slice(0, PRODUCT_CODE_LEN);
-    const qtyPart = scannedRaw.slice(PRODUCT_CODE_LEN).replace(/\D/g, '');
+    const qtyMatch = scannedRaw.slice(PRODUCT_CODE_LEN).match(/\d+/); // 뒤 숫자가 여러 덩어리면 첫 덩어리만 수량으로
+    const qtyPart = qtyMatch ? qtyMatch[0] : '';
     const parsedQty = parseInt(qtyPart, 10);
     const boxTry = resolveScannedCode(possibleCode);
     if(qtyPart && parsedQty > 0 && codeIndex[boxTry.resolved]){
@@ -1928,6 +2007,23 @@ function processScan(rawCode, overrideQty){
   const timeStr = now.toLocaleTimeString('ko-KR', {hour12:false});
   let bulkTag = bulkQty > 1 ? ` [박스/마대 수량 ${bulkQty}]` : '';
   let displayCode = (viaAlias ? `${codeForLookup} → ${code}` : code) + bulkTag;
+
+  // 말도 안 되는 값은 오피킹으로 기록하지 않고 화면에만 "인식 오류"로 보여준다
+  //  - 품목코드 모양이 아닌 것(영문이 없음/너무 짧음): 박스QR 둘째 줄 숫자, 다른 바코드 등
+  //  - 박스 수량이 1000개 이상이거나, 남은 수량보다 100개 넘게 많은 것
+  if(!item && (!/[A-Z]/.test(code) || code.length < 6)){
+    showBanner('err', '인식 오류', displayCode, '품목코드가 아닌 값이 읽혔어요 — 기록하지 않았어요. 다시 찍어주세요', '⚠️');
+    addScreenOnlyLog(displayCode, '품목코드 아님 (기록 안 함)');
+    playErrSound();
+    return;
+  }
+  if(item && bulkQty > 1 && (bulkQty >= 1000 || bulkQty - (item.orderQty - item.scannedQty) > 100)){
+    showBanner('err', '수량 인식 오류', displayCode, `박스 수량 ${bulkQty}개는 비정상이라 기록하지 않았어요. 다시 찍어주세요`, '⚠️');
+    showMispickOverlay('수량 인식 오류', displayCode, `${bulkQty}개 — 기록하지 않았어요. 다시 찍어주세요`);
+    addScreenOnlyLog(displayCode, `비정상 수량 ${bulkQty} (기록 안 함)`);
+    playErrSound();
+    return;
+  }
 
   if(!item){
     errCount++;
