@@ -281,6 +281,25 @@
   .log-row.ok .v{color:var(--ok);font-weight:700;}
   .log-row.err .v{color:var(--err);font-weight:700;}
 
+  /* 10/15 글씨 크게: 대기중/진행중·완료 표, 스캔로그 */
+  .split-row{min-height:440px;}
+  .split-row .table-panel{height:440px;max-height:440px;}
+  .table-head{padding:12px 16px;}
+  .table-head h2{font-size:19px;}
+  .table-head div{font-size:15px !important;}
+  table{font-size:16px;}
+  thead th{font-size:13.5px;padding:9px 8px;white-space:nowrap;}
+  tbody td{padding:10px 8px;vertical-align:middle;}
+  .code-cell{font-size:16px;white-space:nowrap;}
+  .qty-cell{font-size:21px;font-weight:800;white-space:nowrap;}
+  .name-cell .nm{display:block;font-size:13px;color:var(--sub);}
+  .name-cell .sp{display:block;font-size:16.5px;font-weight:800;word-break:keep-all;}
+  .badge{font-size:13.5px;padding:4px 8px;white-space:nowrap;}
+  .log-panel{max-height:240px;}
+  .log-panel h2{font-size:17px;}
+  .log-list{font-size:16px;gap:7px;}
+  .log-row{gap:12px;}
+
   /* Completion overlay */
   .overlay{
     position:fixed;inset:0;background:rgba(5,8,16,0.88);display:none;
@@ -448,6 +467,14 @@
   <button id="adminForceUnlockBtn" style="margin-top:18px; font-size:13px; padding:8px 16px; background:#fff; color:#DC2626; border:none; border-radius:8px; font-weight:700; cursor:pointer;">관리자 강제 진행</button>
 </div>
 
+<!-- 피킹 시작: 전표 1번째 스캔 후 피킹자 QR을 기다리는 동안 전체화면 빨간 안내 (스캔은 계속 가능) -->
+<div id="pickWorkerOverlay" style="display:none; position:fixed; inset:0; z-index:9996; background:rgba(220,38,38,0.96); color:#fff; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px; pointer-events:none;">
+  <div style="font-size:30px; font-weight:900; letter-spacing:1px;">피킹 시작</div>
+  <div style="font-size:46px; font-weight:900; margin-top:10px;">피킹 작업자 QR을 찍어주세요</div>
+  <div id="pickWorkerOverlayKey" style="font-size:24px; font-weight:800; margin-top:16px; background:rgba(255,255,255,0.18); padding:6px 18px; border-radius:10px;"></div>
+  <div id="pickWorkerOverlayTimer" style="font-size:16px; margin-top:14px; opacity:0.9;"></div>
+</div>
+
 <!-- 오피킹/초과스캔 전체화면 경고 배너 (5초 후 자동 사라짐) -->
 <div id="mispickFullOverlay" style="display:none; position:fixed; inset:0; z-index:9997; background:rgba(180,0,0,0.97); color:#fff; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:32px; pointer-events:none;">
   <div id="mispickOverlayIcon" style="font-size:72px; line-height:1;">⚠️</div>
@@ -531,8 +558,7 @@
             <thead>
               <tr>
                 <th>품번(바코드)</th>
-                <th>품목명</th>
-                <th>규격/사이즈</th>
+                <th>품목 / 규격</th>
                 <th style="text-align:center;">주문</th>
                 <th style="text-align:center;">스캔</th>
                 <th style="text-align:center;">상태</th>
@@ -553,8 +579,7 @@
             <thead>
               <tr>
                 <th>품번(바코드)</th>
-                <th>품목명</th>
-                <th>규격/사이즈</th>
+                <th>품목 / 규격</th>
                 <th style="text-align:center;">주문</th>
                 <th style="text-align:center;">스캔</th>
                 <th style="text-align:center;">상태</th>
@@ -1009,6 +1034,7 @@ async function handlePickingStage(raw, key){
   }
   if(res.phase === 'needWorker'){
     pendingPickStart = { key, raw, at: Date.now() };
+    showPickWorkerOverlay(key);
     showBanner('pick', '피킹 시작', key, '피킹자 QR을 찍어주세요 (피킹 끝나면 전표를 다시 찍기)', '🛒');
     addLog(t, raw, true, '피킹 시작 대기 - 피킹자 QR을 찍어주세요');
     playOkSound();
@@ -1032,11 +1058,42 @@ async function handlePickingStage(raw, key){
   pickingStateCache[key] = { state:'done', worker: res.worker || '' };
   return false;
 }
+let pickOverlayTimer = null;
+function showPickWorkerOverlay(key){
+  const el = document.getElementById('pickWorkerOverlay');
+  if(!el) return;
+  document.getElementById('pickWorkerOverlayKey').textContent = '전표 ' + key;
+  el.style.display = 'flex';
+  const until = Date.now() + PICK_PENDING_MS;
+  clearInterval(pickOverlayTimer);
+  const tick = () => {
+    const left = Math.ceil((until - Date.now()) / 1000);
+    if(left <= 0 || !pendingPickStart || pendingPickStart.key !== key){
+      hidePickWorkerOverlay();
+      if(pendingPickStart && pendingPickStart.key === key){
+        pendingPickStart = null;
+        showBanner('err', '피킹 시작 취소', key, '작업자 QR을 안 찍어서 취소됐어요 — 전표를 다시 찍어주세요', '⏱');
+        playErrSound();
+      }
+      return;
+    }
+    document.getElementById('pickWorkerOverlayTimer').textContent = left + '초 안에 찍어주세요 (다른 전표를 찍으면 취소)';
+  };
+  tick();
+  pickOverlayTimer = setInterval(tick, 500);
+}
+function hidePickWorkerOverlay(){
+  clearInterval(pickOverlayTimer);
+  const el = document.getElementById('pickWorkerOverlay');
+  if(el) el.style.display = 'none';
+}
+
 // 1번째 스캔 뒤에 찍은 작업자 QR → 피킹 시작 기록 (지금 화면의 검수 작업자는 건드리지 않음)
 function consumePendingPickStart(workerName, workerCode){
   if(!pendingPickStart || Date.now() - pendingPickStart.at > PICK_PENDING_MS){ pendingPickStart = null; return false; }
   const p = pendingPickStart;
   pendingPickStart = null;
+  hidePickWorkerOverlay();
   pickingStateCache[p.key] = { state:'started', worker: workerName };
   const t = new Date().toLocaleTimeString('ko-KR', {hour12:false});
   showBanner('pick', '피킹 시작', p.key, `${workerName} — 피킹 끝나면 전표를 다시 찍어주세요`, '🛒');
@@ -1959,8 +2016,7 @@ function statusBadge(it){
 function rowHtml(it){
   return `
     <td class="code-cell">${it.code}</td>
-    <td>${it.name}</td>
-    <td>${it.spec}</td>
+    <td class="name-cell"><span class="nm">${it.name}</span>${it.spec ? `<span class="sp">${it.spec}</span>` : ''}</td>
     <td class="qty-cell">${it.orderQty}</td>
     <td class="qty-cell">${it.scannedQty}</td>
     <td style="text-align:center;">${statusBadge(it)}</td>
