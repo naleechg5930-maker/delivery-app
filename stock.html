@@ -114,8 +114,8 @@
 <section id="viewReg" class="hidden">
   <div class="panel">
     <h2>1. 전날 마감재고 (매일 아침 1번)</h2>
-    <div class="hint">이카운트 재고현황을 <b>전날 날짜로 조회</b>한 화면을 "회사명" 줄부터 끝까지 긁어서 붙여넣으세요. 등록하면 기존 재고현황은 통째로 바뀌어요.</div>
-    <textarea id="baseText" placeholder="회사명 : 루나앤솔 / 본사창고 / 2026/10/14&#10;품목코드	품목명	규격	합계	본사창고 ...&#10;LPA4000J111	LP-4000-J1BA	흑청-기본-S	14	14 ..."></textarea>
+    <div class="hint">이카운트 <b>창고별재고현황</b>을 <b>전날 날짜로 조회</b>한 화면을 붙여넣으세요. 메뉴까지 통째로(Ctrl+A) 긁어도 표 부분만 알아서 읽어요. 등록하면 기존 재고현황은 통째로 바뀌어요.</div>
+    <textarea id="baseText" placeholder="창고별재고현황 화면 전체를 Ctrl+A로 긁어 붙여넣어도 돼요&#10;회사명 : 루나앤솔 / 본사창고&#10;2026/10/15&#10;품목코드	품목명	규격	합계	본사창고 ...&#10;LPA4000J111	LP-4000-J1BA	흑청-기본-S	14	14 ..."></textarea>
     <details style="margin-top:6px"><summary>엑셀 파일로 올리기</summary><input type="file" id="baseFile" accept=".xlsx,.xls" style="margin-top:8px"></details>
     <div id="baseStatus"></div>
     <button type="button" class="btn primary hidden" id="baseUploadBtn" style="margin-top:8px;width:100%">마감재고 등록</button>
@@ -423,33 +423,42 @@ function hashText(s){ let h = 5381; for(let i = 0; i < s.length; i++) h = ((h <<
 let pendingBase = null;
 // rows: [[셀,셀,...], ...] (엑셀이든 붙여넣은 화면이든 같은 모양으로 바꿔서 처리)
 function parseBaseRows(rows){
+  // 이카운트 "창고별재고현황" 화면을 메뉴까지 통째로 긁어도 되게: 머리글/날짜/합계 줄을 전체에서 찾는다
+  const cell = v => String(v == null ? '' : v).trim();
   let baseDate = '', hi = -1;
-  for(let k = 0; k < Math.min(8, rows.length); k++){
-    const joined = (rows[k] || []).join(' ');
-    const m = joined.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
-    if(!baseDate && /회사명/.test(joined) && m) baseDate = `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-    if((rows[k] || []).some(v => String(v == null ? '' : v).trim() === '품목코드')){ hi = k; break; }
+  const ymd = t => { const m = String(t).match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/); return m ? `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}` : ''; };
+  for(let k = 0; k < rows.length; k++){
+    const r = rows[k] || [];
+    if(!baseDate && /회사명/.test(r.join(' '))){
+      // 날짜가 같은 줄에 있거나("회사명 : 루나앤솔 / 본사창고 / 2026/10/15") 바로 다음 줄에 있음("2026/10/15")
+      baseDate = ymd(r.join(' '));
+      for(let j = k + 1; !baseDate && j <= k + 2 && j < rows.length; j++){ const t = (rows[j] || []).join(' ').trim(); if(/^\d{4}\D+\d{1,2}\D+\d{1,2}$/.test(t)) baseDate = ymd(t); }
+    }
+    if(r.some(v => cell(v) === '품목코드') && r.some(v => cell(v) === '본사창고' || cell(v) === '합계')){ hi = k; break; }
   }
-  if(hi < 0) throw new Error('"품목코드" 머리글 줄을 찾지 못했어요. 머리글 줄까지 같이 긁어주세요.');
-  const head = rows[hi].map(v => String(v == null ? '' : v).trim());
+  if(hi < 0) throw new Error('"품목코드 · 품목명 · 규격 · 합계 · 본사창고" 머리글 줄을 찾지 못했어요. 머리글 줄까지 같이 긁어주세요.');
+  const head = rows[hi].map(cell);
   const ci = head.indexOf('품목코드'), ni = head.indexOf('품목명'), si = head.indexOf('규격');
   let qi = head.indexOf('본사창고'); if(qi < 0) qi = head.indexOf('합계');
-  if(qi < 0) throw new Error('수량 열(본사창고/합계)을 찾지 못했어요.');
-  const out = [];
+  const out = [], seen = {};
+  let listedTotal = null;
   for(let k = hi + 1; k < rows.length; k++){
-    const r = rows[k] || []; const code = String(r[ci] == null ? '' : r[ci]).trim();
-    if(!code || code === '합계' || !/^[A-Za-z][A-Za-z0-9]{4,}$/.test(code)) continue;
-    const qv = r[qi] == null ? '' : String(r[qi]).trim();
-    out.push([code, String(r[ni] == null ? '' : r[ni]).trim(), String(r[si] == null ? '' : r[si]).trim(), Number(qv.replace(/,/g, '')) || 0]);
+    const r = rows[k] || []; const code = cell(r[ci]);
+    if(code === '합계'){ listedTotal = Number(cell(r[1]).replace(/,/g, '')) || 0; break; } // 합계 줄에서 끝 (그 아래는 인쇄용 꼬리말)
+    if(code === '품목코드') break;
+    if(!/^[A-Za-z][A-Za-z0-9]{4,}$/.test(code)) continue;
+    const key = code.toUpperCase(); if(seen[key]) continue; seen[key] = true;
+    out.push([code, cell(r[ni]), cell(r[si]), Number(cell(r[qi]).replace(/,/g, '')) || 0]);
   }
-  if(!baseDate) throw new Error('"회사명 : 루나앤솔 / 본사창고 / 날짜" 줄에서 날짜를 찾지 못했어요. 그 줄부터 긁어주세요.');
+  if(!baseDate) throw new Error('"회사명 : 루나앤솔 / 본사창고" 아래 날짜를 찾지 못했어요. 그 줄부터 같이 긁어주세요.');
   if(!out.length) throw new Error('품목 줄을 찾지 못했어요.');
-  return { baseDate, rows: out };
+  return { baseDate, rows: out, listedTotal };
 }
 function showBasePreview(parsed){
   pendingBase = parsed;
   const total = parsed.rows.reduce((s, r) => s + r[3], 0);
   let msg = `기준일 ${parsed.baseDate} · ${fmt(parsed.rows.length)}품목 · 총 ${fmt(total)}개`;
+  if(parsed.listedTotal != null) msg += parsed.listedTotal === total ? ` (화면 합계와 일치 ✓)` : `\n⚠ 화면 합계 ${fmt(parsed.listedTotal)}개와 달라요. 중간이 빠졌는지 확인해주세요.`;
   const isToday = parsed.baseDate >= businessToday();
   if(isToday) msg += `\n⚠ 기준일이 오늘이에요. 전날 날짜로 조회한 화면인지 확인해주세요.`;
   setStatus('baseStatus', isToday ? 'err' : 'info', msg);
