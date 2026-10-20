@@ -227,6 +227,7 @@
     padding:10px 14px; font-size:13px; font-weight:700; color:var(--ok); text-align:center;
   }
   .live-packing.flash-bag{ animation:bagFlash 1.1s ease; }
+  .live-packing .close-bag-btn{ margin-left:12px; padding:6px 14px; border-radius:8px; border:0; background:var(--ok); color:#fff; font-size:13px; font-weight:800; cursor:pointer; vertical-align:middle; }
   @keyframes bagFlash{
     0%{ background:rgba(34,197,94,0.45); }
     100%{ background:var(--panel2); }
@@ -705,6 +706,7 @@ body { padding: 0 !important; gap: 0 !important; }
 
 <div class="live-packing" id="livePackingBanner" style="display:none;">
   <span id="livePackingText">📦 포장 진행중</span>
+  <button type="button" class="close-bag-btn" id="closeBagBtn" style="display:none;" title="지금까지 찍은 것으로 이 봉투를 마감하고 다음 봉투를 새로 시작합니다">이 봉투 마감</button>
 </div>
 
 <div class="footer-settings">
@@ -1410,6 +1412,33 @@ function hidePickWorkerOverlay(){
   if(el) el.style.display = 'none';
 }
 
+// 피킹 시작 기록: 서버가 잠깐 바쁘거나 인터넷이 순간 끊겨도 실패로 끝내지 않고 뒤에서 최대 3번 다시 보낸다
+// (서버는 같은 전표를 두 번 받아도 한 번만 기록하므로 여러 번 보내도 안전)
+async function sendPickingStartWithRetry(key, workerName){
+  const waits = [0, 2000, 4000];
+  let lastErr = '';
+  for(let i = 0; i < waits.length; i++){
+    if(waits[i]) await new Promise(r => setTimeout(r, waits[i]));
+    try{
+      const resp = await fetchWithTimeout(gasWebhookUrl, { method:'POST', body: JSON.stringify({ type:'pickingStart', documentKey:key, worker:workerName }) }, 8000);
+      const text = await resp.text();
+      let d = null;
+      try{ d = JSON.parse(text); }catch(e){ lastErr = '서버 응답 이상'; continue; }
+      if(d.ok){
+        if(i > 0) addScreenOnlyLog(key, `피킹 시작 기록 완료 (${i + 1}번째 시도)`, '피킹');
+        return;
+      }
+      lastErr = d.error || '서버 오류';
+    }catch(err){
+      lastErr = err && err.name === 'AbortError' ? '서버 응답 지연' : '인터넷 연결 오류';
+    }
+  }
+  delete pickingStateCache[key];
+  showBanner('err', '피킹 시작 기록 실패', key, `${lastErr} — 3번 시도했지만 안 됐어요. 전표를 다시 찍고 작업자 QR을 찍어주세요`, '❌');
+  addScreenOnlyLog(key, `피킹 시작 기록 실패: ${lastErr}`);
+  playErrSound();
+}
+
 // 1번째 스캔 뒤에 찍은 작업자 QR → 피킹 시작 기록 (지금 화면의 검수 작업자는 건드리지 않음)
 function consumePendingPickStart(workerName, workerCode){
   if(!pendingPickStart || Date.now() - pendingPickStart.at > PICK_PENDING_MS){ pendingPickStart = null; return false; }
@@ -1422,20 +1451,7 @@ function consumePendingPickStart(workerName, workerCode){
   addLog(t, 'WK:' + workerCode, true, `피킹 시작 (${workerName}) ${p.key}`);
   playOkSound();
   speakKorean(`${workerName}님 피킹 시작`);
-  fetch(gasWebhookUrl, { method:'POST', body: JSON.stringify({ type:'pickingStart', documentKey:p.key, worker:workerName }) })
-    .then(r => r.json())
-    .then(d => {
-      if(!d.ok){
-        delete pickingStateCache[p.key];
-        showBanner('err', '피킹 시작 기록 실패', p.key, (d.error || '') + ' — 전표를 다시 찍어주세요', '❌');
-        playErrSound();
-      }
-    })
-    .catch(err => {
-      delete pickingStateCache[p.key];
-      showBanner('err', '피킹 시작 기록 실패', p.key, '네트워크 오류 — 전표를 다시 찍어주세요', '❌');
-      playErrSound();
-    });
+  sendPickingStartWithRetry(p.key, workerName);
   return true;
 }
 
@@ -3320,6 +3336,9 @@ function addBundleToBags(item, qty){
 // 5호/7호/8호 중 가장 작으면서도 충분한 사이즈를 골라 봉투 개수를 최적화한다.
 // (예: NTA8019 28개 -> 8호[25]+여유3 = 28 이므로 8호 한 장으로 끝)
 const MAX_SQUEEZE_UNITS = 3;
+// 10/20: 봉투가 거의 찼을 때 방금 찍은 상품이 안 들어가면, 다음 봉투로 넘기지 않고 지금 봉투에 같이 넣고 마감한다.
+// 낱장은 1개, 묶음처리는 최대 5개까지 (실시간 포장명세와 최종 라벨 계산이 똑같이 이 규칙을 쓴다)
+const BAG_OVERFLOW_MAX_UNITS = 5;
 
 function pickBagSizeForLookahead(capObj, lookaheadQty){
   for(const size of BAG_SIZE_ORDER){
@@ -3357,27 +3376,40 @@ function computeBagPacking(sequence, skipSqueeze){
     else bucket[item.code] = { code: item.code, name: item.name, spec: item.spec, qty: qty };
   }
 
+  const manualClosed = []; // [봉투번호] = true : 사람이 [이 봉투 마감]으로 직접 닫은 봉투
   sequence.forEach(entry => {
+    if(entry.bagClose){ // [이 봉투 마감] 버튼을 누른 자리: 지금 봉투를 여기서 닫는다
+      if(bagIdx >= 0 && used > 0){ used = Math.max(used, 1); manualClosed[bagIdx] = true; }
+      return;
+    }
     const item = codeIndex[entry.code.toUpperCase()];
     if(!item) return;
     const capObj = resolveItemCapacity(item);
     let remainingQty = entry.qty;
+    let overflowLeft = Math.min(BAG_OVERFLOW_MAX_UNITS, entry.qty); // 이번 스캔에서 넘쳐도 넣어줄 수 있는 개수 (낱장 1개 / 묶음 최대 5개)
     let safety = 0;
     while(remainingQty > 0 && safety < 10000){
       safety++;
-      if(bagIdx === -1){
+      if(bagIdx === -1 || used >= 1 - 1e-9){ // 아직 봉투가 없거나, 이미 꽉 차서(또는 넘쳐서) 마감된 봉투면 새 봉투
         startNewBag(capObj);
       }
       const cap = capForBagSize(capObj, currentSize) || 1;
       const perUnit = 1 / cap;
       const spaceLeft = 1 - used;
-      const canFit = Math.floor(spaceLeft / perUnit + 1e-9);
-      if(canFit <= 0){
+      const canFit = Math.max(0, Math.floor(spaceLeft / perUnit + 1e-9));
+      let putIn = Math.min(canFit, remainingQty);
+      let overflowed = false;
+      if(remainingQty > canFit && overflowLeft > 0){
+        // 남은 공간이 모자라도, 방금 찍은 수량(최대 5개)은 지금 봉투에 같이 넣고 이 봉투를 마감한다
+        const extra = Math.min(overflowLeft, remainingQty - canFit);
+        putIn += extra; overflowLeft -= extra; overflowed = true;
+      }
+      if(putIn <= 0){
         startNewBag(capObj);
         continue;
       }
-      const putIn = Math.min(canFit, remainingQty);
       used += putIn * perUnit;
+      if(overflowed) used = Math.max(used, 1); // 넘쳐서 넣었으면 무조건 마감
       bagUnitCounts[bagIdx] += putIn;
       addContent(item, putIn);
       remainingQty -= putIn;
@@ -3391,7 +3423,7 @@ function computeBagPacking(sequence, skipSqueeze){
   // 후처리: 마지막 봉투에 1~3개 정도만 담겨있으면, 새 봉투 하나 더 쓰지 않고 바로 앞 봉투에 합친다
   // (에이블리(오더)는 즉시 인쇄 명세표와 최종 라벨이 일치해야 해서, skipSqueeze=true로 이 단계를 건너뜀)
   if(!skipSqueeze){
-    while(bagSizes.length > 1 && bagUnitCounts[bagUnitCounts.length - 1] <= MAX_SQUEEZE_UNITS){
+    while(bagSizes.length > 1 && bagUnitCounts[bagUnitCounts.length - 1] <= MAX_SQUEEZE_UNITS && !manualClosed[bagSizes.length - 2]){
       bagUnitCounts.pop();
       bagSizes.pop();
       const merged = bagContents.pop();
@@ -3412,6 +3444,22 @@ let liveBagState = { size: null, used: 0, bagNumber: 0 };
 let liveBagContents = []; // [[{code,name,spec,qty}], ...] 실시간으로 각 봉투에 들어간 내역, 한번 닫힌 봉투는 다신 안 건드림
 let expectedTotalBags = 0; // 전표 불러온 시점에 미리 한 번 계산해두는 "예상" 총 봉투 수 (참고용, 정확한 값 아님)
 
+// [이 봉투 마감] 버튼: 봉투가 덜 찼어도 지금까지 찍은 것으로 이 봉투를 닫고(에이블리(오더)는 포장명세 즉시 인쇄),
+// 다음에 찍는 상품부터 새 봉투로 시작한다. 최종 라벨 계산에도 같은 자리에서 봉투가 나뉘도록 scanSequence에 표시를 남긴다.
+function manualCloseBag(){
+  if(liveBagState.size === null || !(liveBagState.used > 0)){ if(typeof focusInput === 'function') focusInput(); return; }
+  const bagNo = liveBagState.bagNumber;
+  scanSequence.push({ code: '', qty: 0, bagClose: true });
+  liveBagState.used = 1;
+  liveBagState.size = null;
+  try{ addScreenOnlyLog('봉투 마감', `${bagNo}번째 봉투 수동 마감 (다음 상품부터 새 봉투)`, '📦'); }catch(e){}
+  announceBagFilled();
+  maybePrintCompletedBagsImmediately();
+  updateLivePackingBanner();
+  if(typeof focusInput === 'function') focusInput();
+}
+document.addEventListener('click', e => { if(e.target && e.target.id === 'closeBagBtn') manualCloseBag(); });
+
 function resetLiveBagState(){
   liveBagState = { size: null, used: 0, bagNumber: 0 };
   liveBagContents = [];
@@ -3424,6 +3472,7 @@ function addToLiveBag(item, qty){
   if(!allItemsHaveCapacity()) return 0; // 캐파시티 정보가 없으면 실시간 추적 자체를 하지 않음
   const capObj = resolveItemCapacity(item);
   let remainingQty = qty;
+  let overflowLeft = Math.min(BAG_OVERFLOW_MAX_UNITS, qty); // 낱장 1개 / 묶음 최대 5개까지는 넘쳐도 지금 봉투에 넣고 마감
   let safety = 0;
   let filledCount = 0;
 
@@ -3441,14 +3490,20 @@ function addToLiveBag(item, qty){
     const cap = capForBagSize(capObj, liveBagState.size) || 1;
     const perUnit = 1 / cap;
     const spaceLeft = 1 - liveBagState.used;
-    const canFit = Math.floor(spaceLeft / perUnit + 1e-9);
-    if(canFit <= 0){
+    const canFit = Math.max(0, Math.floor(spaceLeft / perUnit + 1e-9));
+    let putIn = Math.min(canFit, remainingQty);
+    let overflowed = false;
+    if(remainingQty > canFit && overflowLeft > 0){
+      const extra = Math.min(overflowLeft, remainingQty - canFit);
+      putIn += extra; overflowLeft -= extra; overflowed = true;
+    }
+    if(putIn <= 0){
       filledCount++;
       liveBagState.size = null;
       continue;
     }
-    const putIn = Math.min(canFit, remainingQty);
     liveBagState.used += putIn * perUnit;
+    if(overflowed) liveBagState.used = Math.max(liveBagState.used, 1); // 넘쳐서 넣었으면 이 봉투는 여기서 마감
     const bucket = liveBagContents[liveBagState.bagNumber - 1];
     const existingEntry = bucket.find(e => e.code === item.code);
     if(existingEntry) existingEntry.qty += putIn;
@@ -3474,6 +3529,8 @@ function getMissingCapacityItems(){
 function updateLivePackingBanner(){
   const el = document.getElementById('livePackingBanner');
   if(!el) return;
+  const closeBtn = document.getElementById('closeBagBtn');
+  if(closeBtn) closeBtn.style.display = (liveBagState.size !== null && liveBagState.used > 0) ? '' : 'none';
   const missing = getMissingCapacityItems();
   if(missing.length > 0){
     el.style.display = '';
