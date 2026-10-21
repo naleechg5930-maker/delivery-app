@@ -404,19 +404,40 @@ const PRODUCT_CODE_LEN = 11;
 // 스캔된 문자열에 "11자리 품목코드+수량"이 구분자 없이 여러 개 이어붙어 있는 경우(합본 박스 등)
 // 전부 낱개로 나눠서 반환한다. 예: "NTA8019A11225NTA8019A12330" -> [{code:'NTA8019A112',qty:25}, {code:'NTA8019A123',qty:30}]
 function parseMultiCodeQty(rawString){
-  const s = String(rawString || '').trim().toUpperCase();
+  // 10/21: 코드와 수량 사이에 띄어쓰기·탭·쉼표·줄바꿈이 있어도 읽히게 한다
+  //  (예전엔 "NTA8019A112 25"처럼 띄어쓰기가 있으면 수량을 1로 읽고 나머지는 엉뚱한 코드로 읽어서 "수량불일치"가 났음)
+  //  구분자 없이 붙어있는 "NTA8019A11225NTA8019A12330"도 그대로 읽힌다.
+  const s = String(rawString || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
   const results = [];
   let i = 0;
   while(i < s.length){
+    while(i < s.length && s[i] === ' ') i++;
+    if(i >= s.length) break;
     const code = s.slice(i, i + PRODUCT_CODE_LEN);
-    if(code.length < PRODUCT_CODE_LEN) break; // 남은 글자가 11자리가 안 되면 더 이상 코드가 아님
+    if(!/^[A-Z]/.test(code) || code.length < PRODUCT_CODE_LEN || code.indexOf(' ') !== -1){
+      while(i < s.length && s[i] !== ' ') i++; // 코드가 아닌 덩어리(박스번호, 1/3 표시 등)는 건너뜀
+      continue;
+    }
     i += PRODUCT_CODE_LEN;
-    const qtyStart = i;
-    while(i < s.length && /\d/.test(s[i])) i++;
-    const qtyStr = s.slice(qtyStart, i);
-    results.push({ code, qty: qtyStr ? parseInt(qtyStr, 10) : 1 });
+    let j = i; while(j < s.length && s[j] === ' ') j++;
+    let k = j; while(k < s.length && /\d/.test(s[k])) k++;
+    const qtyStr = s.slice(j, k);
+    const endsOk = k >= s.length || s[k] === ' ' || /[A-Z]/.test(s[k]);
+    if(qtyStr && endsOk){ results.push({ code, qty: parseInt(qtyStr, 10), hadQty: true }); i = k; }
+    else results.push({ code, qty: 1, hadQty: false });
   }
   return results;
+}
+// 여러 줄(합본 QR) → [{code, qty}] : 줄마다 코드를 찾고, 코드 다음 줄에 숫자만 있으면 그걸 수량으로 본다
+function parseLinesToParts(lines){
+  const out = [];
+  lines.forEach(line => {
+    const parts = parseMultiCodeQty(line);
+    if(parts.length){ parts.forEach(p => out.push(p)); return; }
+    const m = String(line).match(/^\D*(\d+)\D*$/);
+    if(m && out.length && !out[out.length - 1].hadQty){ out[out.length - 1].qty = parseInt(m[1], 10); out[out.length - 1].hadQty = true; }
+  });
+  return out;
 }
 
 // 실제 스캔되는 품목코드(11자리, 예: OPA6007B117)를 "품목명" 형식(예: OP-6007-B1BA)으로 변환한다.
@@ -497,32 +518,64 @@ function processScan(rawCode){
   checkAllComplete();
 }
 
-scanInput.addEventListener('keydown', (e)=>{
-  if(e.key === 'Enter'){
-    e.preventDefault();
-    const raw = scanInput.value.trim();
-    scanInput.value = '';
-    if(!raw) return;
+// 10/21: 합본 QR처럼 내용 중간에 줄바꿈(엔터)·탭이 들어있으면 스캐너가 엔터/탭을 여러 번 보낸다.
+// 예전엔 첫 엔터에서 바로 처리해서 줄마다 따로 처리됐고(숫자만 있는 줄은 박스번호로 오인), 탭은 포커스를 버튼으로 옮겨버렸다.
+// → 엔터·탭이 와도 80ms 동안 다음 글자를 기다렸다가 한 번에 묶어서 처리한다.
+const SCAN_JOIN_WAIT_MS = 80;
+let scanLineBuffer = [], scanJoinTimer = null;
+function handleSingleRaw(raw){
     if(boxMode){
-      // 순수 숫자 몇 자리(박스번호 형식)로 찍히면, 지금 품목 스캔을 기다리던 중이어도
-      // 그 박스는 포기하고 곧바로 새 박스번호로 넘어간다 (바코드 손상 등으로 막혔을 때 탈출용)
-      // 스캐너가 가끔 숫자 외에 잡음 문자를 같이 찍는 경우가 있어서, 숫자만 뽑아서 판단한다.
-      const digitsOnly = raw.replace(/\D/g, '');
-      const looksLikeBoxNumber = digitsOnly.length >= 1 && digitsOnly.length <= 4 && raw.length <= 8;
-      if(awaitingItemScanFor && looksLikeBoxNumber){
-        awaitingItemScanFor = null;
-        currentBoxNumber = null;
-        lockedFactory = null;
-        handleBoxNumberScan(raw);
-      } else if(awaitingItemScanFor){
-        handleItemScanForBox(raw);
-      } else {
-        handleBoxNumberScan(raw);
-      }
+    // 순수 숫자 몇 자리(박스번호 형식)로 찍히면, 지금 품목 스캔을 기다리던 중이어도
+    // 그 박스는 포기하고 곧바로 새 박스번호로 넘어간다 (바코드 손상 등으로 막혔을 때 탈출용)
+    // 스캐너가 가끔 숫자 외에 잡음 문자를 같이 찍는 경우가 있어서, 숫자만 뽑아서 판단한다.
+    const digitsOnly = raw.replace(/\D/g, '');
+    const looksLikeBoxNumber = digitsOnly.length >= 1 && digitsOnly.length <= 4 && raw.length <= 8;
+    if(awaitingItemScanFor && looksLikeBoxNumber){
+      awaitingItemScanFor = null;
+      currentBoxNumber = null;
+      lockedFactory = null;
+      handleBoxNumberScan(raw);
+    } else if(awaitingItemScanFor){
+      handleItemScanForBox(raw);
     } else {
-      processScan(raw);
+      handleBoxNumberScan(raw);
     }
+  } else {
+    processScan(raw);
   }
+}
+function flushScanBuffer(){
+  scanJoinTimer = null;
+  const lines = scanLineBuffer.map(l => String(l).trim()).filter(Boolean);
+  scanLineBuffer = [];
+  if(!lines.length) return;
+  if(lines.length === 1){ handleSingleRaw(lines[0]); return; }
+  const parts = parseLinesToParts(lines);
+  if(boxMode){
+    if(!awaitingItemScanFor){
+      // 아직 박스번호를 안 찍은 상태면 첫 줄을 박스번호로 보고, 나머지를 그 박스 품목으로 처리
+      handleSingleRaw(lines[0]);
+      const rest = parseLinesToParts(lines.slice(1));
+      if(awaitingItemScanFor && rest.length) handleItemScanForBox(rest.map(p => p.code + p.qty).join(''));
+      return;
+    }
+    if(parts.length) handleItemScanForBox(parts.map(p => p.code + p.qty).join(''));
+    else handleItemScanForBox(lines.join(' '));
+    return;
+  }
+  if(!parts.length){ lines.forEach(l => handleSingleRaw(l)); return; }
+  parts.forEach(p => processScan(p.qty > 1 ? p.code + p.qty : p.code));
+}
+scanInput.addEventListener('keydown', (e)=>{
+  if(e.key !== 'Enter' && e.key !== 'Tab') return;
+  e.preventDefault(); // 탭이 와도 포커스가 다른 버튼으로 넘어가지 않게
+  scanLineBuffer.push(scanInput.value);
+  scanInput.value = '';
+  clearTimeout(scanJoinTimer);
+  scanJoinTimer = setTimeout(flushScanBuffer, SCAN_JOIN_WAIT_MS);
+});
+scanInput.addEventListener('input', ()=>{
+  if(scanJoinTimer){ clearTimeout(scanJoinTimer); scanJoinTimer = setTimeout(flushScanBuffer, SCAN_JOIN_WAIT_MS); }
 });
 function focusInput(){ scanInput.focus(); }
 document.addEventListener('click', (e)=>{
