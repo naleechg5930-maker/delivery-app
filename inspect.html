@@ -901,6 +901,10 @@ setInterval(updateRestButtonLabel, 1000); // 쉬는 중이면 버튼 위 시간 
 let currentOrderTag = ''; // '' (단가 있음, 표시 없음) | 'S/P' (단가 없음, 샘플 표시)
 let currentDocumentKey = ''; // 전표번호 (QR 조회로 불러온 경우만 값이 있음, 그 외엔 빈 값)
 let currentWorker = ''; // 작업자 QR을 찍으면 채워짐 (전표 찍고 그다음에 찍는 방식)
+// 10/21: 피킹 완료(2번째 전표 스캔) = 바로 검수 시작. 검수자는 피킹한 사람으로 자동 지정하고,
+// 검수시간은 첫 상품을 찍는 순간부터 잰다 (그 전에 다른 사람이 자기 QR을 찍으면 그 사람으로 바뀜)
+let autoInspectFromPick = null;   // { key, worker, dur } : 방금 피킹완료 처리한 전표 → 품목 불러온 뒤 검수자 자동 지정용
+let deferredInspectStart = null;  // { key, worker } : 첫 상품 스캔 때 startWork(검수 시작 기록)를 보낼 대기 상태
 let adminForceUnlocked = false; // 관리자가 "강제 진행"을 눌러서, 작업자 미지정 상태에서도 스캔을 허용한 경우
 function normalizeDocKeyForWorkerMap(key){ return String(key || '').replace(/\s+/g, ''); }
 
@@ -1075,12 +1079,9 @@ async function handlePickingStage(raw, key){
     pendingPickStart = null;
     pickingStateCache[key] = { state:'done', worker: res.worker || '' };
     const dur = res.unmeasured ? '시간 미측정' : formatMsShort(res.seconds * 1000);
-    showBanner('ok', '피킹 완료', key, `${res.worker || ''} · ${dur} — 검수할 때 전표를 한 번 더 찍어주세요`, '🛒');
-    addScreenOnlyLog(raw, `피킹 완료 (${res.worker || ''} ${dur})`, '피킹');
-    playOkSound();
-    speakKorean('피킹 완료');
-    focusInput();
-    return true;
+    addScreenOnlyLog(raw, `피킹 완료 (${res.worker || ''} ${dur}) → 바로 검수 시작`, '피킹');
+    autoInspectFromPick = { key, worker: res.worker || '', dur };
+    return false; // 10/21: 전표를 한 번 더 찍지 않고 바로 품목을 불러와서 검수 시작
   }
   // inspect
   pendingPickStart = null;
@@ -1643,6 +1644,7 @@ function handleScanRaw(raw){
       }
       if(workerName){
         currentWorker = workerName;
+        deferredInspectStart = null; // 본인 QR을 찍었으면 그 시점부터 검수시간 측정 (자동 지정 취소)
         if(currentDocumentKey){
           documentWorkerMap[normalizeDocKeyForWorkerMap(currentDocumentKey)] = workerName;
           saveDocumentWorkerMapToStorage();
@@ -1703,6 +1705,18 @@ function processScan(rawCode){
     document.getElementById('workerBlockOverlay').style.display = 'flex';
     playErrSound();
     return;
+  }
+  // 피킹완료→바로검수로 자동 지정된 경우: 첫 상품을 찍는 지금부터 검수시간을 잰다
+  if(deferredInspectStart && !/^DLV\|/i.test(String(rawCode || ''))){
+    const d = deferredInspectStart; deferredInspectStart = null;
+    if(canonicalDocKeyJS(d.key) === canonicalDocKeyJS(currentDocumentKey) && d.worker === currentWorker){
+      inspectionStartTime = new Date();
+      try{ documentWorkerMap[normalizeDocKeyForWorkerMap(currentDocumentKey)] = currentWorker; saveDocumentWorkerMapToStorage(); }catch(e){}
+      if(gasWebhookUrl && currentDocumentKey){
+        fetch(gasWebhookUrl, { method:'POST', body: JSON.stringify({ type:'startWork', documentKey: currentDocumentKey, worker: currentWorker }) })
+          .catch(err => console.warn('작업 시작 기록 전송 실패:', err));
+      }
+    }
   }
   const scannedRaw = rawCode.toUpperCase().trim();
 
@@ -2635,6 +2649,7 @@ async function processDocumentLookup(raw){
   // 나중에 조회가 끝나면서 그 값을 도로 지워버리는 순서 문제가 생길 수 있어서 여기서 미리 처리한다.
   // (혹시 이 전표에 이미 작업자가 배정된 적 있으면, 조회 완료 후 documentWorkerMap에서 되살림)
   currentWorker = '';
+  deferredInspectStart = null;
   adminForceUnlocked = false;
   document.getElementById('workerBlockOverlay').style.display = 'none';
   const ablyDocEl = document.getElementById('ablyOrderDocKey');
@@ -2712,6 +2727,16 @@ async function processDocumentLookup(raw){
       }
       if(rememberedWorker) currentWorker = rememberedWorker;
     }
+    // 방금 피킹완료(2번째 스캔)로 넘어온 전표면, 검수자 = 피킹한 사람으로 자동 지정 (QR 다시 안 찍어도 됨)
+    let autoInspect = null;
+    if(autoInspectFromPick && canonicalDocKeyJS(currentDocumentKey) === autoInspectFromPick.key){
+      autoInspect = autoInspectFromPick;
+      if(currentWorker === '' && autoInspect.worker){
+        currentWorker = autoInspect.worker;
+        deferredInspectStart = { key: currentDocumentKey, worker: currentWorker };
+      }
+    }
+    autoInspectFromPick = null;
     if(currentWorker !== '') document.getElementById('workerBlockOverlay').style.display = 'none';
     okCount = 0; errCount = 0;
     logList.innerHTML = '';
@@ -2742,7 +2767,12 @@ async function processDocumentLookup(raw){
     showBanner('ok', '전표 조회 완료', data.key || raw, `${data.company || ''} · 품목 ${list.length}개 불러옴`, '✅');
     addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), data.key || raw, true, `전표 조회 → ${list.length}품목 불러옴`);
     playOkSound();
-    speakKorean('검수 시작');
+    if(autoInspect){
+      showBanner('ok', '피킹 완료 → 바로 검수', data.key || raw, `${autoInspect.worker} · 피킹 ${autoInspect.dur} — 검수자도 ${currentWorker}님 (다른 사람이 검수하면 상품 찍기 전에 본인 QR)`, '✅');
+      speakKorean('피킹 완료. 바로 검수 시작');
+    } else {
+      speakKorean('검수 시작');
+    }
     if(currentWorker === ''){
       showWorkerReminderBanner(); // 전표를 처음 불러온 직후(작업자 아직 없음)라서 크게 알림
     }
