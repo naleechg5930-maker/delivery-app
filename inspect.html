@@ -507,6 +507,19 @@
   <button type="button" id="mispickConfirmBtn" tabindex="-1" style="margin-top:22px; padding:16px 64px; font-size:26px; font-weight:900; border:0; border-radius:14px; background:#fff; color:#B91C1C; cursor:pointer; box-shadow:0 6px 18px rgba(0,0,0,.3);">확인</button>
   <div id="mispickBlockedMsg" style="font-size:16px; margin-top:12px; min-height:22px; font-weight:800; color:#fde047;"></div>
 </div>
+<!-- 10/22: 검수 중에 다른 전표를 찍었을 때 바로 초기화하지 않고 묻는 창 -->
+<div id="docSwitchOverlay" style="display:none; position:fixed; inset:0; z-index:9998; background:rgba(15,23,42,0.88); color:#fff; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:32px;">
+  <div style="font-size:64px; line-height:1;">✋</div>
+  <div style="font-size:32px; font-weight:900; margin-top:14px;">지금 검수 중인 전표가 있어요</div>
+  <div id="docSwitchCurrent" style="font-size:22px; margin-top:14px; font-weight:700; color:#fde047;"></div>
+  <div id="docSwitchNew" style="font-size:18px; margin-top:8px; opacity:0.85;"></div>
+  <div style="font-size:16px; margin-top:16px; opacity:0.8;">새 전표로 넘어가면 지금 찍은 내용이 <b>전부 지워져요</b></div>
+  <div style="display:flex; gap:16px; margin-top:26px;">
+    <button type="button" id="docSwitchStay" tabindex="-1" style="padding:16px 40px; font-size:24px; font-weight:900; border:0; border-radius:14px; background:#16A34A; color:#fff; cursor:pointer;">이어서 검수</button>
+    <button type="button" id="docSwitchGo" tabindex="-1" style="padding:16px 28px; font-size:18px; font-weight:800; border:2px solid #fca5a5; border-radius:14px; background:transparent; color:#fca5a5; cursor:pointer;">지우고 새 전표로</button>
+  </div>
+  <div id="docSwitchBlockedMsg" style="font-size:15px; margin-top:12px; min-height:20px; font-weight:800; color:#fde047;"></div>
+</div>
 <style>
 @keyframes workerReminderBlink { 0%,100% { opacity:1; } 50% { opacity:0.55; } }
 </style>
@@ -2080,6 +2093,12 @@ function confirmMispick(){
 }
 // 막혀 있는 동안 스캐너로 들어온 입력: 처리하지 않고 경고만
 function blockedByMispick(){
+  if(typeof docSwitchBlocking !== 'undefined' && docSwitchBlocking){
+    const m2 = document.getElementById('docSwitchBlockedMsg');
+    if(m2) m2.textContent = '⛔ 위 버튼 중 하나를 마우스로 먼저 눌러주세요';
+    try{ playErrSound(); }catch(e){}
+    return true;
+  }
   if(!mispickBlocking) return false;
   const m = document.getElementById('mispickBlockedMsg');
   if(m){ m.textContent = '⛔ [확인]을 먼저 눌러주세요 — 방금 찍은 건 반영되지 않았어요'; }
@@ -2087,6 +2106,31 @@ function blockedByMispick(){
   return true;
 }
 document.getElementById('mispickConfirmBtn').addEventListener('click', confirmMispick);
+// 검수가 진행 중인지: 품목을 하나라도 찍었고 아직 전부 끝나지 않은 상태
+function isInspectionInProgress(){
+  try{ return items.length > 0 && items.some(it => it.scannedQty > 0) && !items.every(it => it.scannedQty >= it.orderQty); }catch(e){ return false; }
+}
+let docSwitchBlocking = false, docSwitchResolve = null;
+function askSwitchDocument(newRaw){
+  const done = items.reduce((a, it) => a + Math.min(it.scannedQty, it.orderQty), 0), total = items.reduce((a, it) => a + it.orderQty, 0);
+  const company = (document.getElementById('companyNameInput').value || '').trim();
+  document.getElementById('docSwitchCurrent').textContent = `검수 중: ${currentDocumentKey} ${company} · ${done}/${total}개`;
+  document.getElementById('docSwitchNew').textContent = `방금 찍은 전표: ${newRaw}`;
+  document.getElementById('docSwitchBlockedMsg').textContent = '';
+  document.getElementById('docSwitchOverlay').style.display = 'flex';
+  docSwitchBlocking = true;
+  try{ playErrSound(); speakKorean('검수 중인 전표가 있어요'); }catch(e){}
+  return new Promise(resolve => { docSwitchResolve = resolve; });
+}
+function closeSwitchDocument(go){
+  document.getElementById('docSwitchOverlay').style.display = 'none';
+  docSwitchBlocking = false;
+  const r = docSwitchResolve; docSwitchResolve = null;
+  if(r) r(!!go);
+  if(typeof focusInput === 'function') focusInput();
+}
+document.getElementById('docSwitchStay').addEventListener('click', () => closeSwitchDocument(false));
+document.getElementById('docSwitchGo').addEventListener('click', () => closeSwitchDocument(true));
 
 function showBanner(kind, verdict, code, descText, icon){
   statusBanner.className = `status-banner ${kind}`;
@@ -2778,7 +2822,6 @@ function findInSalesCache(raw){
 }
 
 async function processDocumentLookup(raw){
-  try{ if(typeof videoRec !== 'undefined') videoRec.onDocumentScan(raw); }catch(e){} // 다른 전표를 찍으면 이전 녹화는 저장하고 끝냄
   if(!gasWebhookUrl){
     alert('구글시트 연동이 설정되어 있지 않습니다. 먼저 상단 "구글시트 연동" 칸에 웹앱 주소를 연결해주세요.');
     focusInput();
@@ -2794,6 +2837,19 @@ async function processDocumentLookup(raw){
   if(scannedDocKey && canonicalDocKeyJS(currentDocumentKey) !== scannedDocKey && processedOverrideKey !== scannedDocKey){
     if(await handlePickingStage(raw, scannedDocKey)) return;
   }
+  // 10/22: 검수 중인데 다른 전표가 찍히면 바로 지우지 않고 물어본다 (기본은 "이어서 검수")
+  if(isInspectionInProgress() && scannedDocKey && canonicalDocKeyJS(currentDocumentKey) !== scannedDocKey){
+    const go = await askSwitchDocument(raw);
+    if(!go){
+      autoInspectFromPick = null;
+      showBanner('ok', '이어서 검수', currentDocumentKey, '방금 찍은 전표는 불러오지 않았어요 — 지금 전표를 계속 찍어주세요', '✋');
+      addScreenOnlyLog(raw, '검수 중이라 다른 전표를 불러오지 않음 (이어서 검수)');
+      focusInput();
+      return;
+    }
+    addScreenOnlyLog(raw, `검수 중이던 ${currentDocumentKey} 를 지우고 새 전표로 넘어감`);
+  }
+  try{ if(typeof videoRec !== 'undefined') videoRec.onDocumentScan(raw); }catch(e){} // 실제로 전표가 바뀌는 순간 이전 녹화를 저장하고 끝냄
   pendingPickStart = null;
   // 새 전표 조회를 "시작"하는 이 시점에 바로(비동기 요청 전에) 작업자 정보를 리셋한다.
   // loadItems() 안에서 리셋하면, 조회가 끝나기 전에 사용자가 이름QR을 먼저 찍었을 때
@@ -5066,5 +5122,94 @@ const videoRec = (function(){
 // 검수 로그 한 줄 = 영상 아래 "방금 찍은 품목" 표시
 (function(){ const orig = addLog; addLog = function(t, code, ok, note){ orig.apply(this, arguments); try{ videoRec.noteScan(code, ok, note); }catch(e){} }; })();
 </script>
+<style>
+.ac-box{ position:absolute; left:0; right:0; top:100%; margin-top:4px; background:#fff; border:2px solid #1f2a5c; border-radius:12px; box-shadow:0 12px 28px rgba(0,0,0,.25); z-index:950; overflow:hidden; display:none; color:#1f2a5c; text-align:left; }
+.ac-head{ padding:7px 14px; font-size:12px; color:#64748b; background:#f1f5f9; border-bottom:1px solid #e2e8f0; }
+.ac-row{ display:grid; grid-template-columns:150px minmax(0,1fr) 92px; gap:10px; align-items:center; padding:11px 14px; border-bottom:1px solid #eef0f4; cursor:pointer; }
+.ac-row:last-child{ border-bottom:0; }
+.ac-row .c{ font-family:monospace; font-weight:900; font-size:17px; }
+.ac-row .n{ font-size:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ac-row .q{ text-align:right; font-weight:900; font-size:15px; color:#DC2626; }
+.ac-row.done{ opacity:.45; } .ac-row.done .q{ color:#16a34a; }
+.ac-row.sel{ background:#1f2a5c; color:#fff; opacity:1; } .ac-row.sel .q{ color:#fde047; }
+.ac-row u{ text-decoration-thickness:2px; }
+.ac-empty{ padding:12px 14px; font-size:14px; color:#64748b; }
+</style>
+<script>
+/* ===================== 수기 입력 자동완성 (10/22) =====================
+   바코드가 안 읽혀서 스캔칸에 손으로 칠 때, 지금 불러온 전표 품목 중에서 맞는 걸 아래 목록으로 보여준다.
+   - 사람이 치다가 잠깐 멈췄을 때만(0.18초) 목록을 띄운다 → 스캐너는 순식간에 넣고 엔터까지 쳐서 목록이 안 뜸
+   - ↑↓로 고르고 Enter, 또는 클릭해야만 후보가 들어간다. 그냥 Enter는 예전처럼 입력한 글자 그대로 처리 */
+(function(){
+  const isTablet = !!document.getElementById('tabletScanInput');
+  const input = document.getElementById('tabletScanInput') || document.getElementById('scanInput');
+  if(!input) return;
+  const host = input.parentElement; if(getComputedStyle(host).position === 'static') host.style.position = 'relative';
+  const box = document.createElement('div'); box.className = 'ac-box'; host.appendChild(box);
+  let list = [], sel = -1, timer = null, open = false;
+  const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+  function tokensOf(v){
+    return v.trim().toUpperCase().split(/\s+/).filter(Boolean).map(t => {
+      const alt = (typeof containsHangul === 'function' && containsHangul(t)) ? hangulToEnglish(t).toUpperCase() : '';
+      return { t, alt };
+    });
+  }
+  function underline(text, toks){
+    let out = esc(text);
+    toks.forEach(k => { [k.t, k.alt].filter(Boolean).forEach(w => { const i = out.toUpperCase().indexOf(esc(w)); if(i !== -1) out = out.slice(0, i) + '<u>' + out.slice(i, i + esc(w).length) + '</u>' + out.slice(i + esc(w).length); }); });
+    return out;
+  }
+  function close(){ open = false; sel = -1; list = []; box.style.display = 'none'; box.innerHTML = ''; }
+  function render(v, toks){
+    if(!list.length){ box.innerHTML = `<div class="ac-head">이 전표 품목 중 <b>"${esc(v)}"</b> 와 맞는 품목이 없어요</div>`; }
+    else box.innerHTML = `<div class="ac-head">이 전표 품목 중 <b>"${esc(v)}"</b> 와 맞는 ${list.length}개 · ↑↓ 로 고르고 Enter, 또는 클릭 · Esc 닫기</div>` +
+      list.map((it, i) => {
+        const left = it.orderQty - it.scannedQty, done = left <= 0;
+        return `<div class="ac-row${done ? ' done' : ''}${i === sel ? ' sel' : ''}" data-i="${i}"><span class="c">${underline(it.code, toks)}</span><span class="n"><b>${esc(it.name)}</b> · ${underline(it.spec || '', toks)}</span><span class="q">${done ? `완료 ${it.scannedQty}/${it.orderQty}` : `남은 ${left}개`}</span></div>`;
+      }).join('');
+    box.style.display = 'block'; open = true;
+  }
+  function refresh(){
+    const v = input.value;
+    if(!v || v.trim().length < 2 || v.indexOf('/') !== -1 || /^WK/i.test(v) || /^dlv\|/i.test(v) || (isTablet && /^\d{1,3}$/.test(v.trim())) || typeof items === 'undefined' || !items.length){ close(); return; }
+    const toks = tokensOf(v);
+    list = items.filter(it => { const hay = `${it.code} ${it.name || ''} ${it.spec || ''}`.toUpperCase(); return toks.every(k => hay.indexOf(k.t) !== -1 || (k.alt && hay.indexOf(k.alt) !== -1)); })
+      .sort((a, b) => ((a.orderQty - a.scannedQty) <= 0) - ((b.orderQty - b.scannedQty) <= 0) || a.code.localeCompare(b.code))
+      .slice(0, 8);
+    if(sel >= list.length) sel = list.length - 1;
+    render(v, toks);
+  }
+  function pick(i){
+    const it = list[i]; if(!it) return;
+    close();
+    window.__acHuman = false;
+    input.value = it.code;
+    input.dispatchEvent(new KeyboardEvent('keydown', { key:'Enter', bubbles:true })); // 스캐너로 찍은 것과 똑같이 처리
+  }
+  // 사람이 치는 중인지: 글자 사이 간격이 0.06초보다 길면 사람 (스캐너는 몇 ms 간격). 태블릿 자동처리도 이걸 보고 기다린다
+  let lastInputAt = 0;
+  window.__acHuman = false;
+  input.addEventListener('input', () => {
+    const now = Date.now();
+    if(!input.value) window.__acHuman = false;
+    else if(lastInputAt && now - lastInputAt > 60) window.__acHuman = true;
+    lastInputAt = now;
+    clearTimeout(timer); sel = -1; timer = setTimeout(refresh, 180);
+  });
+  input.addEventListener('keydown', e => {
+    if(!open) return;
+    if(e.key === 'ArrowDown'){ e.preventDefault(); e.stopImmediatePropagation(); if(list.length){ sel = (sel + 1) % list.length; refresh(); } }
+    else if(e.key === 'ArrowUp'){ e.preventDefault(); e.stopImmediatePropagation(); if(list.length){ sel = sel <= 0 ? list.length - 1 : sel - 1; refresh(); } }
+    else if(e.key === 'Escape'){ e.preventDefault(); e.stopImmediatePropagation(); close(); }
+    else if(e.key === 'Enter'){
+      if(sel >= 0 && list[sel]){ e.preventDefault(); e.stopImmediatePropagation(); pick(sel); }
+      else { close(); window.__acHuman = false; } // 고른 게 없으면 예전처럼 입력한 그대로 처리
+    }
+  }, true);
+  box.addEventListener('mousedown', e => { const row = e.target.closest('.ac-row'); if(!row) return; e.preventDefault(); pick(Number(row.dataset.i)); });
+  input.addEventListener('blur', () => setTimeout(() => { if(document.activeElement !== input) close(); }, 200));
+})();
+</script>
+
 </body>
 </html>
