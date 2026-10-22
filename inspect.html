@@ -6,6 +6,7 @@
 <title>피킹 검수 프로그램 — LUNA&SOL</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;800;900&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/fix-webm-duration@1.0.6/fix-webm-duration.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -136,6 +137,24 @@
     padding:5px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:600;
   }
   .footer-settings button:hover{ border-color:var(--accent); color:var(--accent); }
+  /* 검수 영상 녹화 */
+  .footer-settings input[type="checkbox"]{ width:auto; }
+  .vr-folder{ font-size:11px; color:var(--sub); max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .vr-status{ font-size:11px; color:var(--sub); } .vr-status.err{ color:var(--err); font-weight:700; }
+  .vr-box{ position:fixed; right:12px; bottom:12px; z-index:900; width:176px; background:#000; border-radius:10px; overflow:hidden; box-shadow:0 6px 18px rgba(0,0,0,.35); pointer-events:none; }
+  .vr-box video{ width:176px; height:132px; object-fit:cover; display:block; }
+  .vr-badge{ font-size:11px; font-weight:800; color:#cbd5e1; background:#111827; padding:4px 7px; text-align:center; }
+  .vr-badge.on{ color:#fff; background:#DC2626; }
+  .vb-modal{ position:fixed; inset:0; z-index:9990; background:rgba(10,14,40,.55); display:none; align-items:center; justify-content:center; }
+  .vb-modal.show{ display:flex; }
+  .vb-card{ background:#fff; border-radius:14px; padding:16px; width:min(720px, 94vw); box-shadow:0 10px 30px rgba(0,0,0,.35); color:#1f2a5c; }
+  .vb-card h3{ margin:0 0 4px; font-size:17px; } .vb-card .sub{ font-size:12.5px; color:#555; margin-bottom:10px; }
+  .vb-card canvas{ width:100%; border-radius:8px; background:#000; cursor:crosshair; display:block; touch-action:none; }
+  .vb-chips{ display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; min-height:28px; }
+  .vb-chip{ background:#fde047; color:#1f2a5c; font-weight:800; font-size:12px; border-radius:6px; padding:4px 8px; cursor:pointer; border:0; }
+  .vb-actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:10px; }
+  .vb-actions button{ padding:8px 16px; border-radius:8px; font-weight:800; font-size:14px; cursor:pointer; border:1px solid #cfd3e1; background:#fff; color:#555; }
+  .vb-actions .pri{ background:#1f2a5c; color:#fff; border-color:#1f2a5c; }
 
   /* Progress */
   .progress-wrap{
@@ -506,13 +525,13 @@
     </div>
 
     <div style="display:flex; align-items:center; gap:10px; margin-top:2px;">
-      <button id="bundleModeBtn" style="flex:1; padding:10px; font-size:14px; font-weight:800; background:#fff; color:var(--accent); border:2px solid var(--accent);">📦 묶음처리</button>
+      <button id="bundleModeBtn" tabindex="-1" style="flex:1; padding:10px; font-size:14px; font-weight:800; background:#fff; color:var(--accent); border:2px solid var(--accent);">📦 묶음처리</button>
       <div style="display:flex; gap:4px;">
-        <button type="button" class="bundle-size-btn" data-size="5">5개</button>
-        <button type="button" class="bundle-size-btn" data-size="10">10개</button>
+        <button type="button" tabindex="-1" class="bundle-size-btn" data-size="5">5개</button>
+        <button type="button" tabindex="-1" class="bundle-size-btn" data-size="10">10개</button>
       </div>
       <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--sub); cursor:pointer; white-space:nowrap;">
-        <input type="checkbox" id="bundleContinuousToggle"> 연속
+        <input type="checkbox" id="bundleContinuousToggle" tabindex="-1"> 연속
       </label>
     </div>
     <div id="bundleModeIndicator" style="display:none; background:#DC2626; color:#fff; font-weight:800; text-align:center; padding:8px; border-radius:8px;">
@@ -629,7 +648,34 @@
   <input type="number" id="labelOffsetX" value="0" step="0.5" placeholder="가로(mm)">
   <input type="number" id="labelOffsetY" value="0" step="0.5" placeholder="세로(mm)">
   <button id="testPrintBtn" type="button">테스트 인쇄</button>
+  <label style="margin-left:10px;">소리 미리듣기</label>
+  <button type="button" tabindex="-1" onclick="playOkSound()">정상</button>
+  <button type="button" tabindex="-1" onclick="playItemCompleteSound()">품목 완료</button>
+  <button type="button" tabindex="-1" onclick="playBagFullSound()">봉투 완료</button>
+  <button type="button" tabindex="-1" onclick="playCompleteSound()">검수 완료</button>
+  <button type="button" tabindex="-1" onclick="playErrSound()">오피킹</button>
 </div>
+<div class="footer-settings" id="videoRecSettings" style="margin-top:0;">
+  <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-size:12px;"><input type="checkbox" id="videoRecToggle" tabindex="-1"> 🎥 검수 영상 녹화</label>
+  <button type="button" id="videoRecFolderBtn" tabindex="-1">저장 폴더 선택</button>
+  <span id="videoRecFolder" class="vr-folder">-</span>
+  <label for="videoRecDays">보관</label><input type="number" id="videoRecDays" min="1" max="365" value="30" style="width:56px"><label>일</label>
+  <select id="videoRecCam" tabindex="-1" style="display:none; font-size:12px; max-width:200px;"></select>
+  <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-size:12px; margin-left:8px;"><input type="checkbox" id="videoBlurToggle" tabindex="-1"> 😶 얼굴 가림</label>
+  <button type="button" id="videoBlurEditBtn" tabindex="-1">가림 영역 지정</button>
+  <span id="videoBlurInfo" class="vr-folder">영역 없음</span>
+  <span id="videoRecStatus" class="vr-status"></span>
+</div>
+<div class="vb-modal" id="videoBlurModal">
+  <div class="vb-card">
+    <h3>😶 얼굴 가림 영역 지정</h3>
+    <div class="sub">카메라 화면에서 <b>얼굴이 나오는 곳을 마우스로 드래그</b>하세요 (최대 2곳). 사람이 움직이는 범위까지 넉넉하게 그리면 좋아요. 노란 칸을 누르면 그 영역이 지워져요.</div>
+    <canvas id="videoBlurCanvas" width="640" height="480"></canvas>
+    <div class="vb-chips" id="videoBlurChips"></div>
+    <div class="vb-actions"><button type="button" id="videoBlurClear">전부 지우기</button><button type="button" id="videoBlurCancel">취소</button><button type="button" class="pri" id="videoBlurSave">저장</button></div>
+  </div>
+</div>
+<div id="videoRecBox" class="vr-box" style="display:none;"><video id="videoRecPreview" muted playsinline></video><div id="videoRecBadge" class="vr-badge">카메라 꺼짐</div></div>
 
 <div class="overlay" id="overlay">
   <div class="complete-card">
@@ -1412,10 +1458,12 @@ function ensureAudio(){
   }
   if(audioCtx.state === 'suspended') audioCtx.resume();
 }
+let soundBusyUntil = 0; // 지금 나고 있는 소리가 끝나는 시각 (봉투 완료음이 다른 소리와 겹치지 않게 뒤에 이어서 내기 위함)
 function beep(freq, duration, type='sine', delay=0, gain=0.28){
   if(!soundOn) return;
   ensureAudio();
   const t0 = audioCtx.currentTime + delay;
+  soundBusyUntil = Math.max(soundBusyUntil, t0 + duration);
   const osc = audioCtx.createOscillator();
   const g = audioCtx.createGain();
   osc.type = type;
@@ -1451,21 +1499,36 @@ function playErrSound(){
   osc.connect(g); g.connect(compressor);
   osc.start(t0); osc.stop(t0 + dur + 0.02);
 }
-function playCompleteSound(){
+// 10/22: 소리가 다 비슷하게 올라가는 음이라 헷갈려서, 상황마다 리듬·음높이를 확실히 다르게 바꿈
+//  - 정상 스캔 : 짧게 "띵동" (올라가는 2음) - 그대로
+//  - 품목 완료 : 같은 높은 음 두 번 "딩! 딩!" (종소리처럼 길게 울림)
+//  - 봉투 완료 : 빠른 "삐삐삐삐" 4번 + 낮고 긴 "뿌-" (다른 소리와 리듬이 완전히 다름, 볼륨 크게)
+//  - 검수 완료 : 5음 팡파레 (가장 길고 화려함)
+//  - 오피킹    : 사이렌 - 그대로
+function bell(freq, dur, delay, gain){
+  beep(freq, dur, 'sine', delay, gain);
+  beep(freq * 2, dur * 0.6, 'sine', delay, gain * 0.25); // 배음을 살짝 섞어서 종소리처럼
+}
+function playItemCompleteSound(){
+  bell(1760, 0.45, 0, 0.7);
+  bell(1760, 0.6, 0.22, 0.7);
+}
+function playCompleteSound(){ // 검수 전체 완료
   [523,659,784,1046,1318].forEach((f,i)=> beep(f, 0.24, 'triangle', i*0.13, 0.6));
 }
 function playBagFullSound(){
-  // 봉투 완료 알림: 다른 소리보다 확실히 크게 들리도록, 이 소리 재생 동안만 전체 볼륨을 순간적으로 더 키운다
+  // 봉투 완료: 이 소리 동안만 전체 볼륨을 순간적으로 더 키운다
   if(!soundOn) return;
   ensureAudio();
   const prevGain = masterGain.gain.value;
-  masterGain.gain.setValueAtTime(2.4, audioCtx.currentTime);
-  beep(880, 0.20, 'square', 0.00, 1.0);
-  beep(1318, 0.26, 'square', 0.16, 1.0);
-  beep(1568, 0.30, 'square', 0.34, 1.0);
+  const off = Math.max(0, soundBusyUntil - audioCtx.currentTime) + 0.05; // 품목완료음 등이 나는 중이면 끝난 뒤에 이어서
+  masterGain.gain.setValueAtTime(2.4, audioCtx.currentTime + off);
+  for(let i = 0; i < 4; i++) beep(740, 0.07, 'square', off + i * 0.11, 1.0); // 삐삐삐삐
+  beep(392, 0.5, 'square', off + 0.5, 1.0);                                    // 뿌-
+  beep(196, 0.5, 'triangle', off + 0.5, 0.8);
   setTimeout(()=>{
     if(masterGain) masterGain.gain.setValueAtTime(prevGain, audioCtx.currentTime);
-  }, 750);
+  }, Math.round((off + 1.1) * 1000));
 }
 
 /* ===================== 음성 안내 (여성 목소리, 브라우저 내장 TTS) ===================== */
@@ -1522,6 +1585,7 @@ function isEditableFocused(){
   const el = document.activeElement;
   if(!el) return false;
   const tag = el.tagName.toLowerCase();
+  if(tag === 'input' && /^(checkbox|radio|button|submit|reset|file|range|color)$/i.test(el.type || '')) return false; // 10/21: 체크박스(연속 등)에 포커스가 남아 스캔이 안 먹던 문제
   return (tag==='input' || tag==='textarea' || tag==='select') && el !== scanInput;
 }
 function focusInput(){
@@ -1575,12 +1639,47 @@ const QTY_ACTION_CODES = { 'PLUS4': 4, 'PLUS5': 5, 'PLUS9': 9, 'PLUS10': 10 };
 // 박스합본 QR처럼 내용 중간에 줄바꿈(엔터)이 들어있으면 스캐너가 엔터를 여러 번 보낸다.
 // 예전엔 첫 엔터에서 바로 처리해서 첫 줄만 읽히고 나머지 줄은 엉뚱한 스캔으로 따로 처리됐다.
 // → 엔터가 와도 80ms 동안 다음 글자가 이어서 들어오는지 기다렸다가, 한 번에 묶어서 처리한다.
+// 10/21: 일부 바코드(겨울 신상 등)는 내용 중간에 탭(Tab) 문자가 들어있다. 브라우저는 탭을 "다음 버튼으로 이동"으로 처리해서
+// 포커스가 [묶음처리]/[연속]으로 넘어가고, 뒤따라오는 엔터·스페이스가 그 버튼을 눌러버렸다. → 스캔칸에서는 탭을 막고 구분자로만 남긴다.
+function pickScanPartFromTabbed(line){
+  if(String(line).indexOf('\t') === -1) return line;
+  const parts = String(line).split('\t').map(x => x.trim()).filter(Boolean);
+  if(!parts.length) return '';
+  const known = parts.find(x => x.indexOf('/') !== -1 || /^WK[^0-9]*\d+$/i.test(x) || /^dlv\|/i.test(x) || codeIndex[resolveScannedCode(stripOrderCodeSuffix(x.toUpperCase())).resolved]);
+  if(known) return known;
+  const pat = parts.find(x => PRODUCT_CODE_PATTERN.test(x.toUpperCase()));
+  return pat || parts[0];
+}
+function guardTabKey(inputEl){
+  inputEl.addEventListener('keydown', (e)=>{
+    if(e.key !== 'Tab') return;
+    e.preventDefault(); // 포커스가 다른 버튼으로 넘어가지 않게
+    inputEl.value += '\t';
+  });
+}
+// 혹시라도 포커스가 버튼/체크박스에 가 있을 때 스캐너 입력(엔터·스페이스·글자)이 그 버튼을 누르지 않도록, 스캔칸으로 돌려보낸다
+document.addEventListener('keydown', (e)=>{
+  const el = document.activeElement;
+  if(!el || anyModalOpen()) return;
+  const tag = el.tagName.toLowerCase();
+  const isToggle = tag === 'button' || (tag === 'input' && /^(checkbox|radio|button|submit)$/i.test(el.type || ''));
+  if(!isToggle) return;
+  const target = document.getElementById('tabletScanInput') || scanInput;
+  if(!target) return;
+  if(e.key === 'Enter' || e.key === ' ' || e.key === 'Tab' || e.key.length === 1){
+    e.preventDefault(); e.stopPropagation();
+    target.focus();
+    if(e.key === 'Enter') target.dispatchEvent(new KeyboardEvent('keydown', { key:'Enter', bubbles:true }));
+    else if(e.key.length === 1 && e.key !== ' ') target.value += e.key;
+  }
+}, true);
 const SCAN_JOIN_WAIT_MS = 80;
+guardTabKey(scanInput);
 let scanLineBuffer = [];
 let scanJoinTimer = null;
 function flushScanBuffer(){
   scanJoinTimer = null;
-  const lines = scanLineBuffer.map(l => l.trim()).filter(Boolean);
+  const lines = scanLineBuffer.map(l => pickScanPartFromTabbed(l).trim()).filter(Boolean);
   scanLineBuffer = [];
   if(!lines.length) return;
   if(lines.length === 1) handleScanRaw(lines[0]);
@@ -1728,6 +1827,7 @@ function processScan(rawCode){
     playErrSound();
     return;
   }
+  try{ if(typeof videoRec !== 'undefined') videoRec.onItemScan(); }catch(e){} // 첫 상품을 찍는 순간 녹화 시작
   // 피킹완료→바로검수로 자동 지정된 경우: 첫 상품을 찍는 지금부터 검수시간을 잰다
   if(deferredInspectStart && !/^DLV\|/i.test(String(rawCode || ''))){
     const d = deferredInspectStart; deferredInspectStart = null;
@@ -1849,7 +1949,7 @@ function processScan(rawCode){
     const done = item.scannedQty >= item.orderQty;
     showBanner('ok', '정상피킹', displayCode, `${item.name} / ${item.spec}  (${item.scannedQty}/${item.orderQty})`, '✅');
     addLog(timeStr, displayCode, true, (done ? '해당 품번 완료' : `${item.scannedQty}/${item.orderQty}`));
-    if(done){ playCompleteSound(); speakKorean('품목 완료'); } else playOkSound();
+    if(done){ playItemCompleteSound(); speakKorean('품목 완료'); } else playOkSound();
     if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
   } else {
     const overBy = bulkQty - remaining;
@@ -1901,6 +2001,7 @@ function hideWorkerReminderBanner(){
 // 성공하면 짧은 소리만, 실패하면 에러 소리 + 스캔로그에 한 줄만 남긴다.
 // (패킹완료 처리 중에도 다음 전표 QR을 바로 찍고 작업을 이어갈 수 있도록 하기 위함)
 function handlePackingCompleteScan(suffix){
+  try{ if(typeof videoRec !== 'undefined') videoRec.onDlv(suffix); }catch(e){} // 배송라벨(DLV)을 찍으면 그 전표 녹화를 저장하고 끝냄
   if(!gasWebhookUrl){
     addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), `DLV|${suffix}`, false, '패킹완료 처리 불가: 구글시트 연동 주소가 설정되지 않았습니다');
     playErrSound();
@@ -1999,7 +2100,7 @@ function adjustLastScanned(amount){
     const done = item.scannedQty >= item.orderQty;
     showBanner('ok', '정상피킹', item.code, `${item.name} / ${item.spec}  (+${amount}) → ${item.scannedQty}/${item.orderQty}`, '✅');
     addLog(timeStr, item.code, true, `수량버튼 +${amount}${done ? ' (완료)' : ''} (${item.scannedQty}/${item.orderQty})`);
-    if(done){ playCompleteSound(); speakKorean('품목 완료'); } else playOkSound();
+    if(done){ playItemCompleteSound(); speakKorean('품목 완료'); } else playOkSound();
     if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
   } else {
     const overBy = amount - remaining;
@@ -2650,6 +2751,7 @@ function findInSalesCache(raw){
 }
 
 async function processDocumentLookup(raw){
+  try{ if(typeof videoRec !== 'undefined') videoRec.onDocumentScan(raw); }catch(e){} // 다른 전표를 찍으면 이전 녹화는 저장하고 끝냄
   if(!gasWebhookUrl){
     alert('구글시트 연동이 설정되어 있지 않습니다. 먼저 상단 "구글시트 연동" 칸에 웹앱 주소를 연결해주세요.');
     focusInput();
@@ -4528,6 +4630,242 @@ async function refreshRemainingWorkStatus(){
 }
 refreshRemainingWorkStatus();
 setInterval(refreshRemainingWorkStatus, 180000); // 3분마다 - 서버 부하를 줄이기 위해 1분에서 늘림 (계산은 저쪽에서 5분마다만 함)
+</script>
+
+<script>
+/* ===================== 검수 영상 녹화 (10/22) =====================
+   첫 상품 스캔 → 녹화 시작 → 배송라벨(DLV) 스캔 → 저장.
+   다른 전표를 찍거나 20분이 지나도 그때까지 저장. 영상 위쪽에 전표번호·업체·시간·작업자·진행수량을 글자로 넣는다.
+   저장: [저장 폴더 선택]으로 고른 폴더 안에 날짜별 폴더(2026-10-22)로. 폴더를 안 골랐으면 다운로드 폴더로.
+   보관일이 지난 날짜 폴더는 저장할 때 자동으로 지운다. */
+const videoRec = (function(){
+  const KEY_ON = 'videoRecOn', KEY_DAYS = 'videoRecKeepDays', KEY_CAM = 'videoRecCamId', KEY_BLUR_ON = 'videoBlurOn', KEY_BLUR = 'videoBlurRects';
+  let blurOn = false, blurRects = []; // [{x,y,w,h}] 화면 비율(0~1)
+  try{ blurOn = localStorage.getItem(KEY_BLUR_ON) === '1'; blurRects = JSON.parse(localStorage.getItem(KEY_BLUR) || '[]').filter(r => r && r.w > 0 && r.h > 0).slice(0, 2); }catch(e){}
+  // 지정한 영역만 뿌옇게: 그 칸 안에만 흐린 화면을 다시 그린다
+  function applyBlur(c, src, rects, w, h){
+    rects.forEach(r => {
+      c.save(); c.beginPath(); c.rect(r.x * w, r.y * h, r.w * w, r.h * h); c.clip();
+      c.filter = `blur(${Math.round(w / 28)}px)`;
+      try{ c.drawImage(src, 0, 0, w, h); }catch(e){}
+      c.filter = 'none'; c.fillStyle = 'rgba(160,165,180,0.25)'; c.fillRect(r.x * w, r.y * h, r.w * w, r.h * h); // 흐림 위에 살짝 덮어서 윤곽도 덜 보이게
+      c.restore();
+    });
+  }
+  const MAX_MS = 20 * 60 * 1000, FPS = 12, W = 640, H = 480, BPS = 600000;
+  let enabled = false, dirHandle = null, stream = null, video = null, canvas = null, ctx = null, drawTimer = null;
+  let rec = null, chunks = [], cur = null, maxTimer = null, uiTimer = null;
+  const $ = id => document.getElementById(id);
+  const p2 = n => String(n).padStart(2, '0');
+  function ls(k, v){ try{ if(v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); }catch(e){ return null; } }
+  function setStatus(t, err){ const el = $('videoRecStatus'); if(el){ el.textContent = t || ''; el.className = 'vr-status' + (err ? ' err' : ''); } }
+  async function folderState(interactive){
+    if(!('showDirectoryPicker' in window)) return { dir:null, label:'이 브라우저는 폴더 저장 미지원 → 다운로드 폴더에 저장' };
+    if(!dirHandle){ try{ dirHandle = await idbGet('videoRecDir') || null; }catch(e){} }
+    if(!dirHandle) return { dir:null, label:'저장 폴더 미지정 → 다운로드 폴더에 저장' };
+    let perm = 'prompt';
+    try{ perm = await dirHandle.queryPermission({ mode:'readwrite' }); if(perm !== 'granted' && interactive) perm = await dirHandle.requestPermission({ mode:'readwrite' }); }catch(e){}
+    return perm === 'granted' ? { dir:dirHandle, label:'저장 폴더: ' + dirHandle.name } : { dir:null, label:'⚠ 폴더 권한 필요 — 화면을 한 번 클릭하면 허용 창이 떠요' };
+  }
+  async function refreshFolderLabel(interactive){ const st = await folderState(interactive); const el = $('videoRecFolder'); if(el) el.textContent = st.label; return st.dir; }
+  async function pickFolder(){
+    if(!('showDirectoryPicker' in window)){ alert('이 브라우저는 폴더 저장을 지원하지 않아요. 크롬으로 열어주세요.\n(지금은 다운로드 폴더에 저장됩니다)'); return; }
+    try{ dirHandle = await window.showDirectoryPicker({ id:'videoRec', mode:'readwrite' }); await idbSet('videoRecDir', dirHandle); }catch(e){}
+    refreshFolderLabel(false);
+  }
+  async function listCameras(){
+    const sel = $('videoRecCam'); if(!sel || !navigator.mediaDevices) return;
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    const curId = stream ? (stream.getVideoTracks()[0].getSettings().deviceId || '') : '';
+    sel.innerHTML = devs.map((d, i) => `<option value="${escapeHtml(d.deviceId)}"${d.deviceId === curId ? ' selected' : ''}>${escapeHtml(d.label || ('카메라 ' + (i + 1)))}</option>`).join('');
+    sel.style.display = devs.length > 1 ? '' : 'none';
+  }
+  async function openCamera(){
+    if(stream) return true;
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ setStatus('이 브라우저에서는 카메라를 쓸 수 없어요', true); return false; }
+    const camId = ls(KEY_CAM);
+    try{ stream = await navigator.mediaDevices.getUserMedia({ video: camId ? { deviceId:{ exact:camId }, width:W, height:H } : { width:W, height:H }, audio:false }); }
+    catch(e){
+      try{ stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false }); }
+      catch(e2){ setStatus('카메라를 켤 수 없어요 (' + (e2.name === 'NotAllowedError' ? '카메라 허용이 필요해요' : (e2.message || e2)) + ')', true); return false; }
+    }
+    video = $('videoRecPreview'); video.srcObject = stream; try{ await video.play(); }catch(e){}
+    setStatus(''); listCameras();
+    return true;
+  }
+  function closeCamera(){ if(stream){ stream.getTracks().forEach(t => t.stop()); stream = null; } if(video) video.srcObject = null; }
+  function draw(){
+    if(!ctx || !video) return;
+    try{ ctx.drawImage(video, 0, 0, W, H); }catch(e){}
+    if(blurOn && blurRects.length) applyBlur(ctx, video, blurRects, W, H);
+    const now = new Date();
+    let prog = '';
+    try{ if(items.length) prog = `   진행 ${items.reduce((a, it) => a + Math.min(it.scannedQty, it.orderQty), 0)}/${items.reduce((a, it) => a + it.orderQty, 0)}`; }catch(e){}
+    const l1 = cur ? `${cur.docKey}   ${cur.company}` : '';
+    const l2 = `${now.getFullYear()}-${p2(now.getMonth()+1)}-${p2(now.getDate())} ${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}   ${cur ? (currentWorker || cur.worker) : ''}${prog}`;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, 54);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(l1, 10, 23);
+    ctx.font = '16px sans-serif'; ctx.fillText(l2, 10, 45);
+    ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(W - 22, 22, 8, 0, Math.PI * 2); ctx.fill();
+  }
+  function start(){
+    if(!enabled || rec || !stream || !currentDocumentKey || !items.length || typeof MediaRecorder === 'undefined') return;
+    cur = { docKey: currentDocumentKey, suffix: extractDocumentSuffixJS(currentDocumentKey), company: (($('companyNameInput') || {}).value || '').trim(), worker: currentWorker || '', startAt: new Date() };
+    canvas = canvas || document.createElement('canvas'); canvas.width = W; canvas.height = H; ctx = canvas.getContext('2d');
+    draw(); drawTimer = setInterval(draw, Math.round(1000 / FPS));
+    const mime = ['video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+    chunks = [];
+    try{ rec = new MediaRecorder(canvas.captureStream(FPS), mime ? { mimeType:mime, videoBitsPerSecond:BPS } : { videoBitsPerSecond:BPS }); }
+    catch(e){ setStatus('녹화를 시작할 수 없어요: ' + (e.message || e), true); clearInterval(drawTimer); rec = null; cur = null; return; }
+    rec.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
+    rec.start(5000);
+    maxTimer = setTimeout(() => stop('20분 초과'), MAX_MS);
+    uiTimer = setInterval(updateBadge, 1000); updateBadge();
+  }
+  function stop(reason){
+    if(!rec) return Promise.resolve();
+    const r = rec, info = cur; rec = null; cur = null;
+    clearTimeout(maxTimer); clearInterval(uiTimer); clearInterval(drawTimer);
+    updateBadge();
+    return new Promise(resolve => {
+      r.onstop = async () => {
+        let blob = new Blob(chunks, { type:'video/webm' }); chunks = [];
+        // 브라우저 녹화 파일엔 길이 정보가 없어서 일부 플레이어에서 앞뒤로 넘기기가 안 됨 → 길이 정보를 채워 넣는다
+        try{ if(window.ysFixWebmDuration) blob = await window.ysFixWebmDuration(blob, Date.now() - info.startAt.getTime(), { logger:false }); }catch(e){}
+        await save(blob, info, reason); resolve();
+      };
+      try{ r.stop(); }catch(e){ resolve(); }
+    });
+  }
+  const safe = x => String(x || '').replace(/[\\/:*?"<>|\s]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').slice(0, 40) || '-';
+  async function save(blob, info, reason){
+    if(!blob.size) return;
+    const d = info.startAt, day = `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;
+    const name = `${day}_${p2(d.getHours())}${p2(d.getMinutes())}_전표${safe(info.suffix)}_${safe(info.company)}_${safe(info.worker || currentWorker)}.webm`;
+    const mb = (blob.size / 1048576).toFixed(1);
+    try{
+      const dir = await refreshFolderLabel(false);
+      if(dir){
+        const sub = await dir.getDirectoryHandle(day, { create:true });
+        const fh = await sub.getFileHandle(name, { create:true });
+        const w = await fh.createWritable(); await w.write(blob); await w.close();
+        addScreenOnlyLog('🎥 영상 저장', `${name} (${mb}MB · ${reason})`, '🎥');
+        cleanup(dir);
+      } else {
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 10000);
+        addScreenOnlyLog('🎥 영상 저장', `${name} (${mb}MB · 다운로드 폴더 · ${reason})`, '🎥');
+      }
+    }catch(e){ addScreenOnlyLog('🎥 영상 저장 실패', String(e.message || e)); }
+  }
+  async function cleanup(dir){
+    const days = Math.max(1, Number(ls(KEY_DAYS)) || 30);
+    const c = new Date(Date.now() - days * 86400000), cut = `${c.getFullYear()}-${p2(c.getMonth()+1)}-${p2(c.getDate())}`;
+    try{
+      const old = [];
+      for await (const [n, h] of dir.entries()){ if(h.kind === 'directory' && /^\d{4}-\d{2}-\d{2}$/.test(n) && n < cut) old.push(n); }
+      for(const n of old) await dir.removeEntry(n, { recursive:true });
+    }catch(e){}
+  }
+  function updateBadge(){
+    const box = $('videoRecBox'); if(!box) return;
+    box.style.display = enabled ? '' : 'none';
+    const b = $('videoRecBadge');
+    if(rec && cur){ const sec = Math.floor((Date.now() - cur.startAt) / 1000); b.textContent = `● REC ${Math.floor(sec / 60)}:${p2(sec % 60)} · 전표 ${cur.suffix}`; b.className = 'vr-badge on'; }
+    else { b.textContent = stream ? '대기 · 첫 상품을 찍으면 녹화' : '카메라 꺼짐'; b.className = 'vr-badge'; }
+  }
+  async function setEnabled(on){
+    enabled = !!on; ls(KEY_ON, enabled ? '1' : '0');
+    if(enabled){ if(!(await openCamera())){ enabled = false; ls(KEY_ON, '0'); $('videoRecToggle').checked = false; } }
+    else { await stop('녹화 끔'); closeCamera(); }
+    updateBadge();
+  }
+  // ----- 얼굴 가림 영역 지정 창 -----
+  let edit = null, dragFrom = null, dragNow = null, editTimer = null, tempCamera = false;
+  function updateBlurInfo(){
+    const el = $('videoBlurInfo'); if(!el) return;
+    el.textContent = !blurRects.length ? '영역 없음' : `${blurRects.length}곳 지정됨` + (blurOn ? '' : ' (꺼짐)');
+  }
+  function renderChips(){
+    $('videoBlurChips').innerHTML = edit.map((r, i) => `<button type="button" class="vb-chip" data-i="${i}">가림 영역 ${i + 1} ✕</button>`).join('') || '<span style="font-size:12px;color:#888">아직 지정한 영역이 없어요</span>';
+    $('videoBlurChips').querySelectorAll('.vb-chip').forEach(b => b.addEventListener('click', () => { edit.splice(Number(b.dataset.i), 1); renderChips(); }));
+  }
+  function drawEditor(){
+    const cv = $('videoBlurCanvas'), c = cv.getContext('2d'), w = cv.width, h = cv.height;
+    c.fillStyle = '#111'; c.fillRect(0, 0, w, h);
+    if(video && stream) try{ c.drawImage(video, 0, 0, w, h); }catch(e){}
+    else { c.fillStyle = '#fff'; c.font = '18px sans-serif'; c.fillText('카메라 화면을 불러오는 중...', 20, 40); }
+    const rects = edit.slice();
+    if(dragFrom && dragNow) rects.push(normRect(dragFrom, dragNow));
+    if(video && stream) applyBlur(c, video, rects, w, h);
+    c.setLineDash([8, 5]); c.lineWidth = 3; c.strokeStyle = '#fde047';
+    rects.forEach((r, i) => { c.strokeRect(r.x * w + 1.5, r.y * h + 1.5, r.w * w - 3, r.h * h - 3); });
+    c.setLineDash([]);
+    edit.forEach((r, i) => { c.fillStyle = '#fde047'; c.fillRect(r.x * w + 6, r.y * h + 6, 92, 22); c.fillStyle = '#1f2a5c'; c.font = 'bold 13px sans-serif'; c.fillText(`가림 영역 ${i + 1}`, r.x * w + 12, r.y * h + 22); });
+  }
+  function normRect(a, b){ const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y); return { x, y, w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) }; }
+  function posOf(e){ const cv = $('videoBlurCanvas'), r = cv.getBoundingClientRect(); return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; }
+  async function openEditor(){
+    edit = blurRects.map(r => Object.assign({}, r));
+    $('videoBlurModal').classList.add('show');
+    renderChips();
+    if(!stream){ tempCamera = await openCamera(); }
+    clearInterval(editTimer); editTimer = setInterval(drawEditor, 100); drawEditor();
+  }
+  function closeEditor(saveIt){
+    if(saveIt){
+      blurRects = edit.filter(r => r.w > 0.02 && r.h > 0.02).slice(0, 2);
+      try{ localStorage.setItem(KEY_BLUR, JSON.stringify(blurRects)); }catch(e){}
+      if(blurRects.length && !blurOn){ blurOn = true; $('videoBlurToggle').checked = true; try{ localStorage.setItem(KEY_BLUR_ON, '1'); }catch(e){} }
+    }
+    clearInterval(editTimer); editTimer = null; dragFrom = dragNow = null; edit = null;
+    $('videoBlurModal').classList.remove('show');
+    if(tempCamera && !enabled){ closeCamera(); } tempCamera = false;
+    updateBlurInfo(); updateBadge();
+    if(typeof focusInput === 'function') focusInput();
+  }
+  $('videoBlurCanvas').addEventListener('pointerdown', e => {
+    if(!edit) return;
+    const pnt = posOf(e);
+    // 이미 그린 칸의 이름표(왼쪽 위 노란 칸)를 누르면 그 영역을 지운다
+    const cv = $('videoBlurCanvas'), w = cv.width, h = cv.height;
+    const hit = edit.findIndex(r => pnt.x * w >= r.x * w + 6 && pnt.x * w <= r.x * w + 98 && pnt.y * h >= r.y * h + 6 && pnt.y * h <= r.y * h + 28);
+    if(hit !== -1){ edit.splice(hit, 1); renderChips(); return; }
+    if(edit.length >= 2){ alert('가림 영역은 최대 2곳이에요. 노란 칸을 눌러 하나를 지운 뒤 다시 그려주세요.'); return; }
+    dragFrom = pnt; dragNow = pnt; cv.setPointerCapture(e.pointerId);
+  });
+  $('videoBlurCanvas').addEventListener('pointermove', e => { if(dragFrom) dragNow = posOf(e); });
+  $('videoBlurCanvas').addEventListener('pointerup', e => {
+    if(!dragFrom) return;
+    const r = normRect(dragFrom, posOf(e)); dragFrom = dragNow = null;
+    if(r.w > 0.02 && r.h > 0.02){ edit.push(r); renderChips(); }
+  });
+  $('videoBlurEditBtn').addEventListener('click', openEditor);
+  $('videoBlurSave').addEventListener('click', () => closeEditor(true));
+  $('videoBlurCancel').addEventListener('click', () => closeEditor(false));
+  $('videoBlurClear').addEventListener('click', () => { edit = []; renderChips(); });
+  $('videoBlurToggle').checked = blurOn;
+  $('videoBlurToggle').addEventListener('change', e => { blurOn = e.target.checked; try{ localStorage.setItem(KEY_BLUR_ON, blurOn ? '1' : '0'); }catch(e2){} updateBlurInfo(); if(blurOn && !blurRects.length) openEditor(); });
+  updateBlurInfo();
+
+  // 화면 구성
+  $('videoRecToggle').addEventListener('change', e => { setEnabled(e.target.checked); });
+  $('videoRecFolderBtn').addEventListener('click', pickFolder);
+  $('videoRecDays').value = Number(ls(KEY_DAYS)) || 30;
+  $('videoRecDays').addEventListener('change', e => { const v = Math.min(365, Math.max(1, Number(e.target.value) || 30)); e.target.value = v; ls(KEY_DAYS, String(v)); });
+  $('videoRecCam').addEventListener('change', async e => { ls(KEY_CAM, e.target.value); if(enabled && !rec){ closeCamera(); await openCamera(); updateBadge(); } });
+  // 새로고침 뒤 폴더 권한이 "다시 묻기" 상태면, 화면을 처음 클릭할 때 허용 창을 띄운다 (브라우저 규칙상 클릭이 있어야 물어볼 수 있음)
+  document.addEventListener('click', async function regrant(){ document.removeEventListener('click', regrant); if(enabled) refreshFolderLabel(true); }, { once:false });
+  window.addEventListener('beforeunload', () => { if(rec) try{ rec.stop(); }catch(e){} });
+  refreshFolderLabel(false);
+  if(ls(KEY_ON) === '1'){ $('videoRecToggle').checked = true; setEnabled(true); }
+  return {
+    onItemScan(){ if(enabled && !rec) start(); },
+    onDocumentScan(raw){ if(!rec || !cur) return; const k = docKeyFromScan(raw); if(k && k !== canonicalDocKeyJS(cur.docKey)) stop('다음 전표'); },
+    onDlv(suffix){ if(rec && cur && String(cur.suffix) === String(suffix)) stop('배송라벨 스캔'); },
+    stop, isRecording: () => !!rec,
+  };
+})();
 </script>
 </body>
 </html>

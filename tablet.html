@@ -600,8 +600,8 @@ body { padding: 0 !important; gap: 0 !important; }
     </div>
     <div id="tabletQtyBadge" style="display:none;"></div>
     <div style="display:none;">
-      <button id="bundleModeBtn">📦 묶음처리</button>
-      <label><input type="checkbox" id="bundleContinuousToggle"> 연속</label>
+      <button id="bundleModeBtn" tabindex="-1">📦 묶음처리</button>
+      <label><input type="checkbox" id="bundleContinuousToggle" tabindex="-1"> 연속</label>
     </div>
     <div id="bundleModeIndicator" style="display:none;"></div>
 
@@ -714,6 +714,12 @@ body { padding: 0 !important; gap: 0 !important; }
   <input type="number" id="labelOffsetX" value="0" step="0.5" placeholder="가로(mm)">
   <input type="number" id="labelOffsetY" value="0" step="0.5" placeholder="세로(mm)">
   <button id="testPrintBtn" type="button">테스트 인쇄</button>
+  <label style="margin-left:10px;">소리 미리듣기</label>
+  <button type="button" tabindex="-1" onclick="playOkSound()">정상</button>
+  <button type="button" tabindex="-1" onclick="playItemCompleteSound()">품목 완료</button>
+  <button type="button" tabindex="-1" onclick="playBagFullSound()">봉투 완료</button>
+  <button type="button" tabindex="-1" onclick="playCompleteSound()">검수 완료</button>
+  <button type="button" tabindex="-1" onclick="playErrSound()">오피킹</button>
 </div>
 
 <div class="overlay" id="overlay">
@@ -911,7 +917,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // 스캔 처리 공통 함수
   function handleTabletScan() {
-    const raw = tabletInput.value.trim();
+    const raw = pickScanPartFromTabbed(tabletInput.value).trim();
     if (!raw) return;
     tabletInput.value = '';
 
@@ -1002,9 +1008,10 @@ document.addEventListener('DOMContentLoaded', function() {
   // keydown (일반 키보드 / 대부분 스캐너)
   // 박스합본 QR처럼 중간에 줄바꿈이 있으면 엔터가 여러 번 온다 → 80ms 기다렸다가 한 번에 묶어서 처리
   let tabletLineBuffer = [], tabletJoinTimer = null;
+  guardTabKey(tabletInput);
   function flushTabletBuffer(){
     tabletJoinTimer = null;
-    const lines = tabletLineBuffer.map(l => l.trim()).filter(Boolean);
+    const lines = tabletLineBuffer.map(l => pickScanPartFromTabbed(l).trim()).filter(Boolean);
     tabletLineBuffer = [];
     if (!lines.length) return;
     if (lines.length === 1) { tabletInput.value = lines[0]; handleTabletScan(); return; }
@@ -1689,10 +1696,12 @@ function ensureAudio(){
   }
   if(audioCtx.state === 'suspended') audioCtx.resume();
 }
+let soundBusyUntil = 0; // 지금 나고 있는 소리가 끝나는 시각 (봉투 완료음이 다른 소리와 겹치지 않게 뒤에 이어서 내기 위함)
 function beep(freq, duration, type='sine', delay=0, gain=0.28){
   if(!soundOn) return;
   ensureAudio();
   const t0 = audioCtx.currentTime + delay;
+  soundBusyUntil = Math.max(soundBusyUntil, t0 + duration);
   const osc = audioCtx.createOscillator();
   const g = audioCtx.createGain();
   osc.type = type;
@@ -1728,21 +1737,36 @@ function playErrSound(){
   osc.connect(g); g.connect(compressor);
   osc.start(t0); osc.stop(t0 + dur + 0.02);
 }
-function playCompleteSound(){
+// 10/22: 소리가 다 비슷하게 올라가는 음이라 헷갈려서, 상황마다 리듬·음높이를 확실히 다르게 바꿈
+//  - 정상 스캔 : 짧게 "띵동" (올라가는 2음) - 그대로
+//  - 품목 완료 : 같은 높은 음 두 번 "딩! 딩!" (종소리처럼 길게 울림)
+//  - 봉투 완료 : 빠른 "삐삐삐삐" 4번 + 낮고 긴 "뿌-" (다른 소리와 리듬이 완전히 다름, 볼륨 크게)
+//  - 검수 완료 : 5음 팡파레 (가장 길고 화려함)
+//  - 오피킹    : 사이렌 - 그대로
+function bell(freq, dur, delay, gain){
+  beep(freq, dur, 'sine', delay, gain);
+  beep(freq * 2, dur * 0.6, 'sine', delay, gain * 0.25); // 배음을 살짝 섞어서 종소리처럼
+}
+function playItemCompleteSound(){
+  bell(1760, 0.45, 0, 0.7);
+  bell(1760, 0.6, 0.22, 0.7);
+}
+function playCompleteSound(){ // 검수 전체 완료
   [523,659,784,1046,1318].forEach((f,i)=> beep(f, 0.24, 'triangle', i*0.13, 0.6));
 }
 function playBagFullSound(){
-  // 봉투 완료 알림: 다른 소리보다 확실히 크게 들리도록, 이 소리 재생 동안만 전체 볼륨을 순간적으로 더 키운다
+  // 봉투 완료: 이 소리 동안만 전체 볼륨을 순간적으로 더 키운다
   if(!soundOn) return;
   ensureAudio();
   const prevGain = masterGain.gain.value;
-  masterGain.gain.setValueAtTime(2.4, audioCtx.currentTime);
-  beep(880, 0.20, 'square', 0.00, 1.0);
-  beep(1318, 0.26, 'square', 0.16, 1.0);
-  beep(1568, 0.30, 'square', 0.34, 1.0);
+  const off = Math.max(0, soundBusyUntil - audioCtx.currentTime) + 0.05; // 품목완료음 등이 나는 중이면 끝난 뒤에 이어서
+  masterGain.gain.setValueAtTime(2.4, audioCtx.currentTime + off);
+  for(let i = 0; i < 4; i++) beep(740, 0.07, 'square', off + i * 0.11, 1.0); // 삐삐삐삐
+  beep(392, 0.5, 'square', off + 0.5, 1.0);                                    // 뿌-
+  beep(196, 0.5, 'triangle', off + 0.5, 0.8);
   setTimeout(()=>{
     if(masterGain) masterGain.gain.setValueAtTime(prevGain, audioCtx.currentTime);
-  }, 750);
+  }, Math.round((off + 1.1) * 1000));
 }
 
 /* ===================== 음성 안내 (여성 목소리, 브라우저 내장 TTS) ===================== */
@@ -1795,11 +1819,46 @@ function anyModalOpen(){
          document.getElementById('pasteOverlay').classList.contains('show') ||
          document.getElementById('confirmOverlay').classList.contains('show');
 }
+// 10/21: 일부 바코드(겨울 신상 등)는 내용 중간에 탭(Tab) 문자가 들어있다. 브라우저는 탭을 "다음 버튼으로 이동"으로 처리해서
+// 포커스가 [묶음처리]/[연속]으로 넘어가고, 뒤따라오는 엔터·스페이스가 그 버튼을 눌러버렸다. → 스캔칸에서는 탭을 막고 구분자로만 남긴다.
+function pickScanPartFromTabbed(line){
+  if(String(line).indexOf('\t') === -1) return line;
+  const parts = String(line).split('\t').map(x => x.trim()).filter(Boolean);
+  if(!parts.length) return '';
+  const known = parts.find(x => x.indexOf('/') !== -1 || /^WK[^0-9]*\d+$/i.test(x) || /^dlv\|/i.test(x) || codeIndex[resolveScannedCode(stripOrderCodeSuffix(x.toUpperCase())).resolved]);
+  if(known) return known;
+  const pat = parts.find(x => PRODUCT_CODE_PATTERN.test(x.toUpperCase()));
+  return pat || parts[0];
+}
+function guardTabKey(inputEl){
+  inputEl.addEventListener('keydown', (e)=>{
+    if(e.key !== 'Tab') return;
+    e.preventDefault(); // 포커스가 다른 버튼으로 넘어가지 않게
+    inputEl.value += '\t';
+  });
+}
+// 혹시라도 포커스가 버튼/체크박스에 가 있을 때 스캐너 입력(엔터·스페이스·글자)이 그 버튼을 누르지 않도록, 스캔칸으로 돌려보낸다
+document.addEventListener('keydown', (e)=>{
+  const el = document.activeElement;
+  if(!el || anyModalOpen()) return;
+  const tag = el.tagName.toLowerCase();
+  const isToggle = tag === 'button' || (tag === 'input' && /^(checkbox|radio|button|submit)$/i.test(el.type || ''));
+  if(!isToggle) return;
+  const target = document.getElementById('tabletScanInput') || scanInput;
+  if(!target) return;
+  if(e.key === 'Enter' || e.key === ' ' || e.key === 'Tab' || e.key.length === 1){
+    e.preventDefault(); e.stopPropagation();
+    target.focus();
+    if(e.key === 'Enter') target.dispatchEvent(new KeyboardEvent('keydown', { key:'Enter', bubbles:true }));
+    else if(e.key.length === 1 && e.key !== ' ') target.value += e.key;
+  }
+}, true);
 function isEditableFocused(){
   const el = document.activeElement;
   if(!el) return false;
   const tag = el.tagName.toLowerCase();
   const tabletInput = document.getElementById('tabletScanInput');
+  if(tag === 'input' && /^(checkbox|radio|button|submit|reset|file|range|color)$/i.test(el.type || '')) return false; // 10/21: 체크박스(연속 등)에 포커스가 남아 스캔이 안 먹던 문제
   return (tag==='input' || tag==='textarea' || tag==='select') && el !== scanInput && el !== tabletInput;
 }
 function focusInput(){
@@ -2146,7 +2205,7 @@ function processScan(rawCode, overrideQty){
     const done = item.scannedQty >= item.orderQty;
     showBanner('ok', '정상피킹', displayCode, `${item.name} / ${item.spec}  (${item.scannedQty}/${item.orderQty})`, '✅');
     addLog(timeStr, displayCode, true, (done ? '해당 품번 완료' : `${item.scannedQty}/${item.orderQty}`));
-    if(done){ playCompleteSound(); speakKorean('품목 완료'); } else playOkSound();
+    if(done){ playItemCompleteSound(); speakKorean('품목 완료'); } else playOkSound();
     if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
   } else {
     const overBy = bulkQty - remaining;
@@ -2271,7 +2330,7 @@ function adjustLastScanned(amount){
     const done = item.scannedQty >= item.orderQty;
     showBanner('ok', '정상피킹', item.code, `${item.name} / ${item.spec}  (+${amount}) → ${item.scannedQty}/${item.orderQty}`, '✅');
     addLog(timeStr, item.code, true, `수량버튼 +${amount}${done ? ' (완료)' : ''} (${item.scannedQty}/${item.orderQty})`);
-    if(done){ playCompleteSound(); speakKorean('품목 완료'); } else playOkSound();
+    if(done){ playItemCompleteSound(); speakKorean('품목 완료'); } else playOkSound();
     if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
   } else {
     const overBy = amount - remaining;
@@ -2364,7 +2423,7 @@ function adjustLastScanned(amount){
     const done = item.scannedQty >= item.orderQty;
     showBanner('ok', '정상피킹', item.code, `${item.name} / ${item.spec}  (+${amount}) → ${item.scannedQty}/${item.orderQty}`, '✅');
     addLog(timeStr, item.code, true, `수량버튼 +${amount}${done ? ' (완료)' : ''} (${item.scannedQty}/${item.orderQty})`);
-    if(done){ playCompleteSound(); speakKorean('품목 완료'); } else playOkSound();
+    if(done){ playItemCompleteSound(); speakKorean('품목 완료'); } else playOkSound();
     if(bagsFilled > 0){ announceBagFilled(); maybePrintCompletedBagsImmediately(); }
   } else {
     const overBy = amount - remaining;
