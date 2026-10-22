@@ -498,12 +498,14 @@
 </div>
 
 <!-- 오피킹/초과스캔 전체화면 경고 배너 (5초 후 자동 사라짐) -->
-<div id="mispickFullOverlay" style="display:none; position:fixed; inset:0; z-index:9997; background:rgba(180,0,0,0.97); color:#fff; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:32px; pointer-events:none;">
+<div id="mispickFullOverlay" style="display:none; position:fixed; inset:0; z-index:9997; background:rgba(180,0,0,0.97); color:#fff; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:32px;">
   <div id="mispickOverlayIcon" style="font-size:72px; line-height:1;">⚠️</div>
   <div id="mispickOverlayTitle" style="font-size:36px; font-weight:900; margin-top:16px; letter-spacing:1px;">오피킹</div>
   <div id="mispickOverlayCode" style="font-size:28px; font-weight:700; margin-top:12px; font-family:monospace; opacity:0.9;"></div>
   <div id="mispickOverlayDesc" style="font-size:20px; margin-top:10px; opacity:0.85; max-width:600px; line-height:1.5;"></div>
-  <div id="mispickOverlayTimer" style="font-size:16px; margin-top:24px; opacity:0.6;"></div>
+  <div id="mispickOverlayTimer" style="font-size:16px; margin-top:24px; opacity:0.75;"></div>
+  <button type="button" id="mispickConfirmBtn" tabindex="-1" style="margin-top:22px; padding:16px 64px; font-size:26px; font-weight:900; border:0; border-radius:14px; background:#fff; color:#B91C1C; cursor:pointer; box-shadow:0 6px 18px rgba(0,0,0,.3);">확인</button>
+  <div id="mispickBlockedMsg" style="font-size:16px; margin-top:12px; min-height:22px; font-weight:800; color:#fde047;"></div>
 </div>
 <style>
 @keyframes workerReminderBlink { 0%,100% { opacity:1; } 50% { opacity:0.55; } }
@@ -1686,6 +1688,7 @@ function flushScanBuffer(){
   const lines = scanLineBuffer.map(l => pickScanPartFromTabbed(l).trim()).filter(Boolean);
   scanLineBuffer = [];
   if(!lines.length) return;
+  if(blockedByMispick()) return;
   if(lines.length === 1) handleScanRaw(lines[0]);
   else handleMultiLineScan(lines);
 }
@@ -1752,6 +1755,7 @@ function addScreenOnlyLog(code, note, label){
 }
 
 function handleScanRaw(raw){
+  if(blockedByMispick()) return;
   {
     raw = String(raw || '').trim();
     if(!raw) return;
@@ -1826,6 +1830,7 @@ let lastScannedItem = null;
 const PRODUCT_CODE_LEN = 11; // 기본 품목코드 자릿수 (예: NTA8000A117)
 
 function processScan(rawCode){
+  if(blockedByMispick()) return;
   if(currentWorker === '' && !adminForceUnlocked){
     document.getElementById('workerBlockOverlay').style.display = 'flex';
     playErrSound();
@@ -1924,7 +1929,7 @@ function processScan(rawCode){
     errCount += bulkQty;
     errorSkuDetails.push({ code: item.code, qty: bulkQty, type: '초과스캔(완료됨)' });
     showBanner('err', '오피킹', displayCode, `${item.name} / ${item.spec} — 주문 수량(${item.orderQty}개)을 초과 스캔했습니다`, '⚠️');
-    showMispickOverlay('초과 스캔', displayCode, `${item.name} / ${item.spec} — 주문 수량(${item.orderQty}개) 초과`);
+    showMispickOverlay('초과 스캔', displayCode, `${item.name} / ${item.spec} — 주문 수량(${item.orderQty}개) 초과`, item, bulkQty);
     addLog(timeStr, displayCode, false, `초과 스캔 (${item.scannedQty}/${item.orderQty})`);
     playErrSound();
     speakKorean(`${bulkQty}개 과송`);
@@ -1975,6 +1980,7 @@ function processScan(rawCode){
       }
     }
     showBanner('err', '오피킹', displayCode, `${item.name} / ${item.spec} — 남은 수량 ${remaining}개인데 ${bulkQty}개가 스캔됐습니다 (초과 ${overBy}개)`, '⚠️');
+    showMispickOverlay('초과 스캔', displayCode, `${item.name} / ${item.spec} — 남은 ${remaining}개인데 ${bulkQty}개 스캔 (초과 ${overBy}개)`, item, overBy);
     addLog(timeStr, displayCode, false, `박스 수량 ${bulkQty} 스캔 → ${remaining}개만 반영, ${overBy}개 초과`);
     playErrSound();
     speakKorean(`${overBy}개 과송`);
@@ -2044,28 +2050,43 @@ function formatMsShort(ms){
 
 // 오피킹/초과스캔 발생 시 화면 꽉 채운 경고 배너 5초 표시
 let mispickOverlayTimer = null;
-function showMispickOverlay(title, code, desc) {
+// 10/22: 오피킹·초과스캔 등은 [확인]을 마우스로 누를 때까지 다음 스캔을 막는다.
+// 초과스캔이면 그동안 그 품목 스캔 수량을 잠깐 올려서 보여주고(예: 5/4), [확인]을 누르면 원래대로(4/4) 되돌린다.
+let mispickBlocking = false;
+function showMispickOverlay(title, code, desc, overItem, overQty) {
   const overlay = document.getElementById('mispickFullOverlay');
   if (!overlay) return;
   document.getElementById('mispickOverlayTitle').textContent = title;
   document.getElementById('mispickOverlayCode').textContent = code;
   document.getElementById('mispickOverlayDesc').textContent = desc;
-  overlay.style.display = 'flex';
-  // 5초 카운트다운
-  let remaining = 5;
-  const timerEl = document.getElementById('mispickOverlayTimer');
-  timerEl.textContent = remaining + '초 후 사라집니다';
+  document.getElementById('mispickOverlayTimer').textContent = '상품을 다시 확인하고 [확인]을 마우스로 눌러야 다음 스캔이 돼요';
+  document.getElementById('mispickBlockedMsg').textContent = '';
   clearInterval(mispickOverlayTimer);
-  mispickOverlayTimer = setInterval(function() {
-    remaining--;
-    if (remaining <= 0) {
-      clearInterval(mispickOverlayTimer);
-      overlay.style.display = 'none';
-    } else {
-      timerEl.textContent = remaining + '초 후 사라집니다';
-    }
-  }, 1000);
+  if(overItem && overQty > 0){
+    overItem.overShown = (overItem.overShown || 0) + overQty;
+    try{ renderTable(); updateProgress(); }catch(e){}
+  }
+  mispickBlocking = true;
+  overlay.style.display = 'flex';
 }
+function confirmMispick(){
+  const overlay = document.getElementById('mispickFullOverlay');
+  if(overlay) overlay.style.display = 'none';
+  mispickBlocking = false;
+  let changed = false;
+  items.forEach(it => { if(it.overShown){ it.overShown = 0; changed = true; } });
+  if(changed){ try{ renderTable(); updateProgress(); }catch(e){} }
+  if(typeof focusInput === 'function') focusInput();
+}
+// 막혀 있는 동안 스캐너로 들어온 입력: 처리하지 않고 경고만
+function blockedByMispick(){
+  if(!mispickBlocking) return false;
+  const m = document.getElementById('mispickBlockedMsg');
+  if(m){ m.textContent = '⛔ [확인]을 먼저 눌러주세요 — 방금 찍은 건 반영되지 않았어요'; }
+  try{ playErrSound(); }catch(e){}
+  return true;
+}
+document.getElementById('mispickConfirmBtn').addEventListener('click', confirmMispick);
 
 function showBanner(kind, verdict, code, descText, icon){
   statusBanner.className = `status-banner ${kind}`;
@@ -2285,6 +2306,7 @@ function renderTable(){
   updateMiniStats();
 }
 function statusBadge(it){
+  if(it.overShown) return '<span class="badge over">초과</span>';
   if(it.scannedQty === 0) return '<span class="badge wait">대기</span>';
   if(it.scannedQty < it.orderQty) return '<span class="badge partial">진행중</span>';
   if(it.scannedQty === it.orderQty) return '<span class="badge done">완료</span>';
@@ -2295,7 +2317,7 @@ function rowHtml(it){
     <td class="code-cell">${it.code}</td>
     <td class="name-cell"><span class="nm">${it.name}</span>${it.spec ? `<span class="sp">${it.spec}</span>` : ''}</td>
     <td class="qty-cell">${it.orderQty}</td>
-    <td class="qty-cell">${it.scannedQty}</td>
+    <td class="qty-cell"${it.overShown ? ' style="color:#DC2626;font-weight:900"' : ''}>${it.scannedQty + (it.overShown || 0)}</td>
     <td style="text-align:center;">${statusBadge(it)}</td>
   `;
 }
@@ -2313,8 +2335,9 @@ function updateRow(it){
 function updateProgress(){
   const orderTotal = items.reduce((s,it)=>s+it.orderQty,0);
   const scannedTotal = items.reduce((s,it)=>s+Math.min(it.scannedQty,it.orderQty),0);
+  const overTotal = items.reduce((s,it)=>s+(it.overShown||0),0);
   document.getElementById('orderQtyTotal').textContent = orderTotal;
-  document.getElementById('scannedQtyTotal').textContent = scannedTotal;
+  document.getElementById('scannedQtyTotal').textContent = scannedTotal + overTotal;
   const pct = orderTotal === 0 ? 0 : Math.round((scannedTotal/orderTotal)*100);
   document.getElementById('barFill').style.width = pct + '%';
 }
@@ -4658,7 +4681,7 @@ const videoRec = (function(){
   }
   const MAX_MS = 20 * 60 * 1000, FPS = 12, W = 640, H = 480, BPS = 600000;
   let enabled = false, dirHandle = null, stream = null, video = null, canvas = null, ctx = null, drawTimer = null;
-  let rec = null, chunks = [], cur = null, maxTimer = null, uiTimer = null;
+  let rec = null, cur = null, maxTimer = null, uiTimer = null;
   const $ = id => document.getElementById(id);
   const p2 = n => String(n).padStart(2, '0');
   function ls(k, v){ try{ if(v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); }catch(e){ return null; } }
@@ -4703,19 +4726,23 @@ const videoRec = (function(){
     try{ ctx.drawImage(video, 0, 0, W, H); }catch(e){}
     if(blurOn && blurRects.length) applyBlur(ctx, video, blurRects, W, H);
     const now = new Date();
-    let prog = '';
+    // 10/22: 오른쪽 위 큰 카운트 — 진행중 "최종 100개 / 23개 진행중", 다 찍으면 "… 완료"
+    let prog = '', progColor = '#fde047';
     try{
       if(items.length){
-        const scannedSum = items.reduce((a, it) => a + Math.min(it.scannedQty, it.orderQty), 0);
-        // 10/22: 영상에는 주문수량(/10) 없이 실제로 찍은 개수만 보여준다 (미스캔 제외해도 "9개"로만 보이게)
-        prog = `   스캔 ${scannedSum}개`;
+        const orderSum = items.reduce((a, it) => a + it.orderQty, 0);
+        const scannedSum = items.reduce((a, it) => a + Math.min(it.scannedQty, it.orderQty) + (it.overShown || 0), 0);
+        // 미스캔 제외로 끝내면 주문수량이 찍은 수량으로 바뀌므로 그냥 "최종 23개 / 23개 완료"로 보인다 (미스캔 여부는 영상에 표시 안 함)
+        if(scannedSum >= orderSum && !items.some(it => it.overShown)){ prog = `최종 ${orderSum}개 / ${scannedSum}개 완료`; progColor = '#4ade80'; }
+        else { prog = `최종 ${orderSum}개 / ${scannedSum}개 진행중`; progColor = items.some(it => it.overShown) ? '#fca5a5' : '#fde047'; }
       }
     }catch(e){}
     const l1 = cur ? `${cur.docKey}   ${cur.company}` : '';
-    const l2 = `${now.getFullYear()}-${p2(now.getMonth()+1)}-${p2(now.getDate())} ${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}   ${cur ? (currentWorker || cur.worker) : ''}${prog}`;
+    const l2 = `${now.getFullYear()}-${p2(now.getMonth()+1)}-${p2(now.getDate())} ${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}   ${cur ? (currentWorker || cur.worker) : ''}`;
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, 54);
     ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(l1, 10, 23);
     ctx.font = '16px sans-serif'; ctx.fillText(l2, 10, 45);
+    if(prog){ ctx.textAlign = 'right'; ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = progColor; ctx.fillText(prog, W - 40, 36); ctx.textAlign = 'left'; }
     ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(W - 22, 22, 8, 0, Math.PI * 2); ctx.fill();
     // 방금 찍은 품목 (4초 동안 아래쪽에 크게)
     if(lastScan && Date.now() - lastScan.at < 4000){
@@ -4735,20 +4762,39 @@ const videoRec = (function(){
     const bulk = (c.match(/\[(?:묶음처리|박스\/마대 수량) (\d+)/) || [])[1];
     const skip = n.indexOf('미스캔 제외') === 0;
     if(skip) return; // 영상에는 실제로 찍은 것만 보이게 — 미스캔 제외(주문수량) 안내는 띄우지 않음
-    const l1 = `${ok ? '방금' : (skip ? '미스캔 제외' : '⚠ 오피킹')}: ${base}${bulk ? '  +' + bulk + '개' : ''}`;
-    const l2 = skip ? n : (it ? `${it.name || ''} / ${it.spec || ''}   이 품목 ${Math.min(it.scannedQty, it.orderQty)}개` : '') + (ok ? '' : '   ' + n);
+    const shown = it ? Math.min(it.scannedQty, it.orderQty) + (it.overShown || 0) : 0;
+    const itemDone = it && ok && it.scannedQty >= it.orderQty;
+    const l1 = `${ok ? '방금' : '⚠ 오피킹'}: ${base}${bulk ? '  +' + bulk + '개 (묶음)' : ''}${itemDone ? '   ✔ 이 품목 완료' : ''}`;
+    const l2 = (it ? `${it.name || ''} / ${it.spec || ''}   이 품목 ${it.orderQty}개 중 ${shown}개 스캔` : '') + (ok ? '' : '   ' + n);
     lastScan = { at: Date.now(), ok: !!ok, skip, l1, l2: l2.trim() };
+  }
+  // 화면 그리기 박자: 일반 setInterval은 창이 가려지거나 최소화되면 크롬이 1초에 1번 이하로 늦춰서 영상이 끊긴다.
+  // 별도 작업자(Worker)가 박자를 보내면 이런 늦춤을 덜 받는다. Worker를 못 쓰면 예전 방식으로.
+  let tickWorker = null;
+  function startTicker(){
+    stopTicker();
+    try{
+      const src = `let t=null;onmessage=e=>{clearInterval(t);if(e.data>0)t=setInterval(()=>postMessage(0),e.data);};`;
+      tickWorker = new Worker(URL.createObjectURL(new Blob([src], { type:'text/javascript' })));
+      tickWorker.onmessage = () => { draw(); if(cur) cur.frames++; };
+      tickWorker.postMessage(Math.round(1000 / FPS));
+    }catch(e){ tickWorker = null; drawTimer = setInterval(() => { draw(); if(cur) cur.frames++; }, Math.round(1000 / FPS)); }
+  }
+  function stopTicker(){
+    if(tickWorker){ try{ tickWorker.postMessage(0); tickWorker.terminate(); }catch(e){} tickWorker = null; }
+    clearInterval(drawTimer); drawTimer = null;
   }
   function start(){
     if(!enabled || rec || !stream || !currentDocumentKey || !items.length || typeof MediaRecorder === 'undefined') return;
     cur = { docKey: currentDocumentKey, suffix: extractDocumentSuffixJS(currentDocumentKey), company: (($('companyNameInput') || {}).value || '').trim(), worker: currentWorker || '', startAt: new Date() };
     canvas = canvas || document.createElement('canvas'); canvas.width = W; canvas.height = H; ctx = canvas.getContext('2d');
-    draw(); drawTimer = setInterval(draw, Math.round(1000 / FPS));
+    cur.frames = 0; cur.chunks = [];
+    draw(); startTicker();
     const mime = ['video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) || '';
-    chunks = [];
     try{ rec = new MediaRecorder(canvas.captureStream(FPS), mime ? { mimeType:mime, videoBitsPerSecond:BPS } : { videoBitsPerSecond:BPS }); }
-    catch(e){ setStatus('녹화를 시작할 수 없어요: ' + (e.message || e), true); clearInterval(drawTimer); rec = null; cur = null; return; }
-    rec.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
+    catch(e){ setStatus('녹화를 시작할 수 없어요: ' + (e.message || e), true); stopTicker(); rec = null; cur = null; return; }
+    const myChunks = cur.chunks; // 녹화마다 자기 조각 목록을 따로 가진다 (다음 녹화가 시작돼도 섞이지 않게)
+    rec.ondataavailable = e => { if(e.data && e.data.size) myChunks.push(e.data); };
     rec.start(5000);
     maxTimer = setTimeout(() => stop('20분 초과'), MAX_MS);
     uiTimer = setInterval(updateBadge, 1000); updateBadge();
@@ -4756,11 +4802,12 @@ const videoRec = (function(){
   function stop(reason){
     if(!rec) return Promise.resolve();
     const r = rec, info = cur; rec = null; cur = null;
-    clearTimeout(maxTimer); clearInterval(uiTimer); clearInterval(drawTimer);
+    clearTimeout(maxTimer); clearInterval(uiTimer); stopTicker();
+    info.stopAt = new Date();
     updateBadge();
     return new Promise(resolve => {
       r.onstop = async () => {
-        let blob = new Blob(chunks, { type:'video/webm' }); chunks = [];
+        let blob = new Blob(info.chunks || [], { type:'video/webm' }); info.chunks = null;
         // 브라우저 녹화 파일엔 길이 정보가 없다. 10/22: 예전 방식(fix-webm-duration)은 파일 구조를 깨뜨려서
         // 일부 플레이어·구글드라이브에서 "38초짜리인데 5초에서 끝나는" 문제가 있었음 → 파일 머리 정보를 제대로 다시 만드는 방식으로 교체
         blob = await makeSeekable(blob);
@@ -4774,10 +4821,22 @@ const videoRec = (function(){
       if(!window.EBML || !EBML.Reader) return blob;
       const buf = await blob.arrayBuffer();
       const reader = new EBML.Reader(); reader.logging = false; reader.drop_default_duration = false;
-      new EBML.Decoder().decode(buf).forEach(el => reader.read(el));
+      // 10/22: 라이브러리 계산은 "마지막 묶음(클러스터)의 시작 시각"까지만 길이로 잡아서, 영상 대부분이 한 묶음에 들어가면
+      // 길이가 4초처럼 짧게 적히고 플레이어가 거기서 멈췄다 → 실제 마지막 화면의 시각으로 길이를 직접 계산한다
+      let clusterTs = 0, maxTs = 0;
+      new EBML.Decoder().decode(buf).forEach(el => {
+        reader.read(el);
+        if(el.name === 'Timestamp' || el.name === 'Timecode'){ clusterTs = Number(el.value) || 0; }
+        else if((el.name === 'SimpleBlock' || el.name === 'Block') && el.data){
+          const d = el.data, off = (d[0] & 0x80) ? 1 : (d[0] & 0x40) ? 2 : (d[0] & 0x20) ? 3 : 4;
+          let rel = (d[off] << 8) | d[off + 1]; if(rel & 0x8000) rel -= 0x10000;
+          if(clusterTs + rel > maxTs) maxTs = clusterTs + rel;
+        }
+      });
       reader.stop();
-      if(!reader.duration) return blob;
-      const head = EBML.tools.makeMetadataSeekable(reader.metadatas, reader.duration, reader.cues);
+      const dur = Math.max(reader.duration || 0, maxTs + Math.round(1000 / FPS));
+      if(!dur) return blob;
+      const head = EBML.tools.makeMetadataSeekable(reader.metadatas, dur, reader.cues);
       return new Blob([head, buf.slice(reader.metadataSize)], { type:'video/webm' });
     }catch(e){ console.warn('영상 길이 정보 넣기 실패(원본 그대로 저장):', e); return blob; }
   }
@@ -4787,6 +4846,8 @@ const videoRec = (function(){
     const d = info.startAt, day = `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;
     const name = `${day}_${p2(d.getHours())}${p2(d.getMinutes())}_전표${safe(info.suffix)}_${safe(info.company)}_${safe(info.worker || currentWorker)}.webm`;
     const mb = (blob.size / 1048576).toFixed(1);
+    const secs = Math.round(((info.stopAt || new Date()) - info.startAt) / 1000);
+    const lenTxt = `${Math.floor(secs / 60)}분 ${secs % 60}초 · 화면 ${info.frames || 0}장`; // 화면 장수가 (초×12)보다 훨씬 적으면 그 사이 창이 가려져 녹화가 끊긴 것
     try{
       const dir = await refreshFolderLabel(false);
       if(dir){
@@ -4795,13 +4856,13 @@ const videoRec = (function(){
         const sub = await dir.getDirectoryHandle(vendor, { create:true });
         const fh = await sub.getFileHandle(name, { create:true });
         const w = await fh.createWritable(); await w.write(blob); await w.close();
-        addScreenOnlyLog('🎥 영상 저장', `${vendor}/${name} (${mb}MB · ${reason})`, '🎥');
+        addScreenOnlyLog('🎥 영상 저장', `${vendor}/${name} (${lenTxt} · ${mb}MB · ${reason})`, '🎥');
         cleanup(dir);
         enqueue(blob, info, name, vendor);
       } else {
         const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
         setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 10000);
-        addScreenOnlyLog('🎥 영상 저장', `${name} (${mb}MB · 다운로드 폴더 · ${reason})`, '🎥');
+        addScreenOnlyLog('🎥 영상 저장', `${name} (${lenTxt} · ${mb}MB · 다운로드 폴더 · ${reason})`, '🎥');
         enqueue(blob, info, name, sanitizeFilename(String(info.company || '').replace(/\s*\(도착보장\)\s*$/, '')));
       }
     }catch(e){ addScreenOnlyLog('🎥 영상 저장 실패', String(e.message || e)); }
