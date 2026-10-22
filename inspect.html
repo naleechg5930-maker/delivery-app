@@ -664,6 +664,9 @@
   <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-size:12px; margin-left:8px;"><input type="checkbox" id="videoBlurToggle" tabindex="-1"> 😶 얼굴 가림</label>
   <button type="button" id="videoBlurEditBtn" tabindex="-1">가림 영역 지정</button>
   <span id="videoBlurInfo" class="vr-folder">영역 없음</span>
+  <label style="margin-left:8px;">☁ 영상 업로드 주소</label>
+  <input type="text" id="videoUploadUrl" placeholder="검수영상업로드 웹앱 주소 (비우면 드라이브 업로드 안 함)" style="width:300px">
+  <span id="videoUploadInfo" class="vr-folder"></span>
   <span id="videoRecStatus" class="vr-status"></span>
 </div>
 <div class="vb-modal" id="videoBlurModal">
@@ -1501,7 +1504,7 @@ function playErrSound(){
 }
 // 10/22: 소리가 다 비슷하게 올라가는 음이라 헷갈려서, 상황마다 리듬·음높이를 확실히 다르게 바꿈
 //  - 정상 스캔 : 짧게 "띵동" (올라가는 2음) - 그대로
-//  - 품목 완료 : 같은 높은 음 두 번 "딩! 딩!" (종소리처럼 길게 울림)
+//  - 품목 완료 : 빠르게 올라가는 경쾌한 "띠리링!"
 //  - 봉투 완료 : 빠른 "삐삐삐삐" 4번 + 낮고 긴 "뿌-" (다른 소리와 리듬이 완전히 다름, 볼륨 크게)
 //  - 검수 완료 : 5음 팡파레 (가장 길고 화려함)
 //  - 오피킹    : 사이렌 - 그대로
@@ -1510,8 +1513,9 @@ function bell(freq, dur, delay, gain){
   beep(freq * 2, dur * 0.6, 'sine', delay, gain * 0.25); // 배음을 살짝 섞어서 종소리처럼
 }
 function playItemCompleteSound(){
-  bell(1760, 0.45, 0, 0.7);
-  bell(1760, 0.6, 0.22, 0.7);
+  // 10/22: 경쾌하게 — 빠르게 올라가는 "띠리링!" (도-미-솔-높은도)
+  [1046, 1318, 1568, 2093].forEach((f, i) => beep(f, i === 3 ? 0.28 : 0.1, 'triangle', i * 0.065, 0.6));
+  beep(2093, 0.3, 'sine', 0.195, 0.25); // 마지막 음에 반짝임
 }
 function playCompleteSound(){ // 검수 전체 완료
   [523,659,784,1046,1318].forEach((f,i)=> beep(f, 0.24, 'triangle', i*0.13, 0.6));
@@ -4636,8 +4640,8 @@ setInterval(refreshRemainingWorkStatus, 180000); // 3분마다 - 서버 부하�
 /* ===================== 검수 영상 녹화 (10/22) =====================
    첫 상품 스캔 → 녹화 시작 → 배송라벨(DLV) 스캔 → 저장.
    다른 전표를 찍거나 20분이 지나도 그때까지 저장. 영상 위쪽에 전표번호·업체·시간·작업자·진행수량을 글자로 넣는다.
-   저장: [저장 폴더 선택]으로 고른 폴더 안에 날짜별 폴더(2026-10-22)로. 폴더를 안 골랐으면 다운로드 폴더로.
-   보관일이 지난 날짜 폴더는 저장할 때 자동으로 지운다. */
+   저장: [저장 폴더 선택]으로 고른 폴더 안에 업체명 폴더(예: 에이블리(오더))로. 폴더를 안 골랐으면 다운로드 폴더로.
+   보관일이 지난 영상(파일 이름 앞 날짜 기준)은 저장할 때 자동으로 지운다. */
 const videoRec = (function(){
   const KEY_ON = 'videoRecOn', KEY_DAYS = 'videoRecKeepDays', KEY_CAM = 'videoRecCamId', KEY_BLUR_ON = 'videoBlurOn', KEY_BLUR = 'videoBlurRects';
   let blurOn = false, blurRects = []; // [{x,y,w,h}] 화면 비율(0~1)
@@ -4700,13 +4704,40 @@ const videoRec = (function(){
     if(blurOn && blurRects.length) applyBlur(ctx, video, blurRects, W, H);
     const now = new Date();
     let prog = '';
-    try{ if(items.length) prog = `   진행 ${items.reduce((a, it) => a + Math.min(it.scannedQty, it.orderQty), 0)}/${items.reduce((a, it) => a + it.orderQty, 0)}`; }catch(e){}
+    try{
+      if(items.length){
+        const scannedSum = items.reduce((a, it) => a + Math.min(it.scannedQty, it.orderQty), 0);
+        // 10/22: 영상에는 주문수량(/10) 없이 실제로 찍은 개수만 보여준다 (미스캔 제외해도 "9개"로만 보이게)
+        prog = `   스캔 ${scannedSum}개`;
+      }
+    }catch(e){}
     const l1 = cur ? `${cur.docKey}   ${cur.company}` : '';
     const l2 = `${now.getFullYear()}-${p2(now.getMonth()+1)}-${p2(now.getDate())} ${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}   ${cur ? (currentWorker || cur.worker) : ''}${prog}`;
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, 54);
     ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(l1, 10, 23);
     ctx.font = '16px sans-serif'; ctx.fillText(l2, 10, 45);
     ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(W - 22, 22, 8, 0, Math.PI * 2); ctx.fill();
+    // 방금 찍은 품목 (4초 동안 아래쪽에 크게)
+    if(lastScan && Date.now() - lastScan.at < 4000){
+      ctx.fillStyle = lastScan.ok ? 'rgba(21,128,61,0.88)' : (lastScan.skip ? 'rgba(194,65,12,0.9)' : 'rgba(185,28,28,0.9)'); ctx.fillRect(0, H - 62, W, 62);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 22px sans-serif'; ctx.fillText(lastScan.l1, 10, H - 36);
+      ctx.font = '16px sans-serif'; ctx.fillText(lastScan.l2, 10, H - 12);
+    }
+  }
+  let lastScan = null;
+  // 검수 로그에 한 줄 남을 때마다(정상/오피킹) 영상 아래쪽에 "방금 찍은 품목"을 띄운다
+  function noteScan(code, ok, note){
+    if(!rec) return;
+    const c = String(code || ''), n = String(note || '');
+    if(c.indexOf('WK:') === 0 || c.indexOf('DLV|') === 0 || n.indexOf('전표 조회') === 0) return;
+    const base = c.replace(/\s*\[.*?\]/g, '').split('→').pop().trim().toUpperCase();
+    const it = (typeof codeIndex !== 'undefined') ? codeIndex[base] : null;
+    const bulk = (c.match(/\[(?:묶음처리|박스\/마대 수량) (\d+)/) || [])[1];
+    const skip = n.indexOf('미스캔 제외') === 0;
+    if(skip) return; // 영상에는 실제로 찍은 것만 보이게 — 미스캔 제외(주문수량) 안내는 띄우지 않음
+    const l1 = `${ok ? '방금' : (skip ? '미스캔 제외' : '⚠ 오피킹')}: ${base}${bulk ? '  +' + bulk + '개' : ''}`;
+    const l2 = skip ? n : (it ? `${it.name || ''} / ${it.spec || ''}   이 품목 ${Math.min(it.scannedQty, it.orderQty)}개` : '') + (ok ? '' : '   ' + n);
+    lastScan = { at: Date.now(), ok: !!ok, skip, l1, l2: l2.trim() };
   }
   function start(){
     if(!enabled || rec || !stream || !currentDocumentKey || !items.length || typeof MediaRecorder === 'undefined') return;
@@ -4746,15 +4777,19 @@ const videoRec = (function(){
     try{
       const dir = await refreshFolderLabel(false);
       if(dir){
-        const sub = await dir.getDirectoryHandle(day, { create:true });
+        // 10/22: 예전 검수 스크린샷처럼 업체명 폴더로 나눠서 저장 (파일 이름 앞에 날짜가 있어서 날짜순으로 정렬됨)
+        const vendor = sanitizeFilename(String(info.company || '').replace(/\s*\(도착보장\)\s*$/, ''));
+        const sub = await dir.getDirectoryHandle(vendor, { create:true });
         const fh = await sub.getFileHandle(name, { create:true });
         const w = await fh.createWritable(); await w.write(blob); await w.close();
-        addScreenOnlyLog('🎥 영상 저장', `${name} (${mb}MB · ${reason})`, '🎥');
+        addScreenOnlyLog('🎥 영상 저장', `${vendor}/${name} (${mb}MB · ${reason})`, '🎥');
         cleanup(dir);
+        enqueue(blob, info, name, vendor);
       } else {
         const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
         setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 10000);
         addScreenOnlyLog('🎥 영상 저장', `${name} (${mb}MB · 다운로드 폴더 · ${reason})`, '🎥');
+        enqueue(blob, info, name, sanitizeFilename(String(info.company || '').replace(/\s*\(도착보장\)\s*$/, '')));
       }
     }catch(e){ addScreenOnlyLog('🎥 영상 저장 실패', String(e.message || e)); }
   }
@@ -4762,9 +4797,19 @@ const videoRec = (function(){
     const days = Math.max(1, Number(ls(KEY_DAYS)) || 30);
     const c = new Date(Date.now() - days * 86400000), cut = `${c.getFullYear()}-${p2(c.getMonth()+1)}-${p2(c.getDate())}`;
     try{
-      const old = [];
-      for await (const [n, h] of dir.entries()){ if(h.kind === 'directory' && /^\d{4}-\d{2}-\d{2}$/.test(n) && n < cut) old.push(n); }
-      for(const n of old) await dir.removeEntry(n, { recursive:true });
+      // 업체 폴더마다 들어가서, 파일 이름 앞 날짜가 보관일보다 오래된 영상만 지운다 (예전 날짜 폴더 방식도 같이 정리)
+      const oldDirs = [], vendorDirs = [];
+      for await (const [n, h] of dir.entries()){
+        if(h.kind !== 'directory') continue;
+        if(/^\d{4}-\d{2}-\d{2}$/.test(n)){ if(n < cut) oldDirs.push(n); }
+        else vendorDirs.push(h);
+      }
+      for(const n of oldDirs) await dir.removeEntry(n, { recursive:true });
+      for(const vd of vendorDirs){
+        const oldFiles = [];
+        for await (const [fn, fh] of vd.entries()){ const m = fh.kind === 'file' && fn.match(/^(\d{4}-\d{2}-\d{2})_.*\.webm$/); if(m && m[1] < cut) oldFiles.push(fn); }
+        for(const fn of oldFiles) await vd.removeEntry(fn);
+      }
     }catch(e){}
   }
   function updateBadge(){
@@ -4859,13 +4904,93 @@ const videoRec = (function(){
   window.addEventListener('beforeunload', () => { if(rec) try{ rec.stop(); }catch(e){} });
   refreshFolderLabel(false);
   if(ls(KEY_ON) === '1'){ $('videoRecToggle').checked = true; setEnabled(true); }
+  // ----- 드라이브 업로드 대기열 (노트북에 저장한 뒤 배경에서 올림, 창을 닫았다 열어도 이어서 올림) -----
+  const CH = 4 * 1024 * 1024; // 4MB 조각 (256KB의 배수여야 함)
+  let uploading = false, retryTimer = null;
+  const DEFAULT_UPLOAD_URL = 'https://script.google.com/macros/s/AKfycbx5lgkuEllF8bX8EifMaAmDnBb06JN2iDNtA2EwT8RJpj6BJlblDi3dHlxvh2OzZWFVNw/exec'; // 검수영상 웹앱 (허브에 있는 주소). 칸을 비우면 업로드 안 함
+  const upUrl = () => { const v = ls('videoUploadUrl'); return (v === null || v === undefined ? DEFAULT_UPLOAD_URL : v).trim(); };
+  async function qIndex(){ try{ return (await idbGet('vq_index')) || []; }catch(e){ return []; } }
+  async function setQIndex(list){ try{ await idbSet('vq_index', list); }catch(e){} }
+  async function enqueue(blob, info, name, vendor){
+    if(!upUrl()) return;
+    const id = 'vq_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+    const d = info.startAt; const bd = new Date(d.getTime() - (d.getHours() < 5 ? 86400000 : 0)); // 새벽 5시 전은 전날 탭 (검수기록과 같은 기준)
+    const meta = { name, vendor, documentKey: info.docKey, dateStr: `${bd.getFullYear()}-${p2(bd.getMonth()+1)}-${p2(bd.getDate())}`, size: blob.size, tries: 0 };
+    try{ await idbSet(id, { meta, blob }); const list = await qIndex(); list.push(id); await setQIndex(list); }catch(e){ addScreenOnlyLog('☁ 업로드 대기 등록 실패', String(e.message || e)); return; }
+    updateUploadInfo(); processQueue();
+  }
+  function blobToBase64(b){ return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(r.error); r.readAsDataURL(b); }); }
+  async function post(body, ms){
+    const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), ms || 120000);
+    try{ const r = await fetch(upUrl(), { method:'POST', body: JSON.stringify(body), signal: ctrl.signal }); return await r.json(); }
+    finally{ clearTimeout(t); }
+  }
+  async function uploadOne(item){
+    const { meta, blob } = item;
+    const st = await post({ type:'start', fileName: meta.name, vendor: meta.vendor, size: blob.size }, 60000);
+    if(!st.ok || !st.uploadUrl) throw new Error(st.error || '업로드 시작 실패');
+    let off = 0, last = null;
+    while(off < blob.size){
+      const part = blob.slice(off, Math.min(off + CH, blob.size));
+      const data = await blobToBase64(part);
+      let r = null, err = null;
+      for(let k = 0; k < 3; k++){ // 조각 하나당 3번까지 다시 시도
+        try{ r = await post({ type:'chunk', uploadUrl: st.uploadUrl, offset: off, total: blob.size, data, documentKey: meta.documentKey, dateStr: meta.dateStr }); if(r.ok) break; err = r.error; }
+        catch(e){ err = e.message || String(e); }
+        await new Promise(z => setTimeout(z, 3000 * (k + 1)));
+      }
+      if(!r || !r.ok) throw new Error(err || '조각 업로드 실패');
+      last = r;
+      if(r.done) break;
+      off = r.next || (off + part.size);
+    }
+    return last;
+  }
+  async function processQueue(){
+    if(uploading || !upUrl()) return;
+    uploading = true; clearTimeout(retryTimer);
+    try{
+      let list = await qIndex();
+      while(list.length){
+        const id = list[0];
+        let item = null; try{ item = await idbGet(id); }catch(e){}
+        if(!item || !item.blob){ list.shift(); await setQIndex(list); continue; }
+        try{
+          const r = await uploadOne(item);
+          addScreenOnlyLog('☁ 영상 업로드', `${item.meta.vendor}/${item.meta.name}` + (r && r.linked ? ' · 검수기록 S열에 링크 완료' : ' · 드라이브 저장됨 (검수기록 줄을 못 찾아 링크는 못 넣음)'), '☁');
+          try{ const db = await openHandleDB(); db.transaction(FS_STORE, 'readwrite').objectStore(FS_STORE).delete(id); }catch(e){}
+          list = (await qIndex()).filter(x => x !== id); await setQIndex(list);
+        }catch(e){
+          item.meta.tries = (item.meta.tries || 0) + 1;
+          try{ await idbSet(id, item); }catch(e2){}
+          addScreenOnlyLog('☁ 영상 업로드 지연', `${item.meta.name} — ${e.message || e} (잠시 뒤 자동으로 다시 올려요)`);
+          retryTimer = setTimeout(processQueue, Math.min(10, item.meta.tries) * 60000); // 1분, 2분 ... 최대 10분 뒤 다시
+          break;
+        }
+        updateUploadInfo();
+      }
+    }finally{ uploading = false; updateUploadInfo(); }
+  }
+  async function updateUploadInfo(){
+    const el = $('videoUploadInfo'); if(!el) return;
+    if(!upUrl()){ el.textContent = ''; return; }
+    const n = (await qIndex()).length;
+    el.textContent = n ? `☁ 업로드 대기 ${n}건${uploading ? ' (올리는 중)' : ''}` : '☁ 업로드 대기 없음';
+  }
+  $('videoUploadUrl').value = upUrl();
+  $('videoUploadUrl').addEventListener('change', e => { ls('videoUploadUrl', e.target.value.trim()); updateUploadInfo(); processQueue(); });
+  updateUploadInfo(); setTimeout(processQueue, 5000); // 이전에 못 올린 영상이 있으면 이어서
+
   return {
+    noteScan, enqueue,
     onItemScan(){ if(enabled && !rec) start(); },
     onDocumentScan(raw){ if(!rec || !cur) return; const k = docKeyFromScan(raw); if(k && k !== canonicalDocKeyJS(cur.docKey)) stop('다음 전표'); },
     onDlv(suffix){ if(rec && cur && String(cur.suffix) === String(suffix)) stop('배송라벨 스캔'); },
     stop, isRecording: () => !!rec,
   };
 })();
+// 검수 로그 한 줄 = 영상 아래 "방금 찍은 품목" 표시
+(function(){ const orig = addLog; addLog = function(t, code, ok, note){ orig.apply(this, arguments); try{ videoRec.noteScan(code, ok, note); }catch(e){} }; })();
 </script>
 </body>
 </html>

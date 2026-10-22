@@ -169,6 +169,14 @@
       <button id="copyInventoryUrlBtn" style="flex-shrink:0;padding:10px 16px;font-size:14px;font-weight:700;background:#16A34A;color:#fff;border:none;border-radius:8px;cursor:pointer;">📋 복사</button>
     </div>
 
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;display:flex;align-items:center;gap:10px;">
+      <div style="flex:1;">
+        <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:5px;">검수영상 웹앱 (영상 드라이브 업로드)</div>
+        <div style="font-size:10px;color:var(--sub);font-family:monospace;word-break:break-all;line-height:1.5;">https://script.google.com/macros/s/AKfycbx5lgkuEllF8bX8EifMaAmDnBb06JN2iDNtA2EwT8RJpj6BJlblDi3dHlxvh2OzZWFVNw/exec</div>
+      </div>
+      <button id="copyVideoUrlBtn" style="flex-shrink:0;padding:10px 16px;font-size:14px;font-weight:700;background:#DC2626;color:#fff;border:none;border-radius:8px;cursor:pointer;">📋 복사</button>
+    </div>
+
   </div>
 
   <footer>이 화면 하나만 즐겨찾기 해두시면 됩니다</footer>
@@ -182,6 +190,13 @@ document.getElementById('copyGasUrlBtn').addEventListener('click', function(){
 });
 document.getElementById('copyInventoryUrlBtn').addEventListener('click', function(){
   const url = 'https://script.google.com/macros/s/AKfycbyhPPPMnHouclotgTVNzx5S9uX_1fC0blUKIdMbBP7wfikji_Y230wf1LbskfZJ2-3bPw/exec';
+  navigator.clipboard.writeText(url).then(()=>{
+    this.textContent = '✅ 복사됨';
+    setTimeout(()=>{ this.textContent = '📋 복사'; }, 2000);
+  }).catch(()=>{ this.textContent = '❌ 실패'; setTimeout(()=>{ this.textContent = '📋 복사'; }, 2000); });
+});
+document.getElementById('copyVideoUrlBtn').addEventListener('click', function(){
+  const url = 'https://script.google.com/macros/s/AKfycbx5lgkuEllF8bX8EifMaAmDnBb06JN2iDNtA2EwT8RJpj6BJlblDi3dHlxvh2OzZWFVNw/exec';
   navigator.clipboard.writeText(url).then(()=>{
     this.textContent = '✅ 복사됨';
     setTimeout(()=>{ this.textContent = '📋 복사'; }, 2000);
