@@ -6,7 +6,7 @@
 <title>피킹 검수 프로그램 — LUNA&SOL</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;800;900&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/fix-webm-duration@1.0.6/fix-webm-duration.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/ts-ebml@3.0.2/dist/EBML.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -4761,12 +4761,25 @@ const videoRec = (function(){
     return new Promise(resolve => {
       r.onstop = async () => {
         let blob = new Blob(chunks, { type:'video/webm' }); chunks = [];
-        // 브라우저 녹화 파일엔 길이 정보가 없어서 일부 플레이어에서 앞뒤로 넘기기가 안 됨 → 길이 정보를 채워 넣는다
-        try{ if(window.ysFixWebmDuration) blob = await window.ysFixWebmDuration(blob, Date.now() - info.startAt.getTime(), { logger:false }); }catch(e){}
+        // 브라우저 녹화 파일엔 길이 정보가 없다. 10/22: 예전 방식(fix-webm-duration)은 파일 구조를 깨뜨려서
+        // 일부 플레이어·구글드라이브에서 "38초짜리인데 5초에서 끝나는" 문제가 있었음 → 파일 머리 정보를 제대로 다시 만드는 방식으로 교체
+        blob = await makeSeekable(blob);
         await save(blob, info, reason); resolve();
       };
       try{ r.stop(); }catch(e){ resolve(); }
     });
+  }
+  async function makeSeekable(blob){
+    try{
+      if(!window.EBML || !EBML.Reader) return blob;
+      const buf = await blob.arrayBuffer();
+      const reader = new EBML.Reader(); reader.logging = false; reader.drop_default_duration = false;
+      new EBML.Decoder().decode(buf).forEach(el => reader.read(el));
+      reader.stop();
+      if(!reader.duration) return blob;
+      const head = EBML.tools.makeMetadataSeekable(reader.metadatas, reader.duration, reader.cues);
+      return new Blob([head, buf.slice(reader.metadataSize)], { type:'video/webm' });
+    }catch(e){ console.warn('영상 길이 정보 넣기 실패(원본 그대로 저장):', e); return blob; }
   }
   const safe = x => String(x || '').replace(/[\\/:*?"<>|\s]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').slice(0, 40) || '-';
   async function save(blob, info, reason){
