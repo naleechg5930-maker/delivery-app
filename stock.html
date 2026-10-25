@@ -277,10 +277,14 @@ function showItem(code, quiet){
     <div class="code">${esc(code)}</div>
     <div class="name">${esc(it.n || '')}${it.s ? ' / ' + esc(it.s) : ''}</div>
     <div class="big"><span class="lab">지금 있어야 할 수량<span style="display:block;font-size:12px;color:#c9cdf0;font-weight:500">선반 기준</span></span><span class="num">${fmt(expected)}</span></div>
-    <div class="line"><span>전날 마감재고<span class="sm">${esc(md(stock.baseDate))} 마감</span></span><span class="v">${fmt(b)}</span></div>`;
-  if(r) html += `<div class="line mv"><span>${r > 0 ? '+' : '−'} 기타이동<span class="sm">창고이동전표</span></span><span class="v">${r > 0 ? '+' : '−'}${fmt(Math.abs(r))}</span></div>`;
+    <div class="line"><span>전날 마감재고<span class="sm">${esc(md(stock.baseDate))} 마감</span></span><span class="v">${fmt(b + r)}</span></div>`; // 10/25: 기타이동은 따로 줄을 만들지 않고 마감재고에 합쳐서 보여준다
   if(i){
-    html += `<div class="line inb" style="display:block"><div style="display:flex;justify-content:space-between;align-items:baseline"><span>+ 오늘 입고</span><span class="v">+${fmt(i)}</span></div>${boxSummaryHtml(it.inb || [])}</div>`;
+    // 10/25: 입고는 날짜별로 묶어서 "10/25 입고" + 공장·CTN 번호
+    const byDate = {};
+    (it.inb || []).forEach(x => { const d = x[3] || ''; (byDate[d] = byDate[d] || []).push(x); });
+    const dates = Object.keys(byDate).sort();
+    html += `<div class="line inb" style="display:block"><div style="display:flex;justify-content:space-between;align-items:baseline"><span>+ 입고</span><span class="v">+${fmt(i)}</span></div>` +
+      dates.map(d => `<div style="margin-top:8px;font-size:13px;font-weight:800;color:var(--in)">${d ? esc(md(d)) + ' 입고' : '입고'}</div>${boxSummaryHtml(byDate[d])}`).join('') + `</div>`;
   }
   html += `<div class="line out"><span>− 피킹완료<span class="sm">이미 선반에서 가져간 수량 (검수완료 포함)</span></span><span class="v">${k ? '−' + fmt(k) : '0'}</span></div>
     <button type="button" class="livebtn" id="liveBtn"><span class="lt"><span>실재고 움직임 보기</span><span>▸</span></span>
