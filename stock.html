@@ -337,15 +337,15 @@ async function startCamera(){
   $('reader').style.display = 'block';
   scanner = scanner || new Html5Qrcode('reader', { formatsToSupport: SCAN_FORMATS(), experimentalFeatures: { useBarCodeDetectorIfSupported: true }, verbose: false });
   try{
-    // 작은 QR도 읽히게: 고해상도 + 연속 초점 요청, 인식 칸은 화면 가운데 정사각형
+    // 10/25: 대충 비춰도 읽히게 — 가운데 네모 칸(qrbox)을 없애고 화면 전체에서 찾는다. 고해상도 + 연속 초점
     await scanner.start({ facingMode: 'environment' }, {
-      fps: 15,
-      qrbox: (w, h) => { const side = Math.floor(Math.min(w, h) * 0.7); return { width: side, height: side }; },
+      fps: 20,
       videoConstraints: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 }, advanced: [{ focusMode: 'continuous' }] },
     }, onScan, () => {});
     scanning = true;
     $('camBtn').textContent = '카메라 끄기';
     setupZoom();
+    startNativeAssist();
   }catch(err){
     $('reader').style.display = 'none';
     setStatus('findStatus', 'err', '카메라를 켜지 못했어요. 브라우저에서 카메라 권한을 허용했는지, 주소가 https인지 확인해주세요.\n' + err);
@@ -375,9 +375,41 @@ function setupZoom(){
     row.appendChild(b);
   });
   row.classList.remove('hidden');
-  apply(levels.includes(2) ? 2 : levels[levels.length - 1]); // 기본 2배
+  apply(levels.includes(1.5) ? 1.5 : levels[levels.length - 1]); // 기본 1.5배 (너무 확대하면 화면에 넣기 어려워서)
 }
+// 휴대폰에 내장된 바코드 인식기(대부분 안드로이드 크롬)가 있으면 같이 돌린다: 화면 전체 + 화면 일부를 돌아가며 확대해서 검사
+// → QR이 화면 구석에 작게 있거나 비스듬해도 잡힌다. (아이폰처럼 없으면 기존 인식만 사용)
+let nativeTimer = null;
+function startNativeAssist(){
+  stopNativeAssist();
+  if(!('BarcodeDetector' in window)) return;
+  let det = null;
+  try{ det = new BarcodeDetector({ formats: ['qr_code', 'code_128', 'code_39', 'ean_13', 'data_matrix'] }); }catch(e){ return; }
+  const cv = document.createElement('canvas'), cx = cv.getContext('2d', { willReadFrequently: true });
+  let busy = false, tick = 0;
+  nativeTimer = setInterval(async () => {
+    if(busy || !scanning) return;
+    const v = document.querySelector('#reader video');
+    if(!v || !v.videoWidth) return;
+    busy = true;
+    try{
+      let codes = await det.detect(v);
+      if(!codes.length){
+        const W = v.videoWidth, H = v.videoHeight, tw = Math.round(W * 0.55), th = Math.round(H * 0.55);
+        const spots = [[(W - tw) / 2, (H - th) / 2], [0, 0], [W - tw, 0], [0, H - th], [W - tw, H - th]];
+        const [sx, sy] = spots[tick++ % spots.length];
+        cv.width = Math.round(tw * 1.6); cv.height = Math.round(th * 1.6);
+        cx.drawImage(v, sx, sy, tw, th, 0, 0, cv.width, cv.height);
+        codes = await det.detect(cv);
+      }
+      if(codes.length && codes[0].rawValue) onScan(codes[0].rawValue);
+    }catch(e){}
+    finally{ busy = false; }
+  }, 120);
+}
+function stopNativeAssist(){ clearInterval(nativeTimer); nativeTimer = null; }
 async function stopCamera(){
+  stopNativeAssist();
   if(scanner && scanning){ try{ await scanner.stop(); }catch(e){} }
   scanning = false;
   $('reader').style.display = 'none';
