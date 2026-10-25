@@ -4823,6 +4823,8 @@ const videoRec = (function(){
     const l1 = `${ok ? '방금' : '⚠ 오피킹'}: ${base}${bulk ? '  +' + bulk + '개 (묶음)' : ''}${itemDone ? '   ✔ 이 품목 완료' : ''}`;
     const l2 = (it ? `${it.name || ''} / ${it.spec || ''}   이 품목 ${it.orderQty}개 중 ${shown}개 스캔` : '') + (ok ? '' : '   ' + n);
     lastScan = { at: Date.now(), ok: !!ok, skip, l1, l2: l2.trim() };
+    // 10/25: 영상 보기 화면용 스캔 목록 — 영상 시작부터 몇 ms에 무엇을 찍었는지
+    if(cur && cur.events) cur.events.push({ t: Date.now() - cur.startAt.getTime(), c: base, n: it ? (it.name || '') : '', s: it ? (it.spec || '') : '', p: it ? `${shown}/${it.orderQty}` : '', q: bulk ? Number(bulk) : 1, ok: !!ok, m: ok ? '' : n });
   }
   // 화면 그리기 박자: 일반 setInterval은 창이 가려지거나 최소화되면 크롬이 1초에 1번 이하로 늦춰서 영상이 끊긴다.
   // 별도 작업자(Worker)가 박자를 보내면 이런 늦춤을 덜 받는다. Worker를 못 쓰면 예전 방식으로.
@@ -4844,7 +4846,7 @@ const videoRec = (function(){
     if(!enabled || rec || !stream || !currentDocumentKey || !items.length || typeof MediaRecorder === 'undefined') return;
     cur = { docKey: currentDocumentKey, suffix: extractDocumentSuffixJS(currentDocumentKey), company: (($('companyNameInput') || {}).value || '').trim(), worker: currentWorker || '', startAt: new Date() };
     canvas = canvas || document.createElement('canvas'); canvas.width = W; canvas.height = H; ctx = canvas.getContext('2d');
-    cur.frames = 0; cur.chunks = [];
+    cur.frames = 0; cur.chunks = []; cur.events = [];
     draw(); startTicker();
     const mime = ['video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) || '';
     try{ rec = new MediaRecorder(canvas.captureStream(FPS), mime ? { mimeType:mime, videoBitsPerSecond:BPS } : { videoBitsPerSecond:BPS }); }
@@ -4860,6 +4862,7 @@ const videoRec = (function(){
     const r = rec, info = cur; rec = null; cur = null;
     clearTimeout(maxTimer); clearInterval(uiTimer); stopTicker();
     info.stopAt = new Date();
+    try{ info.summary = { items: items.length, order: items.reduce((a, it) => a + it.orderQty, 0), scanned: items.reduce((a, it) => a + Math.min(it.scannedQty, it.orderQty), 0) }; }catch(e){ info.summary = null; }
     updateBadge();
     return new Promise(resolve => {
       r.onstop = async () => {
@@ -4904,6 +4907,9 @@ const videoRec = (function(){
     const mb = (blob.size / 1048576).toFixed(1);
     const secs = Math.round(((info.stopAt || new Date()) - info.startAt) / 1000);
     const lenTxt = `${Math.floor(secs / 60)}분 ${secs % 60}초 · 화면 ${info.frames || 0}장`; // 화면 장수가 (초×12)보다 훨씬 적으면 그 사이 창이 가려져 녹화가 끊긴 것
+    // 영상 보기 화면용 스캔 목록 파일 (영상과 같은 이름 .json)
+    const jsonName = name.replace(/\.webm$/, '.json');
+    const jsonText = JSON.stringify({ v: 1, video: name, docKey: info.docKey, company: info.company, worker: info.worker || currentWorker || '', startAt: info.startAt.toISOString(), durationMs: (info.stopAt || new Date()) - info.startAt, summary: info.summary || null, reason, events: info.events || [] });
     try{
       const dir = await refreshFolderLabel(false);
       if(dir){
@@ -4912,14 +4918,16 @@ const videoRec = (function(){
         const sub = await dir.getDirectoryHandle(vendor, { create:true });
         const fh = await sub.getFileHandle(name, { create:true });
         const w = await fh.createWritable(); await w.write(blob); await w.close();
+        try{ const jh = await sub.getFileHandle(jsonName, { create:true }); const jw = await jh.createWritable(); await jw.write(jsonText); await jw.close(); }catch(e){}
         addScreenOnlyLog('🎥 영상 저장', `${vendor}/${name} (${lenTxt} · ${mb}MB · ${reason})`, '🎥');
         cleanup(dir);
-        enqueue(blob, info, name, vendor);
+        enqueue(blob, info, name, vendor, jsonText);
       } else {
         const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
         setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 10000);
+        setTimeout(() => { const j = document.createElement('a'); j.href = URL.createObjectURL(new Blob([jsonText], { type:'application/json' })); j.download = jsonName; document.body.appendChild(j); j.click(); setTimeout(() => { URL.revokeObjectURL(j.href); j.remove(); }, 10000); }, 800);
         addScreenOnlyLog('🎥 영상 저장', `${name} (${lenTxt} · ${mb}MB · 다운로드 폴더 · ${reason})`, '🎥');
-        enqueue(blob, info, name, sanitizeFilename(String(info.company || '').replace(/\s*\(도착보장\)\s*$/, '')));
+        enqueue(blob, info, name, sanitizeFilename(String(info.company || '').replace(/\s*\(도착보장\)\s*$/, '')), jsonText);
       }
     }catch(e){ addScreenOnlyLog('🎥 영상 저장 실패', String(e.message || e)); }
   }
@@ -4937,7 +4945,7 @@ const videoRec = (function(){
       for(const n of oldDirs) await dir.removeEntry(n, { recursive:true });
       for(const vd of vendorDirs){
         const oldFiles = [];
-        for await (const [fn, fh] of vd.entries()){ const m = fh.kind === 'file' && fn.match(/^(\d{4}-\d{2}-\d{2})_.*\.webm$/); if(m && m[1] < cut) oldFiles.push(fn); }
+        for await (const [fn, fh] of vd.entries()){ const m = fh.kind === 'file' && fn.match(/^(\d{4}-\d{2}-\d{2})_.*\.(webm|json)$/); if(m && m[1] < cut) oldFiles.push(fn); }
         for(const fn of oldFiles) await vd.removeEntry(fn);
       }
     }catch(e){}
@@ -5041,12 +5049,12 @@ const videoRec = (function(){
   const upUrl = () => { const v = ls('videoUploadUrl'); return (v === null || v === undefined ? DEFAULT_UPLOAD_URL : v).trim(); };
   async function qIndex(){ try{ return (await idbGet('vq_index')) || []; }catch(e){ return []; } }
   async function setQIndex(list){ try{ await idbSet('vq_index', list); }catch(e){} }
-  async function enqueue(blob, info, name, vendor){
+  async function enqueue(blob, info, name, vendor, jsonText){
     if(!upUrl()) return;
     const id = 'vq_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
     const d = info.startAt; const bd = new Date(d.getTime() - (d.getHours() < 5 ? 86400000 : 0)); // 새벽 5시 전은 전날 탭 (검수기록과 같은 기준)
     const meta = { name, vendor, documentKey: info.docKey, dateStr: `${bd.getFullYear()}-${p2(bd.getMonth()+1)}-${p2(bd.getDate())}`, size: blob.size, tries: 0 };
-    try{ await idbSet(id, { meta, blob }); const list = await qIndex(); list.push(id); await setQIndex(list); }catch(e){ addScreenOnlyLog('☁ 업로드 대기 등록 실패', String(e.message || e)); return; }
+    try{ await idbSet(id, { meta, blob, json: jsonText || null }); const list = await qIndex(); list.push(id); await setQIndex(list); }catch(e){ addScreenOnlyLog('☁ 업로드 대기 등록 실패', String(e.message || e)); return; }
     updateUploadInfo(); processQueue();
   }
   function blobToBase64(b){ return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(r.error); r.readAsDataURL(b); }); }
@@ -5055,8 +5063,21 @@ const videoRec = (function(){
     try{ const r = await fetch(upUrl(), { method:'POST', body: JSON.stringify(body), signal: ctrl.signal }); return await r.json(); }
     finally{ clearTimeout(t); }
   }
+  async function uploadSmall(text, fileName, vendor){
+    const bytes = new TextEncoder().encode(text);
+    const st = await post({ type:'start', fileName, vendor, size: bytes.length, mimeType:'application/json' }, 60000);
+    if(!st.ok || !st.uploadUrl) throw new Error(st.error || '목록 업로드 시작 실패');
+    const data = await blobToBase64(new Blob([bytes]));
+    const r = await post({ type:'chunk', uploadUrl: st.uploadUrl, offset: 0, total: bytes.length, data, mimeType:'application/json', noLink: true });
+    if(!r.ok || !r.done || !r.id) throw new Error(r.error || '목록 업로드 실패');
+    return r.id;
+  }
   async function uploadOne(item){
     const { meta, blob } = item;
+    // 10/25: 스캔 목록(JSON)을 먼저 올리고, 영상 마지막 조각 때 그 번호를 같이 보내서 S열 링크가 "영상 보기" 화면으로 가게 한다
+    if(item.json && !meta.jsonId){
+      try{ meta.jsonId = await uploadSmall(item.json, meta.name.replace(/\.webm$/, '.json'), meta.vendor); }catch(e){ console.warn('스캔 목록 업로드 실패(영상만 올림):', e); }
+    }
     const st = await post({ type:'start', fileName: meta.name, vendor: meta.vendor, size: blob.size }, 60000);
     if(!st.ok || !st.uploadUrl) throw new Error(st.error || '업로드 시작 실패');
     let off = 0, last = null;
@@ -5065,7 +5086,7 @@ const videoRec = (function(){
       const data = await blobToBase64(part);
       let r = null, err = null;
       for(let k = 0; k < 3; k++){ // 조각 하나당 3번까지 다시 시도
-        try{ r = await post({ type:'chunk', uploadUrl: st.uploadUrl, offset: off, total: blob.size, data, documentKey: meta.documentKey, dateStr: meta.dateStr }); if(r.ok) break; err = r.error; }
+        try{ r = await post({ type:'chunk', uploadUrl: st.uploadUrl, offset: off, total: blob.size, data, documentKey: meta.documentKey, dateStr: meta.dateStr, jsonId: meta.jsonId || '' }); if(r.ok) break; err = r.error; }
         catch(e){ err = e.message || String(e); }
         await new Promise(z => setTimeout(z, 3000 * (k + 1)));
       }

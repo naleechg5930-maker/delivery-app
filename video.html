@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>검수 영상 보기</title>
+<style>
+  :root{ --navy:#1f2a5c; --sub:#64748b; --line:#e5e7eb; --ok:#16a34a; --err:#dc2626; --hit:#f59e0b; --bg:#eef0f6; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); font-family:"Noto Sans KR","Malgun Gothic",sans-serif; color:var(--navy); }
+  .top{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:12px 18px; background:var(--navy); color:#fff; }
+  .top .t{ font-size:19px; font-weight:900; } .top .m{ font-size:13.5px; opacity:.85; }
+  .top .sp{ flex:1; }
+  .top a, .top button{ background:#fff; color:var(--navy); border:0; border-radius:8px; padding:7px 12px; font-size:13px; font-weight:800; text-decoration:none; cursor:pointer; font-family:inherit; }
+  .body{ display:grid; grid-template-columns:minmax(0,1fr) 400px; min-height:calc(100vh - 56px); }
+  .left{ padding:16px; border-right:1px solid var(--line); background:#fff; }
+  video{ width:100%; max-height:70vh; background:#000; border-radius:10px; display:block; }
+  .bar{ position:relative; height:34px; margin-top:12px; cursor:pointer; }
+  .track{ position:absolute; left:0; right:0; top:14px; height:6px; border-radius:3px; background:var(--line); }
+  .fill{ position:absolute; left:0; top:14px; height:6px; border-radius:3px; background:var(--navy); width:0; }
+  .knob{ position:absolute; top:8px; left:0; width:18px; height:18px; margin-left:-9px; border-radius:50%; background:var(--navy); border:3px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.4); pointer-events:none; }
+  .tick{ position:absolute; top:4px; width:3px; height:26px; margin-left:-1px; border-radius:2px; background:var(--ok); opacity:.6; pointer-events:none; }
+  .tick.err{ background:var(--err); opacity:1; width:4px; }
+  .tick.hit{ background:var(--hit); opacity:1; width:5px; height:30px; top:2px; }
+  .times{ display:flex; justify-content:space-between; font-size:12px; color:var(--sub); }
+  .legend{ display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:#475569; margin-top:8px; }
+  .legend i{ display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
+  .right{ padding:14px; display:flex; flex-direction:column; gap:10px; background:#fafbfd; min-width:0; }
+  .search{ width:100%; border:2px solid var(--navy); border-radius:10px; padding:10px 12px; font-size:16px; font-weight:700; font-family:inherit; outline:none; }
+  .chips{ display:flex; gap:6px; flex-wrap:wrap; }
+  .chip{ font-size:12px; font-weight:800; padding:6px 11px; border-radius:999px; background:#e8ebf3; color:var(--navy); border:0; cursor:pointer; font-family:inherit; }
+  .chip.on{ background:var(--navy); color:#fff; } .chip.red{ background:#fee2e2; color:#b91c1c; } .chip.red.on{ background:#b91c1c; color:#fff; }
+  .cnt{ font-size:12px; color:var(--sub); }
+  .list{ display:flex; flex-direction:column; gap:6px; overflow:auto; max-height:calc(100vh - 220px); padding-right:2px; }
+  .row{ display:grid; grid-template-columns:52px minmax(0,1fr) auto; gap:10px; align-items:center; padding:10px 12px; border-radius:10px; background:#fff; border:1px solid var(--line); cursor:pointer; text-align:left; font-family:inherit; color:inherit; }
+  .row:hover{ border-color:var(--navy); }
+  .row .tm{ font-family:monospace; font-weight:900; font-size:15px; }
+  .row .cd{ font-family:monospace; font-weight:900; font-size:15px; overflow-wrap:anywhere; }
+  .row .sp2{ font-size:12.5px; color:#475569; }
+  .row .q{ font-weight:900; font-size:14px; white-space:nowrap; }
+  .row.cur{ background:var(--navy); color:#fff; border-color:var(--navy); } .row.cur .sp2{ color:#e2e8f0; }
+  .row.err{ background:#fef2f2; border-color:#fecaca; } .row.err .cd, .row.err .q{ color:#b91c1c; }
+  .row.err.cur{ background:#b91c1c; color:#fff; } .row.err.cur .cd, .row.err.cur .q{ color:#fff; }
+  .row mark{ background:#fde047; color:#111; border-radius:3px; padding:0 1px; }
+  .drop{ border:3px dashed #94a3b8; border-radius:14px; padding:40px 20px; text-align:center; color:#475569; background:#f8fafc; }
+  .drop b{ color:var(--navy); } .drop.over{ border-color:var(--navy); background:#eef2ff; }
+  .msg{ padding:12px 14px; border-radius:10px; background:#fff7ed; color:#9a3412; font-size:14px; font-weight:700; margin-top:10px; display:none; }
+  .msg.show{ display:block; }
+  .hidden{ display:none !important; }
+  @media (max-width: 860px){
+    .body{ grid-template-columns:1fr; }
+    .left{ border-right:0; border-bottom:1px solid var(--line); }
+    .list{ max-height:none; }
+    .keyhint{ display:none; }
+  }
+</style>
+</head>
+<body>
+<div class="top">
+  <span class="t" id="title">검수 영상 보기</span>
+  <span class="m" id="meta"></span>
+  <span class="sp"></span>
+  <button type="button" id="openLocalBtn">📂 노트북 영상 열기</button>
+  <a id="downloadBtn" class="hidden" target="_blank" rel="noopener">⬇ 원본 내려받기</a>
+  <input type="file" id="fileInput" accept=".webm,.json,video/webm,application/json" multiple class="hidden">
+</div>
+<div class="body">
+  <div class="left">
+    <div id="drop" class="drop">
+      <div style="font-size:42px">🎥</div>
+      <div style="font-size:17px; margin-top:6px;">노트북 저장 폴더의 <b>영상(.webm)</b>과 같은 이름의 <b>스캔 목록(.json)</b>을<br>여기에 끌어다 놓으세요</div>
+      <div style="font-size:13px; margin-top:8px;">검수기록 시트 S열의 "▶ 영상 보기"로 열면 자동으로 불러와요</div>
+    </div>
+    <div id="player" class="hidden">
+      <video id="vid" controls playsinline preload="auto"></video>
+      <div class="bar" id="bar"><div class="track"></div><div class="fill" id="fill"></div><div id="ticks"></div><div class="knob" id="knob"></div></div>
+      <div class="times"><span id="tNow">0:00</span><span id="tEnd">0:00</span></div>
+      <div class="legend"><span><i style="background:var(--ok)"></i>정상 스캔</span><span><i style="background:var(--err)"></i>오피킹</span><span><i style="background:var(--hit)"></i>검색한 품번</span><span class="keyhint" style="margin-left:auto">← → 키: 이전/다음 스캔으로 이동</span></div>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
+  <div class="right">
+    <input class="search" id="search" placeholder="품번 일부 검색 (예: 8032, C111, 화이트 S)" autocomplete="off">
+    <div class="chips"><button type="button" class="chip on" data-f="all" id="cAll">전체 0</button><button type="button" class="chip" data-f="ok" id="cOk">정상 0</button><button type="button" class="chip red" data-f="err" id="cErr">오피킹 0</button></div>
+    <div class="cnt" id="cnt">스캔 목록이 아직 없어요</div>
+    <div class="list" id="list"></div>
+  </div>
+</div>
+<script>
+// 검수영상 업로드 웹앱 (허브 "검수영상 웹앱"과 같은 주소). 스캔 목록·영상을 이 주소로 가져온다
+const API = 'https://script.google.com/macros/s/AKfycbx5lgkuEllF8bX8EifMaAmDnBb06JN2iDNtA2EwT8RJpj6BJlblDi3dHlxvh2OzZWFVNw/exec';
+const $ = id => document.getElementById(id);
+const vid = $('vid');
+let meta = null, events = [], filter = 'all', shown = [], curIdx = -1, durationSec = 0, objUrl = '', pinned = null;
+const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+const fmtT = s => { s = Math.max(0, Math.floor(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+function showMsg(t){ $('msg').textContent = t; $('msg').classList.toggle('show', !!t); }
+
+/* ---------- 화면 채우기 ---------- */
+function applyMeta(m){
+  meta = m || null;
+  events = (m && Array.isArray(m.events)) ? m.events.map((e, i) => Object.assign({ i }, e)) : [];
+  if(m){
+    $('title').textContent = `${m.docKey || ''} · ${m.company || ''}`;
+    const st = m.startAt ? new Date(m.startAt) : null, en = st && m.durationMs ? new Date(st.getTime() + m.durationMs) : null;
+    const hm = d => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const parts = [m.worker || ''];
+    if(st) parts.push(`${st.getMonth() + 1}/${st.getDate()} ${hm(st)}${en ? ' ~ ' + hm(en) : ''}`);
+    if(m.durationMs) parts.push(`(${Math.floor(m.durationMs / 60000)}분 ${Math.round(m.durationMs / 1000) % 60}초)`);
+    if(m.summary) parts.push(`${m.summary.items}품목 ${m.summary.scanned}개`);
+    $('meta').textContent = parts.filter(Boolean).join(' · ');
+    document.title = `검수 영상 · ${m.docKey || ''} ${m.company || ''}`;
+  }
+  $('cAll').textContent = `전체 ${events.length}`;
+  $('cOk').textContent = `정상 ${events.filter(e => e.ok).length}`;
+  $('cErr').textContent = `오피킹 ${events.filter(e => !e.ok).length}`;
+  renderList();
+}
+function tokens(){ return $('search').value.trim().toUpperCase().split(/\s+/).filter(Boolean); }
+function hl(text, toks){
+  let out = esc(text);
+  toks.forEach(t => { const i = out.toUpperCase().indexOf(esc(t)); if(i !== -1) out = out.slice(0, i) + '<mark>' + out.slice(i, i + esc(t).length) + '</mark>' + out.slice(i + esc(t).length); });
+  return out;
+}
+function renderList(){
+  const toks = tokens();
+  shown = events.filter(e => (filter === 'all' || (filter === 'ok' ? e.ok : !e.ok)) && toks.every(t => `${e.c} ${e.n} ${e.s}`.toUpperCase().indexOf(t) !== -1));
+  $('cnt').textContent = !events.length ? (meta ? '이 영상에는 스캔 목록이 없어요 (예전에 녹화한 영상)' : '스캔 목록이 아직 없어요')
+    : (toks.length ? `"${$('search').value.trim()}" 와 맞는 스캔 ${shown.length}건 · 누르면 그 장면 3초 전부터 재생` : `스캔 ${shown.length}건 · 누르면 그 장면 3초 전부터 재생`);
+  $('list').innerHTML = shown.map(e => `<button type="button" class="row${e.ok ? '' : ' err'}" data-i="${e.i}">
+      <span class="tm">${fmtT(e.t / 1000)}</span>
+      <span><span class="cd">${e.ok ? '' : '⚠ '}${hl(e.c, toks)}</span><br><span class="sp2">${e.ok ? hl(e.s || e.n || '', toks) + (e.p ? ' · ' + esc(e.p) : '') : esc(e.m || '오피킹')}</span></span>
+      <span class="q">${e.ok ? (e.q > 1 ? '+' + e.q : '+1') : '오피킹'}</span></button>`).join('');
+  $('list').querySelectorAll('.row').forEach(r => r.addEventListener('click', () => seekTo(events[Number(r.dataset.i)], true)));
+  renderTicks(); markCurrent(false);
+}
+function renderTicks(){
+  const dur = durationSec || (meta && meta.durationMs ? meta.durationMs / 1000 : 0);
+  if(!dur){ $('ticks').innerHTML = ''; return; }
+  const toks = tokens(), hit = new Set(toks.length ? shown.map(e => e.i) : []);
+  $('ticks').innerHTML = events.map(e => `<div class="tick${!e.ok ? ' err' : ''}${hit.has(e.i) ? ' hit' : ''}" style="left:${Math.min(100, e.t / 10 / dur)}%"></div>`).join('');
+}
+function seekTo(e, play){
+  if(!e || !vid.src) return;
+  pinned = e; // 그 스캔 장면이 나오기 전 3초 동안도 누른 줄을 표시
+  vid.currentTime = Math.max(0, e.t / 1000 - 3);
+  markCurrent(true);
+  if(play) vid.play().catch(() => {});
+}
+function markCurrent(scroll){
+  const now = vid.currentTime * 1000 + 300;
+  if(pinned && (now < pinned.t - 3600 || now > pinned.t + 1500)) pinned = null; // 다른 곳으로 옮기거나 지나가면 해제
+  let best = -1;
+  if(pinned) best = shown.indexOf(pinned);
+  else shown.forEach((e, k) => { if(e.t <= now) best = k; });
+  if(best === curIdx && !scroll) return;
+  curIdx = best;
+  $('list').querySelectorAll('.row').forEach((r, k) => {
+    r.classList.toggle('cur', k === best);
+    const q = r.querySelector('.q'); const e = shown[k];
+    if(q && e) q.textContent = k === best && !vid.paused ? '▶ 재생중' : (e.ok ? (e.q > 1 ? '+' + e.q : '+1') : '오피킹');
+  });
+  if(best >= 0 && !vid.paused){ const r = $('list').children[best]; if(r) r.scrollIntoView({ block:'nearest' }); }
+}
+function updateBar(){
+  const dur = durationSec || 0;
+  const pct = dur ? Math.min(100, vid.currentTime / dur * 100) : 0;
+  $('fill').style.width = pct + '%'; $('knob').style.left = pct + '%';
+  $('tNow').textContent = fmtT(vid.currentTime); $('tEnd').textContent = fmtT(dur);
+}
+vid.addEventListener('loadedmetadata', () => {
+  if(vid.duration === Infinity && !(meta && meta.durationMs)){ // 길이 정보가 없는 영상: 끝으로 한 번 보내서 길이를 알아낸다
+    const back = () => { vid.removeEventListener('durationchange', back); durationSec = isFinite(vid.duration) ? vid.duration : 0; vid.currentTime = 0; renderTicks(); updateBar(); };
+    vid.addEventListener('durationchange', back); vid.currentTime = 1e9;
+  }
+  durationSec = isFinite(vid.duration) && vid.duration > 0 ? vid.duration : (meta && meta.durationMs ? meta.durationMs / 1000 : 0);
+  renderTicks(); updateBar();
+});
+vid.addEventListener('timeupdate', () => { updateBar(); markCurrent(false); });
+vid.addEventListener('play', () => markCurrent(true));
+vid.addEventListener('pause', () => markCurrent(true));
+$('bar').addEventListener('click', ev => {
+  const r = $('bar').getBoundingClientRect(); const dur = durationSec;
+  if(dur) vid.currentTime = Math.max(0, Math.min(dur, (ev.clientX - r.left) / r.width * dur));
+});
+$('search').addEventListener('input', renderList);
+document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
+  filter = c.dataset.f; document.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === c)); renderList();
+}));
+document.addEventListener('keydown', ev => {
+  if(document.activeElement === $('search') || !shown.length || !vid.src) return;
+  if(ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+  ev.preventDefault();
+  const base = pinned ? pinned.t : vid.currentTime * 1000 + 300;
+  let k;
+  if(ev.key === 'ArrowRight'){ k = shown.findIndex(e => e.t > base); if(k === -1) k = shown.length - 1; }
+  else { k = -1; shown.forEach((e, j) => { if(e.t < base) k = j; }); if(k < 0) k = 0; }
+  seekTo(shown[k], true);
+});
+
+/* ---------- 영상 불러오기 ---------- */
+function setVideo(src){
+  $('drop').classList.add('hidden'); $('player').classList.remove('hidden');
+  vid.src = src;
+}
+// 드라이브에서 바로 재생 → 안 되면 업로드 웹앱을 거쳐 4MB씩 받아서 재생
+async function loadDriveVideo(id){
+  setVideo(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(id)}`);
+  $('downloadBtn').href = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(id)}`;
+  $('downloadBtn').classList.remove('hidden');
+  const ok = await new Promise(res => {
+    const t = setTimeout(() => res(false), 9000);
+    vid.addEventListener('loadedmetadata', () => { clearTimeout(t); res(true); }, { once:true });
+    vid.addEventListener('error', () => { clearTimeout(t); res(false); }, { once:true });
+  });
+  if(ok) return;
+  try{
+    showMsg('드라이브에서 영상을 받아오는 중이에요... 0%');
+    const parts = []; let off = 0, total = 1;
+    while(off < total){
+      const r = await (await fetch(`${API}?part=${encodeURIComponent(id)}&offset=${off}`)).json();
+      if(!r.ok) throw new Error(r.error || '영상 받기 실패');
+      total = r.total;
+      const bin = atob(r.data); const arr = new Uint8Array(bin.length); for(let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      parts.push(arr); off += arr.length;
+      showMsg(`드라이브에서 영상을 받아오는 중이에요... ${Math.round(off / total * 100)}%`);
+      if(!arr.length) break;
+    }
+    if(objUrl) URL.revokeObjectURL(objUrl);
+    objUrl = URL.createObjectURL(new Blob(parts, { type:'video/webm' }));
+    setVideo(objUrl); showMsg('');
+  }catch(e){
+    showMsg('드라이브 영상을 불러오지 못했어요. [원본 내려받기]로 받은 뒤 [노트북 영상 열기]로 열어주세요. (' + (e.message || e) + ')');
+  }
+}
+async function loadDriveMeta(id){
+  try{
+    const m = await (await fetch(`${API}?meta=${encodeURIComponent(id)}`)).json();
+    if(m && m.ok === false) throw new Error(m.error);
+    applyMeta(m);
+  }catch(e){ showMsg('스캔 목록을 불러오지 못했어요 (' + (e.message || e) + ')'); applyMeta(null); }
+}
+// 노트북 파일 열기 (영상 + 같은 이름 .json)
+async function openFiles(files){
+  const list = Array.from(files || []);
+  const v = list.find(f => /\.webm$/i.test(f.name) || /^video\//.test(f.type));
+  const j = list.find(f => /\.json$/i.test(f.name));
+  if(j){ try{ applyMeta(JSON.parse(await j.text())); }catch(e){ showMsg('스캔 목록 파일을 읽지 못했어요.'); } }
+  else if(v){ applyMeta(null); showMsg('같은 이름의 .json(스캔 목록) 파일도 같이 끌어다 놓으면 품번 검색이 돼요.'); }
+  if(v){
+    if(objUrl) URL.revokeObjectURL(objUrl);
+    objUrl = URL.createObjectURL(v); setVideo(objUrl);
+    $('downloadBtn').classList.add('hidden');
+    if(j) showMsg('');
+  }
+}
+$('openLocalBtn').addEventListener('click', () => $('fileInput').click());
+$('fileInput').addEventListener('change', e => openFiles(e.target.files));
+['dragover', 'dragenter'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
+document.addEventListener('drop', e => openFiles(e.dataTransfer.files));
+
+const qs = new URLSearchParams(location.search);
+if(qs.get('j')) loadDriveMeta(qs.get('j')); else applyMeta(null);
+if(qs.get('v')) loadDriveVideo(qs.get('v'));
+</script>
+</body>
+</html>
