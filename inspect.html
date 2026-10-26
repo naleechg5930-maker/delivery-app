@@ -4793,7 +4793,7 @@ const videoRec = (function(){
         else { prog = `최종 ${orderSum}개 / ${scannedSum}개 진행중`; progColor = items.some(it => it.overShown) ? '#fca5a5' : '#fde047'; }
       }
     }catch(e){}
-    const l1 = cur ? `${cur.docKey}   ${cur.company}` : '';
+    const l1 = cur ? `${cur.docKey}   ${cur.company}${cur.part > 1 ? '   [' + cur.part + '부]' : ''}` : '';
     const l2 = `${now.getFullYear()}-${p2(now.getMonth()+1)}-${p2(now.getDate())} ${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}   ${cur ? (currentWorker || cur.worker) : ''}`;
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, 54);
     ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(l1, 10, 23);
@@ -4842,9 +4842,11 @@ const videoRec = (function(){
     if(tickWorker){ try{ tickWorker.postMessage(0); tickWorker.terminate(); }catch(e){} tickWorker = null; }
     clearInterval(drawTimer); drawTimer = null;
   }
-  function start(){
+  // cont = 20분이 넘어서 이어 찍는 다음 부 { series, part } (10/25: 1부·2부… 로 끊김 없이 이어서 녹화)
+  function start(cont){
     if(!enabled || rec || !stream || !currentDocumentKey || !items.length || typeof MediaRecorder === 'undefined') return;
-    cur = { docKey: currentDocumentKey, suffix: extractDocumentSuffixJS(currentDocumentKey), company: (($('companyNameInput') || {}).value || '').trim(), worker: currentWorker || '', startAt: new Date() };
+    cur = { docKey: currentDocumentKey, suffix: extractDocumentSuffixJS(currentDocumentKey), company: (($('companyNameInput') || {}).value || '').trim(), worker: currentWorker || '', startAt: new Date(),
+      series: cont ? cont.series : Date.now().toString(36), part: cont ? cont.part : 1 };
     canvas = canvas || document.createElement('canvas'); canvas.width = W; canvas.height = H; ctx = canvas.getContext('2d');
     cur.frames = 0; cur.chunks = []; cur.events = [];
     draw(); startTicker();
@@ -4854,7 +4856,12 @@ const videoRec = (function(){
     const myChunks = cur.chunks; // 녹화마다 자기 조각 목록을 따로 가진다 (다음 녹화가 시작돼도 섞이지 않게)
     rec.ondataavailable = e => { if(e.data && e.data.size) myChunks.push(e.data); };
     rec.start(5000);
-    maxTimer = setTimeout(() => stop('20분 초과'), MAX_MS);
+    maxTimer = setTimeout(() => {
+      // 20분이 되면 이 부를 저장하고, 같은 전표 검수 중이면 바로 다음 부 녹화를 이어서 시작한다
+      const next = cur ? { series: cur.series, part: cur.part + 1, docKey: cur.docKey } : null;
+      stop(`20분 → ${next ? next.part + '부로 이어서' : '종료'}`);
+      if(next && enabled && currentDocumentKey === next.docKey) start(next);
+    }, MAX_MS);
     uiTimer = setInterval(updateBadge, 1000); updateBadge();
   }
   function stop(reason){
@@ -4903,13 +4910,13 @@ const videoRec = (function(){
   async function save(blob, info, reason){
     if(!blob.size) return;
     const d = info.startAt, day = `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;
-    const name = `${day}_${p2(d.getHours())}${p2(d.getMinutes())}_전표${safe(info.suffix)}_${safe(info.company)}_${safe(info.worker || currentWorker)}.webm`;
+    const name = `${day}_${p2(d.getHours())}${p2(d.getMinutes())}_전표${safe(info.suffix)}_${safe(info.company)}_${safe(info.worker || currentWorker)}${info.part > 1 ? '_' + info.part + '부' : ''}.webm`;
     const mb = (blob.size / 1048576).toFixed(1);
     const secs = Math.round(((info.stopAt || new Date()) - info.startAt) / 1000);
     const lenTxt = `${Math.floor(secs / 60)}분 ${secs % 60}초 · 화면 ${info.frames || 0}장`; // 화면 장수가 (초×12)보다 훨씬 적으면 그 사이 창이 가려져 녹화가 끊긴 것
     // 영상 보기 화면용 스캔 목록 파일 (영상과 같은 이름 .json)
     const jsonName = name.replace(/\.webm$/, '.json');
-    const jsonText = JSON.stringify({ v: 1, video: name, docKey: info.docKey, company: info.company, worker: info.worker || currentWorker || '', startAt: info.startAt.toISOString(), durationMs: (info.stopAt || new Date()) - info.startAt, summary: info.summary || null, reason, events: info.events || [] });
+    const jsonText = JSON.stringify({ v: 1, video: name, docKey: info.docKey, company: info.company, worker: info.worker || currentWorker || '', startAt: info.startAt.toISOString(), durationMs: (info.stopAt || new Date()) - info.startAt, summary: info.summary || null, reason, series: info.series || '', part: info.part || 1, events: info.events || [] });
     try{
       const dir = await refreshFolderLabel(false);
       if(dir){
@@ -5053,7 +5060,7 @@ const videoRec = (function(){
     if(!upUrl()) return;
     const id = 'vq_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
     const d = info.startAt; const bd = new Date(d.getTime() - (d.getHours() < 5 ? 86400000 : 0)); // 새벽 5시 전은 전날 탭 (검수기록과 같은 기준)
-    const meta = { name, vendor, documentKey: info.docKey, dateStr: `${bd.getFullYear()}-${p2(bd.getMonth()+1)}-${p2(bd.getDate())}`, size: blob.size, tries: 0 };
+    const meta = { name, vendor, documentKey: info.docKey, dateStr: `${bd.getFullYear()}-${p2(bd.getMonth()+1)}-${p2(bd.getDate())}`, size: blob.size, tries: 0, series: info.series || '', part: info.part || 1 };
     try{ await idbSet(id, { meta, blob, json: jsonText || null }); const list = await qIndex(); list.push(id); await setQIndex(list); }catch(e){ addScreenOnlyLog('☁ 업로드 대기 등록 실패', String(e.message || e)); return; }
     updateUploadInfo(); processQueue();
   }
@@ -5086,7 +5093,7 @@ const videoRec = (function(){
       const data = await blobToBase64(part);
       let r = null, err = null;
       for(let k = 0; k < 3; k++){ // 조각 하나당 3번까지 다시 시도
-        try{ r = await post({ type:'chunk', uploadUrl: st.uploadUrl, offset: off, total: blob.size, data, documentKey: meta.documentKey, dateStr: meta.dateStr, jsonId: meta.jsonId || '' }); if(r.ok) break; err = r.error; }
+        try{ r = await post({ type:'chunk', uploadUrl: st.uploadUrl, offset: off, total: blob.size, data, documentKey: meta.documentKey, dateStr: meta.dateStr, jsonId: meta.jsonId || '', series: meta.series || '', part: meta.part || 1 }); if(r.ok) break; err = r.error; }
         catch(e){ err = e.message || String(e); }
         await new Promise(z => setTimeout(z, 3000 * (k + 1)));
       }

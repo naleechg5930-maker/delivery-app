@@ -32,7 +32,7 @@
   .chip.on{ background:var(--navy); color:#fff; } .chip.red{ background:#fee2e2; color:#b91c1c; } .chip.red.on{ background:#b91c1c; color:#fff; }
   .cnt{ font-size:12px; color:var(--sub); }
   .list{ display:flex; flex-direction:column; gap:6px; overflow:auto; max-height:calc(100vh - 220px); padding-right:2px; }
-  .row{ display:grid; grid-template-columns:52px minmax(0,1fr) auto; gap:10px; align-items:center; padding:10px 12px; border-radius:10px; background:#fff; border:1px solid var(--line); cursor:pointer; text-align:left; font-family:inherit; color:inherit; }
+  .row{ display:grid; grid-template-columns:58px minmax(0,1fr) auto; gap:10px; align-items:center; padding:10px 12px; border-radius:10px; background:#fff; border:1px solid var(--line); cursor:pointer; text-align:left; font-family:inherit; color:inherit; }
   .row:hover{ border-color:var(--navy); }
   .row .tm{ font-family:monospace; font-weight:900; font-size:15px; }
   .row .cd{ font-family:monospace; font-weight:900; font-size:15px; overflow-wrap:anywhere; }
@@ -46,6 +46,13 @@
   .drop b{ color:var(--navy); } .drop.over{ border-color:var(--navy); background:#eef2ff; }
   .msg{ padding:12px 14px; border-radius:10px; background:#fff7ed; color:#9a3412; font-size:14px; font-weight:700; margin-top:10px; display:none; }
   .msg.show{ display:block; }
+  .parts{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+  .ptab{ font-family:inherit; font-size:13.5px; font-weight:800; padding:8px 14px; border-radius:10px; border:2px solid var(--navy); background:#fff; color:var(--navy); cursor:pointer; }
+  .ptab small{ font-weight:600; opacity:.75; margin-left:4px; }
+  .ptab.on{ background:var(--navy); color:#fff; }
+  .ptab .n{ display:inline-block; min-width:18px; margin-left:6px; padding:0 6px; border-radius:999px; background:var(--hit); color:#111; font-size:12px; }
+  .row .pt{ display:block; font-size:11px; font-weight:800; color:var(--sub); font-family:"Noto Sans KR",sans-serif; }
+  .row.cur .pt{ color:#cbd5e1; }
   .hidden{ display:none !important; }
   @media (max-width: 860px){
     .body{ grid-template-columns:1fr; }
@@ -69,9 +76,11 @@
     <div id="drop" class="drop">
       <div style="font-size:42px">🎥</div>
       <div style="font-size:17px; margin-top:6px;">노트북 저장 폴더의 <b>영상(.webm)</b>과 같은 이름의 <b>스캔 목록(.json)</b>을<br>여기에 끌어다 놓으세요</div>
+      <div style="font-size:13px; margin-top:6px;">20분 넘어서 <b>1부·2부…</b>로 나뉜 영상은 그 파일들을 <b>전부 같이</b> 끌어다 놓으면 이어서 볼 수 있어요</div>
       <div style="font-size:13px; margin-top:8px;">검수기록 시트 S열의 "▶ 영상 보기"로 열면 자동으로 불러와요</div>
     </div>
     <div id="player" class="hidden">
+      <div class="parts hidden" id="parts"></div>
       <video id="vid" controls playsinline preload="auto"></video>
       <div class="bar" id="bar"><div class="track"></div><div class="fill" id="fill"></div><div id="ticks"></div><div class="knob" id="knob"></div></div>
       <div class="times"><span id="tNow">0:00</span><span id="tEnd">0:00</span></div>
@@ -91,30 +100,52 @@
 const API = 'https://script.google.com/macros/s/AKfycbx5lgkuEllF8bX8EifMaAmDnBb06JN2iDNtA2EwT8RJpj6BJlblDi3dHlxvh2OzZWFVNw/exec';
 const $ = id => document.getElementById(id);
 const vid = $('vid');
-let meta = null, events = [], filter = 'all', shown = [], curIdx = -1, durationSec = 0, objUrl = '', pinned = null;
+// parts: 한 전표 영상이 20분마다 1부·2부…로 나뉘어 있으면 여러 개. 각 부 = { no, v(드라이브 영상 id), j(목록 id), file, meta, src, label }
+let loading = false, parts = [], cp = -1, events = [], filter = 'all', shown = [], curIdx = -1, durationSec = 0, pinned = null, loadToken = 0;
 const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 const fmtT = s => { s = Math.max(0, Math.floor(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const hm = d => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 function showMsg(t){ $('msg').textContent = t; $('msg').classList.toggle('show', !!t); }
+const multi = () => parts.length > 1;
 
-/* ---------- 화면 채우기 ---------- */
-function applyMeta(m){
-  meta = m || null;
-  events = (m && Array.isArray(m.events)) ? m.events.map((e, i) => Object.assign({ i }, e)) : [];
-  if(m){
-    $('title').textContent = `${m.docKey || ''} · ${m.company || ''}`;
-    const st = m.startAt ? new Date(m.startAt) : null, en = st && m.durationMs ? new Date(st.getTime() + m.durationMs) : null;
-    const hm = d => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    const parts = [m.worker || ''];
-    if(st) parts.push(`${st.getMonth() + 1}/${st.getDate()} ${hm(st)}${en ? ' ~ ' + hm(en) : ''}`);
-    if(m.durationMs) parts.push(`(${Math.floor(m.durationMs / 60000)}분 ${Math.round(m.durationMs / 1000) % 60}초)`);
-    if(m.summary) parts.push(`${m.summary.items}품목 ${m.summary.scanned}개`);
-    $('meta').textContent = parts.filter(Boolean).join(' · ');
-    document.title = `검수 영상 · ${m.docKey || ''} ${m.company || ''}`;
+/* ---------- 여러 부를 한 목록으로 ---------- */
+function setParts(list){
+  parts = list.slice().sort((a, b) => (a.no || 0) - (b.no || 0));
+  parts.forEach((p, k) => {
+    p.no = k + 1;
+    const m = p.meta || {};
+    const st = m.startAt ? new Date(m.startAt) : null;
+    p.label = st ? `${hm(st)}~${m.durationMs ? hm(new Date(st.getTime() + m.durationMs)) : ''}` : '';
+  });
+  events = [];
+  parts.forEach((p, pi) => ((p.meta && Array.isArray(p.meta.events)) ? p.meta.events : []).forEach(e => events.push(Object.assign({}, e, { pi }))));
+  events.forEach((e, i) => { e.i = i; });
+  const first = parts.find(p => p.meta) ? parts.find(p => p.meta).meta : null;
+  const last = parts.slice().reverse().find(p => p.meta) ? parts.slice().reverse().find(p => p.meta).meta : null;
+  if(first){
+    $('title').textContent = `${first.docKey || ''} · ${first.company || ''}`;
+    const st = first.startAt ? new Date(first.startAt) : null;
+    const en = last && last.startAt && last.durationMs ? new Date(new Date(last.startAt).getTime() + last.durationMs) : null;
+    const total = parts.reduce((a, p) => a + ((p.meta && p.meta.durationMs) || 0), 0);
+    const bits = [first.worker || ''];
+    if(st) bits.push(`${st.getMonth() + 1}/${st.getDate()} ${hm(st)}${en ? ' ~ ' + hm(en) : ''}`);
+    if(total) bits.push(`(${Math.floor(total / 60000)}분 ${Math.round(total / 1000) % 60}초${multi() ? ' · ' + parts.length + '부로 나뉨' : ''})`);
+    if(last && last.summary) bits.push(`${last.summary.items}품목 ${last.summary.scanned}개`);
+    $('meta').textContent = bits.filter(Boolean).join(' · ');
+    document.title = `검수 영상 · ${first.docKey || ''} ${first.company || ''}`;
   }
   $('cAll').textContent = `전체 ${events.length}`;
   $('cOk').textContent = `정상 ${events.filter(e => e.ok).length}`;
   $('cErr').textContent = `오피킹 ${events.filter(e => !e.ok).length}`;
   renderList();
+}
+function renderTabs(){
+  const box = $('parts');
+  box.classList.toggle('hidden', !multi());
+  if(!multi()){ box.innerHTML = ''; return; }
+  const hitBy = {}; if(tokens().length) shown.forEach(e => { hitBy[e.pi] = (hitBy[e.pi] || 0) + 1; });
+  box.innerHTML = parts.map((p, k) => `<button type="button" class="ptab${k === cp ? ' on' : ''}" data-k="${k}">${p.no}부<small>${esc(p.label)}</small>${hitBy[k] ? `<span class="n">${hitBy[k]}</span>` : ''}</button>`).join('');
+  box.querySelectorAll('.ptab').forEach(b => b.addEventListener('click', () => selectPart(Number(b.dataset.k), 0, false)));
 }
 function tokens(){ return $('search').value.trim().toUpperCase().split(/\s+/).filter(Boolean); }
 function hl(text, toks){
@@ -122,65 +153,72 @@ function hl(text, toks){
   toks.forEach(t => { const i = out.toUpperCase().indexOf(esc(t)); if(i !== -1) out = out.slice(0, i) + '<mark>' + out.slice(i, i + esc(t).length) + '</mark>' + out.slice(i + esc(t).length); });
   return out;
 }
+const qLabel = e => e.ok ? (e.q > 1 ? '+' + e.q : '+1') : '오피킹';
 function renderList(){
   const toks = tokens();
   shown = events.filter(e => (filter === 'all' || (filter === 'ok' ? e.ok : !e.ok)) && toks.every(t => `${e.c} ${e.n} ${e.s}`.toUpperCase().indexOf(t) !== -1));
-  $('cnt').textContent = !events.length ? (meta ? '이 영상에는 스캔 목록이 없어요 (예전에 녹화한 영상)' : '스캔 목록이 아직 없어요')
+  $('cnt').textContent = !events.length ? (parts.length ? '이 영상에는 스캔 목록이 없어요 (예전에 녹화한 영상)' : '스캔 목록이 아직 없어요')
     : (toks.length ? `"${$('search').value.trim()}" 와 맞는 스캔 ${shown.length}건 · 누르면 그 장면 3초 전부터 재생` : `스캔 ${shown.length}건 · 누르면 그 장면 3초 전부터 재생`);
   $('list').innerHTML = shown.map(e => `<button type="button" class="row${e.ok ? '' : ' err'}" data-i="${e.i}">
-      <span class="tm">${fmtT(e.t / 1000)}</span>
+      <span class="tm">${multi() ? `<span class="pt">${parts[e.pi].no}부</span>` : ''}${fmtT(e.t / 1000)}</span>
       <span><span class="cd">${e.ok ? '' : '⚠ '}${hl(e.c, toks)}</span><br><span class="sp2">${e.ok ? hl(e.s || e.n || '', toks) + (e.p ? ' · ' + esc(e.p) : '') : esc(e.m || '오피킹')}</span></span>
-      <span class="q">${e.ok ? (e.q > 1 ? '+' + e.q : '+1') : '오피킹'}</span></button>`).join('');
+      <span class="q">${qLabel(e)}</span></button>`).join('');
   $('list').querySelectorAll('.row').forEach(r => r.addEventListener('click', () => seekTo(events[Number(r.dataset.i)], true)));
-  renderTicks(); markCurrent(false);
+  renderTabs(); renderTicks(); curIdx = -2; markCurrent(false);
 }
+function partDur(){ const p = parts[cp]; return durationSec || (p && p.meta && p.meta.durationMs ? p.meta.durationMs / 1000 : 0); }
 function renderTicks(){
-  const dur = durationSec || (meta && meta.durationMs ? meta.durationMs / 1000 : 0);
-  if(!dur){ $('ticks').innerHTML = ''; return; }
+  const dur = partDur();
+  if(!dur || cp < 0){ $('ticks').innerHTML = ''; return; }
   const toks = tokens(), hit = new Set(toks.length ? shown.map(e => e.i) : []);
-  $('ticks').innerHTML = events.map(e => `<div class="tick${!e.ok ? ' err' : ''}${hit.has(e.i) ? ' hit' : ''}" style="left:${Math.min(100, e.t / 10 / dur)}%"></div>`).join('');
+  $('ticks').innerHTML = events.filter(e => e.pi === cp).map(e => `<div class="tick${!e.ok ? ' err' : ''}${hit.has(e.i) ? ' hit' : ''}" style="left:${Math.min(100, e.t / 10 / dur)}%"></div>`).join('');
 }
 function seekTo(e, play){
-  if(!e || !vid.src) return;
+  if(!e) return;
   pinned = e; // 그 스캔 장면이 나오기 전 3초 동안도 누른 줄을 표시
-  vid.currentTime = Math.max(0, e.t / 1000 - 3);
-  markCurrent(true);
+  const at = Math.max(0, e.t / 1000 - 3);
+  if(e.pi !== cp || !vid.src) { selectPart(e.pi, at, play); return; }
+  vid.currentTime = at; markCurrent(true);
   if(play) vid.play().catch(() => {});
 }
 function markCurrent(scroll){
+  if(loading) return; // 다른 부 영상을 불러오는 동안엔 표시를 바꾸지 않음
   const now = vid.currentTime * 1000 + 300;
-  if(pinned && (now < pinned.t - 3600 || now > pinned.t + 1500)) pinned = null; // 다른 곳으로 옮기거나 지나가면 해제
+  if(pinned && (pinned.pi !== cp || now < pinned.t - 3600 || now > pinned.t + 1500)) pinned = null; // 다른 곳으로 옮기거나 지나가면 해제
   let best = -1;
   if(pinned) best = shown.indexOf(pinned);
-  else shown.forEach((e, k) => { if(e.t <= now) best = k; });
+  else shown.forEach((e, k) => { if(e.pi === cp && e.t <= now) best = k; });
   if(best === curIdx && !scroll) return;
   curIdx = best;
   $('list').querySelectorAll('.row').forEach((r, k) => {
     r.classList.toggle('cur', k === best);
-    const q = r.querySelector('.q'); const e = shown[k];
-    if(q && e) q.textContent = k === best && !vid.paused ? '▶ 재생중' : (e.ok ? (e.q > 1 ? '+' + e.q : '+1') : '오피킹');
+    const q = r.querySelector('.q'), e = shown[k];
+    if(q && e) q.textContent = k === best && !vid.paused ? '▶ 재생중' : qLabel(e);
   });
-  if(best >= 0 && !vid.paused){ const r = $('list').children[best]; if(r) r.scrollIntoView({ block:'nearest' }); }
+  if(best >= 0 && (scroll || !vid.paused)){ const r = $('list').children[best]; if(r) r.scrollIntoView({ block:'nearest' }); }
 }
 function updateBar(){
-  const dur = durationSec || 0;
+  const dur = partDur();
   const pct = dur ? Math.min(100, vid.currentTime / dur * 100) : 0;
   $('fill').style.width = pct + '%'; $('knob').style.left = pct + '%';
-  $('tNow').textContent = fmtT(vid.currentTime); $('tEnd').textContent = fmtT(dur);
+  $('tNow').textContent = (multi() && cp >= 0 ? parts[cp].no + '부 ' : '') + fmtT(vid.currentTime); $('tEnd').textContent = fmtT(dur);
 }
 vid.addEventListener('loadedmetadata', () => {
-  if(vid.duration === Infinity && !(meta && meta.durationMs)){ // 길이 정보가 없는 영상: 끝으로 한 번 보내서 길이를 알아낸다
+  const p = parts[cp];
+  if(vid.duration === Infinity && !(p && p.meta && p.meta.durationMs)){ // 길이 정보가 없는 영상: 끝으로 한 번 보내서 길이를 알아낸다
     const back = () => { vid.removeEventListener('durationchange', back); durationSec = isFinite(vid.duration) ? vid.duration : 0; vid.currentTime = 0; renderTicks(); updateBar(); };
     vid.addEventListener('durationchange', back); vid.currentTime = 1e9;
   }
-  durationSec = isFinite(vid.duration) && vid.duration > 0 ? vid.duration : (meta && meta.durationMs ? meta.durationMs / 1000 : 0);
+  durationSec = isFinite(vid.duration) && vid.duration > 0 ? vid.duration : (p && p.meta && p.meta.durationMs ? p.meta.durationMs / 1000 : 0);
   renderTicks(); updateBar();
 });
 vid.addEventListener('timeupdate', () => { updateBar(); markCurrent(false); });
 vid.addEventListener('play', () => markCurrent(true));
 vid.addEventListener('pause', () => markCurrent(true));
+// 한 부가 끝나면 다음 부로 이어서 재생
+vid.addEventListener('ended', () => { if(cp >= 0 && cp < parts.length - 1) selectPart(cp + 1, 0, true); });
 $('bar').addEventListener('click', ev => {
-  const r = $('bar').getBoundingClientRect(); const dur = durationSec;
+  const r = $('bar').getBoundingClientRect(); const dur = partDur();
   if(dur) vid.currentTime = Math.max(0, Math.min(dur, (ev.clientX - r.left) / r.width * dur));
 });
 $('search').addEventListener('input', renderList);
@@ -188,71 +226,106 @@ document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () =
   filter = c.dataset.f; document.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === c)); renderList();
 }));
 document.addEventListener('keydown', ev => {
-  if(document.activeElement === $('search') || !shown.length || !vid.src) return;
+  if(document.activeElement === $('search') || !shown.length || cp < 0) return;
   if(ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
   ev.preventDefault();
-  const base = pinned ? pinned.t : vid.currentTime * 1000 + 300;
+  // 기준 = (몇 부, 그 부 안의 시각). 부가 앞이면 무조건 앞
+  const base = pinned ? [pinned.pi, pinned.t] : [cp, vid.currentTime * 1000 + 300];
+  const before = e => e.pi < base[0] || (e.pi === base[0] && e.t < base[1]);
+  const after = e => e.pi > base[0] || (e.pi === base[0] && e.t > base[1]);
   let k;
-  if(ev.key === 'ArrowRight'){ k = shown.findIndex(e => e.t > base); if(k === -1) k = shown.length - 1; }
-  else { k = -1; shown.forEach((e, j) => { if(e.t < base) k = j; }); if(k < 0) k = 0; }
+  if(ev.key === 'ArrowRight'){ k = shown.findIndex(after); if(k === -1) k = shown.length - 1; }
+  else { k = -1; shown.forEach((e, j) => { if(before(e)) k = j; }); if(k < 0) k = 0; }
   seekTo(shown[k], true);
 });
 
 /* ---------- 영상 불러오기 ---------- */
-function setVideo(src){
-  $('drop').classList.add('hidden'); $('player').classList.remove('hidden');
-  vid.src = src;
-}
-// 드라이브에서 바로 재생 → 안 되면 업로드 웹앱을 거쳐 4MB씩 받아서 재생
-async function loadDriveVideo(id){
-  setVideo(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(id)}`);
-  $('downloadBtn').href = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(id)}`;
-  $('downloadBtn').classList.remove('hidden');
-  const ok = await new Promise(res => {
-    const t = setTimeout(() => res(false), 9000);
-    vid.addEventListener('loadedmetadata', () => { clearTimeout(t); res(true); }, { once:true });
-    vid.addEventListener('error', () => { clearTimeout(t); res(false); }, { once:true });
+const driveUrl = id => `https://drive.google.com/uc?export=download&id=${encodeURIComponent(id)}`;
+function waitMeta(ms){
+  return new Promise(res => {
+    const done = ok => { clearTimeout(t); vid.removeEventListener('loadedmetadata', okF); vid.removeEventListener('error', errF); res(ok); };
+    const okF = () => done(true), errF = () => done(false);
+    const t = setTimeout(() => done(false), ms || 9000);
+    vid.addEventListener('loadedmetadata', okF); vid.addEventListener('error', errF);
   });
-  if(ok) return;
+}
+// 드라이브에서 바로 재생이 막히면 업로드 웹앱을 거쳐 4MB씩 받아서 재생
+async function fetchViaApi(p, token){
+  const chunks = []; let off = 0, total = 1;
+  while(off < total){
+    const r = await (await fetch(`${API}?part=${encodeURIComponent(p.v)}&offset=${off}`)).json();
+    if(!r.ok) throw new Error(r.error || '영상 받기 실패');
+    total = r.total;
+    const bin = atob(r.data); const arr = new Uint8Array(bin.length); for(let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    chunks.push(arr); off += arr.length;
+    if(token === loadToken) showMsg(`${multi() ? p.no + '부 ' : ''}영상을 받아오는 중이에요... ${Math.round(off / total * 100)}%`);
+    if(!arr.length) break;
+  }
+  return URL.createObjectURL(new Blob(chunks, { type:'video/webm' }));
+}
+async function selectPart(k, at, play){
+  if(k < 0 || k >= parts.length) return;
+  const token = ++loadToken, p = parts[k];
+  cp = k; durationSec = 0; loading = true;
+  $('drop').classList.add('hidden'); $('player').classList.remove('hidden');
+  if(p.v){ $('downloadBtn').href = driveUrl(p.v); $('downloadBtn').textContent = `⬇ 원본 내려받기${multi() ? ' (' + p.no + '부)' : ''}`; $('downloadBtn').classList.remove('hidden'); }
+  else $('downloadBtn').classList.add('hidden');
+  renderTabs(); renderTicks(); updateBar();
   try{
-    showMsg('드라이브에서 영상을 받아오는 중이에요... 0%');
-    const parts = []; let off = 0, total = 1;
-    while(off < total){
-      const r = await (await fetch(`${API}?part=${encodeURIComponent(id)}&offset=${off}`)).json();
-      if(!r.ok) throw new Error(r.error || '영상 받기 실패');
-      total = r.total;
-      const bin = atob(r.data); const arr = new Uint8Array(bin.length); for(let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-      parts.push(arr); off += arr.length;
-      showMsg(`드라이브에서 영상을 받아오는 중이에요... ${Math.round(off / total * 100)}%`);
-      if(!arr.length) break;
+    if(!p.src){
+      if(p.file) p.src = URL.createObjectURL(p.file);
+      else if(p.v){
+        vid.src = driveUrl(p.v);
+        if(await waitMeta(9000)) p.src = driveUrl(p.v);
+        else { if(token !== loadToken) return; p.src = await fetchViaApi(p, token); }
+      } else throw new Error('영상 파일이 없어요');
     }
-    if(objUrl) URL.revokeObjectURL(objUrl);
-    objUrl = URL.createObjectURL(new Blob(parts, { type:'video/webm' }));
-    setVideo(objUrl); showMsg('');
+    if(token !== loadToken) return;
+    if(vid.src !== p.src || vid.readyState < 1){ vid.src = p.src; await waitMeta(15000); }
+    if(token !== loadToken) return;
+    showMsg('');
+    vid.currentTime = at || 0;
+    loading = false;
+    renderTicks(); updateBar(); markCurrent(true);
+    if(play) vid.play().catch(() => {});
   }catch(e){
-    showMsg('드라이브 영상을 불러오지 못했어요. [원본 내려받기]로 받은 뒤 [노트북 영상 열기]로 열어주세요. (' + (e.message || e) + ')');
+    if(token === loadToken) loading = false;
+    if(token === loadToken) showMsg(`${multi() ? p.no + '부 ' : ''}영상을 불러오지 못했어요. [원본 내려받기]로 받은 뒤 [노트북 영상 열기]로 열어주세요. (${e.message || e})`);
   }
 }
-async function loadDriveMeta(id){
-  try{
-    const m = await (await fetch(`${API}?meta=${encodeURIComponent(id)}`)).json();
-    if(m && m.ok === false) throw new Error(m.error);
-    applyMeta(m);
-  }catch(e){ showMsg('스캔 목록을 불러오지 못했어요 (' + (e.message || e) + ')'); applyMeta(null); }
+async function loadFromDrive(list){
+  // list = [{v, j}] — 목록(JSON)을 먼저 다 받아서 몇 부인지 맞춘 뒤 1부부터 연다
+  const loaded = await Promise.all(list.map(async (x, idx) => {
+    let m = null;
+    if(x.j){ try{ m = await (await fetch(`${API}?meta=${encodeURIComponent(x.j)}`)).json(); if(m && m.ok === false) throw new Error(m.error); }catch(e){ m = null; showMsg('스캔 목록 일부를 불러오지 못했어요 (' + (e.message || e) + ')'); } }
+    return { v: x.v, j: x.j, meta: m, no: (m && m.part) || idx + 1 };
+  }));
+  setParts(loaded);
+  selectPart(0, 0, false);
 }
-// 노트북 파일 열기 (영상 + 같은 이름 .json)
+// 노트북 파일 열기 — 영상(.webm)마다 같은 이름 .json을 짝지어서, 1부·2부… 순서로
 async function openFiles(files){
   const list = Array.from(files || []);
-  const v = list.find(f => /\.webm$/i.test(f.name) || /^video\//.test(f.type));
-  const j = list.find(f => /\.json$/i.test(f.name));
-  if(j){ try{ applyMeta(JSON.parse(await j.text())); }catch(e){ showMsg('스캔 목록 파일을 읽지 못했어요.'); } }
-  else if(v){ applyMeta(null); showMsg('같은 이름의 .json(스캔 목록) 파일도 같이 끌어다 놓으면 품번 검색이 돼요.'); }
-  if(v){
-    if(objUrl) URL.revokeObjectURL(objUrl);
-    objUrl = URL.createObjectURL(v); setVideo(objUrl);
-    $('downloadBtn').classList.add('hidden');
-    if(j) showMsg('');
+  const base = n => n.replace(/\.(webm|json)$/i, '');
+  const vids = list.filter(f => /\.webm$/i.test(f.name) || /^video\//.test(f.type));
+  const jsons = {}; list.filter(f => /\.json$/i.test(f.name)).forEach(f => { jsons[base(f.name)] = f; });
+  if(!vids.length){ showMsg('영상(.webm) 파일도 같이 끌어다 놓아 주세요.'); return; }
+  const loaded = [];
+  for(const f of vids){
+    let m = null;
+    const j = jsons[base(f.name)];
+    if(j){ try{ m = JSON.parse(await j.text()); }catch(e){} }
+    const byName = (f.name.match(/_(\d+)부\.webm$/i) || [])[1];
+    loaded.push({ file: f, meta: m, no: (m && m.part) || (byName ? Number(byName) : 1), name: f.name });
   }
+  // 같은 번호면(=부 정보 없는 예전 파일) 파일 이름순
+  loaded.sort((a, b) => (a.no - b.no) || a.name.localeCompare(b.name));
+  parts.forEach(p => { if(p.file && p.src) URL.revokeObjectURL(p.src); });
+  cp = -1; pinned = null;
+  setParts(loaded.map((x, k) => Object.assign(x, { no: k + 1 })));
+  await selectPart(0, 0, false);
+  const missing = loaded.filter(x => !x.meta).length;
+  if(missing) showMsg(`같은 이름의 .json(스캔 목록) 파일도 같이 끌어다 놓으면 품번 검색이 돼요.${missing < loaded.length ? ' (' + missing + '개 빠짐)' : ''}`);
 }
 $('openLocalBtn').addEventListener('click', () => $('fileInput').click());
 $('fileInput').addEventListener('change', e => openFiles(e.target.files));
@@ -260,9 +333,12 @@ $('fileInput').addEventListener('change', e => openFiles(e.target.files));
 ['dragleave', 'drop'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
 document.addEventListener('drop', e => openFiles(e.dataTransfer.files));
 
+// 주소: ?p=영상id.목록id,영상id.목록id (1부,2부…)  /  예전 주소 ?v=영상id&j=목록id
 const qs = new URLSearchParams(location.search);
-if(qs.get('j')) loadDriveMeta(qs.get('j')); else applyMeta(null);
-if(qs.get('v')) loadDriveVideo(qs.get('v'));
+const plist = (qs.get('p') || '').split(',').map(x => x.trim()).filter(Boolean).map(x => { const [v, j] = x.split('.'); return { v, j: j || '' }; }).filter(x => x.v);
+if(plist.length) loadFromDrive(plist);
+else if(qs.get('v')) loadFromDrive([{ v: qs.get('v'), j: qs.get('j') || '' }]);
+else setParts([]);
 </script>
 </body>
 </html>
