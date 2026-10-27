@@ -1844,6 +1844,12 @@ const PRODUCT_CODE_LEN = 11; // 기본 품목코드 자릿수 (예: NTA8000A117)
 
 function processScan(rawCode){
   if(blockedByMispick()) return;
+  // 10/27: 열린 전표가 없으면(패킹완료로 비운 뒤 등) 상품 스캔은 받지 않는다 — 오피킹·녹화 없이 안내만
+  if(!items.length && !/^DLV\|/i.test(String(rawCode || ''))){
+    showBanner('err', '전표를 먼저 찍어주세요', rawCode, '지금 열려 있는 전표가 없어요', '📄');
+    playErrSound();
+    return;
+  }
   if(currentWorker === '' && !adminForceUnlocked){
     document.getElementById('workerBlockOverlay').style.display = 'flex';
     playErrSound();
@@ -2025,6 +2031,17 @@ function hideWorkerReminderBanner(){
 // (패킹완료 처리 중에도 다음 전표 QR을 바로 찍고 작업을 이어갈 수 있도록 하기 위함)
 function handlePackingCompleteScan(suffix){
   try{ if(typeof videoRec !== 'undefined') videoRec.onDlv(suffix); }catch(e){} // 배송라벨(DLV)을 찍으면 그 전표 녹화를 저장하고 끝냄
+  // 10/27: 이 노트북에 떠 있는 전표의 배송라벨이면 화면을 비운다
+  // → 패킹완료 뒤 누가 실수로 상품을 찍어도 끝난 전표에 오피킹이 붙거나, 같은 전표로 새 녹화가 시작돼 영상이 덮이는 일이 없게
+  try{
+    if(items.length && currentDocumentKey && String(extractDocumentSuffixJS(currentDocumentKey)) === String(suffix) && !isInspectionInProgress()){
+      const doneKey = currentDocumentKey, doneCompany = (document.getElementById('companyNameInput').value || '').trim();
+      loadItems([]);
+      currentDocumentKey = '';
+      document.getElementById('companyNameInput').value = '';
+      showBanner('ok', '패킹완료 · 다음 전표를 찍어주세요', `${doneKey} ${doneCompany}`, '끝난 전표는 화면에서 비웠어요', '📦');
+    }
+  }catch(e){ console.warn('패킹완료 화면 비우기 실패(무시):', e); }
   if(!gasWebhookUrl){
     addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), `DLV|${suffix}`, false, '패킹완료 처리 불가: 구글시트 연동 주소가 설정되지 않았습니다');
     playErrSound();
