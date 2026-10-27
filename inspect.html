@@ -2288,6 +2288,7 @@ function countScanLogScans(){
 }
 
 // 검수완료 전송이 실패한 스캔로그는 이 기기에 보관했다가, 다음 검수완료가 성공하면 몰아서 다시 보낸다
+setTimeout(async () => { try{ if(((await idbGet('pendingScanLogs')) || []).length) scheduleScanLogRetry(); }catch(e){} }, 15000); // 창을 다시 열었을 때 남은 게 있으면 이어서
 async function queuePendingScanLog(entry){
   try{
     const list = (await idbGet('pendingScanLogs')) || [];
@@ -2296,15 +2297,37 @@ async function queuePendingScanLog(entry){
   }catch(err){ console.warn('스캔로그 임시보관 실패:', err); }
 }
 
+// 10/27: 서버가 바빠서 스캔로그만 못 넣은 경우 1분 뒤부터 자동으로 다시 보낸다 (실패하면 2분, 4분… 최대 10분 간격으로 계속)
+let scanLogRetryTimer = null, scanLogRetryDelay = 60000, scanLogFlushing = false;
+function scheduleScanLogRetry(){
+  clearTimeout(scanLogRetryTimer);
+  scanLogRetryTimer = setTimeout(async () => {
+    const left = await flushPendingScanLogs();
+    if(left > 0){ scanLogRetryDelay = Math.min(scanLogRetryDelay * 2, 600000); scheduleScanLogRetry(); }
+    else scanLogRetryDelay = 60000;
+  }, scanLogRetryDelay);
+}
+// 남은(못 보낸) 건수를 돌려준다
 async function flushPendingScanLogs(){
-  if(!gasWebhookUrl) return;
+  if(!gasWebhookUrl || scanLogFlushing) return 0;
+  scanLogFlushing = true;
   try{
     const list = (await idbGet('pendingScanLogs')) || [];
-    if(!list.length) return;
+    if(!list.length) return 0;
     const resp = await fetch(gasWebhookUrl, { method:'POST', body: JSON.stringify({ type:'saveScanLogs', logs: list }) });
     const result = await resp.json();
-    if(result && result.ok) await idbSet('pendingScanLogs', []);
-  }catch(err){ console.warn('보관된 스캔로그 재전송 실패(다음에 다시 시도):', err); }
+    if(!result) return list.length;
+    // 성공한 건만 빼고, 그 사이 새로 쌓인 건은 그대로 둔다
+    const now = (await idbGet('pendingScanLogs')) || [];
+    const done = new Set(list.filter((e, i) => result.ok || (Array.isArray(result.results) && result.results[i])).map(e => e.recordedAt + '|' + e.documentKey));
+    const rest = now.filter(e => !done.has(e.recordedAt + '|' + e.documentKey));
+    await idbSet('pendingScanLogs', rest);
+    if(done.size) try{ addScreenOnlyLog('📋 스캔로그 재전송', `${done.size}건 저장 완료` + (rest.length ? ` (남은 ${rest.length}건은 잠시 뒤 다시)` : ''), '📋'); }catch(e){}
+    return rest.length;
+  }catch(err){
+    console.warn('보관된 스캔로그 재전송 실패(다음에 다시 시도):', err);
+    try{ return ((await idbGet('pendingScanLogs')) || []).length; }catch(e){ return 1; }
+  }finally{ scanLogFlushing = false; }
 }
 
 function addLog(timeStr, code, ok, note){
@@ -3032,7 +3055,7 @@ async function autoCaptureAndSave(companyName, stamp, meta){
     if(processedOverrideKey === canonicalDocKeyJS(meta.documentKey)) processedOverrideKey = '';
   }
   try{
-    await fetch(gasWebhookUrl, {
+    const saveResp = await fetch(gasWebhookUrl, {
       method: 'POST',
       body: JSON.stringify({
         company: companyName,
@@ -3057,7 +3080,18 @@ async function autoCaptureAndSave(companyName, stamp, meta){
       })
     });
     console.log('구글시트 업로드 완료');
-    flushPendingScanLogs(); // 예전에 실패해서 보관해둔 스캔로그가 있으면 이어서 전송
+    let saveResult = null; try{ saveResult = await saveResp.json(); }catch(e){}
+    if(saveResult && saveResult.scanLogFailed && meta && ((meta.scanEvents && meta.scanEvents.length) || (meta.scanItems && meta.scanItems.length))){
+      // 검수기록은 저장됐는데 스캔로그만 서버가 바빠서 못 넣은 경우 → 보관했다가 1분 뒤 자동으로 다시 보냄
+      await queuePendingScanLog({
+        recordedAt: Date.now(), documentKey: meta.documentKey || '', company: companyName,
+        worker: meta.worker || '', scanEvents: meta.scanEvents || [], scanItems: meta.scanItems || [],
+      });
+      try{ addScreenOnlyLog('📋 스캔로그 대기', '서버가 바빠서 스캔로그만 1분 뒤 자동으로 다시 보내요 (검수기록은 저장됨)', '📋'); }catch(e){}
+      scheduleScanLogRetry();
+    } else {
+      flushPendingScanLogs(); // 예전에 실패해서 보관해둔 스캔로그가 있으면 이어서 전송
+    }
   }catch(err){
     console.warn('구글시트 업로드 실패:', err);
     // 네트워크 문제로 못 보낸 스캔로그는 이 기기에 보관했다가 다음 검수완료 때 다시 보낸다
@@ -3066,6 +3100,7 @@ async function autoCaptureAndSave(companyName, stamp, meta){
         recordedAt: Date.now(), documentKey: meta.documentKey || '', company: companyName,
         worker: meta.worker || '', scanEvents: meta.scanEvents || [], scanItems: meta.scanItems || [],
       });
+      scheduleScanLogRetry();
     }
   }
 }
