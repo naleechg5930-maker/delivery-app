@@ -149,6 +149,11 @@
     <textarea id="repairText" placeholder="회사명 : 루나앤솔 / 수선창고 / 2026/10/28&#10;품목코드	품목명	규격	합계	수선창고	출고단가	입고단가&#10;NTA8019C111	NT-8019-C1BA	화이트-기본-S	147	147	..."></textarea>
     <div id="repairStatus"></div>
     <button type="button" class="btn primary hidden" id="repairUploadBtn" style="margin-top:8px;width:100%">수선품 올리기</button>
+    <h2 style="margin-top:16px">⛔ 수선품 안 나가는 업체</h2>
+    <div class="hint">한 줄에 한 업체씩 (판매현황 거래처명 그대로). 이 업체 전표를 불러오면 "수선품 출고 안 돼요" 빨간 안내가 뜨고, 수선품 재고에서도 빠지지 않아요.</div>
+    <textarea id="noRepairText" style="min-height:90px;font-size:15px;font-family:inherit" placeholder="핫핑&#10;포레스트핏"></textarea>
+    <div id="noRepairStatus"></div>
+    <button type="button" class="btn ghost" id="noRepairSaveBtn" style="margin-top:8px;width:100%">업체 목록 저장</button>
   </div>
 
   <div class="panel">
@@ -667,7 +672,17 @@ $('inUploadBtn').addEventListener('click', async () => {
 });
 
 /* ---------- 4. 수선품 (10/28) ---------- */
-let repair = null, pendingRepair = null, repairView = 'today';
+let repair = null, pendingRepair = null, repairView = 'today', noRepairLoaded = false;
+$('noRepairSaveBtn').addEventListener('click', async () => {
+  const list = $('noRepairText').value.split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+  const btn = $('noRepairSaveBtn'); btn.disabled = true; btn.textContent = '저장 중...';
+  try{
+    const res = await postJson({ type: 'saveRepairExcludeCompanies', companies: list });
+    if(!res.ok) throw new Error(res.error);
+    setStatus('noRepairStatus', 'ok', `저장 완료: ${res.companies.length}개 업체`);
+  }catch(err){ setStatus('noRepairStatus', 'err', '저장 실패: ' + err.message); }
+  finally{ btn.disabled = false; btn.textContent = '업체 목록 저장'; }
+});
 function repairLine(code){
   const r = repair && repair.items ? repair.items[code] : null;
   if(!r || !(r.b > 0 || r.u > 0)) return '';
@@ -678,6 +693,7 @@ async function loadRepair(){
     const data = await getJson('action=getRepairStock');
     if(!data.ok) throw new Error(data.error);
     repair = data.has ? data : null;
+    if(!noRepairLoaded || document.activeElement !== $('noRepairText')){ $('noRepairText').value = (data.noRepair || []).join('\n'); noRepairLoaded = true; }
     renderRepair();
     if(lastCode && stock) showItem(lastCode, true);
   }catch(err){ $('repairBox').textContent = '불러오기 실패: ' + err.message; }

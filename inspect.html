@@ -509,9 +509,9 @@
 </div>
 <!-- 10/28: 수선품 안내 (작업은 막지 않음) -->
 <div id="repairNotice" style="display:none; position:fixed; top:84px; right:18px; z-index:9998; width:min(600px, 94vw); background:#FFFBEB; border:3px solid #F59E0B; border-radius:16px; box-shadow:0 12px 30px rgba(0,0,0,.25); padding:14px 16px; color:#78350F;">
-  <div style="display:flex; align-items:center; gap:10px;"><div style="font-size:22px; font-weight:900; flex:1;">🧵 수선품에 있는 품목이에요</div><button type="button" id="repairNoticeClose" tabindex="-1" style="padding:8px 18px; font-size:16px; font-weight:900; border:0; border-radius:10px; background:#B45309; color:#fff; cursor:pointer;">확인</button></div>
+  <div style="display:flex; align-items:center; gap:10px;"><div id="repairNoticeTitle" style="font-size:22px; font-weight:900; flex:1;">🧵 수선품에 있는 품목이에요</div><button type="button" id="repairNoticeClose" tabindex="-1" style="padding:8px 18px; font-size:16px; font-weight:900; border:0; border-radius:10px; background:#B45309; color:#fff; cursor:pointer;">확인</button></div>
   <div id="repairNoticeList" style="margin-top:8px; font-size:16px; line-height:1.5;"></div>
-  <div style="margin-top:8px; font-size:13px; font-weight:700;">이 전표에서 이 품목들 출고분은 검수완료 때 수선품 재고에서 자동으로 빠져요</div>
+  <div id="repairNoticeFoot" style="margin-top:8px; font-size:13px; font-weight:700;">이 전표에서 이 품목들 출고분은 검수완료 때 수선품 재고에서 자동으로 빠져요</div>
 </div>
 <style>.rp-tag{ display:block; margin-top:3px; font-size:12px; font-weight:900; color:#fff; background:#F59E0B; border-radius:6px; padding:2px 6px; width:fit-content; }</style>
 <!-- 10/28: 완전분배 품목이 다른 업체 전표에 들어 있거나, 배분 수량보다 많을 때 경고 (확인을 마우스로 눌러야 작업 가능) -->
@@ -2426,7 +2426,7 @@ function statusBadge(it){
 function rowHtml(it){
   return `
     <td class="code-cell">${it.code}</td>
-    <td class="name-cell"><span class="nm">${it.name}</span>${it.spec ? `<span class="sp">${it.spec}</span>` : ''}${it.exNote ? `<span class="ex-tag">⛔ ${escapeHtml(it.exNote)}</span>` : ''}${it.repairLeft ? `<span class="rp-tag">🧵 수선품 남은 ${it.repairLeft}개</span>` : ''}</td>
+    <td class="name-cell"><span class="nm">${it.name}</span>${it.spec ? `<span class="sp">${it.spec}</span>` : ''}${it.exNote ? `<span class="ex-tag">⛔ ${escapeHtml(it.exNote)}</span>` : ''}${it.repairLeft ? `<span class="rp-tag">🧵 수선품 남은 ${it.repairLeft}개</span>` : ''}${it.repairNo ? `<span class="ex-tag">⛔ 수선품 출고 안 됨</span>` : ''}</td>
     <td class="qty-cell">${it.orderQty}</td>
     <td class="qty-cell"${it.overShown ? ' style="color:#DC2626;font-weight:900"' : ''}>${it.scannedQty + (it.overShown || 0)}</td>
     <td style="text-align:center;">${statusBadge(it)}</td>
@@ -2693,23 +2693,34 @@ async function refreshRepairStock(timeoutMs){
 setTimeout(() => refreshRepairStock(), 4000);
 setInterval(() => refreshRepairStock(), 3 * 60 * 1000);
 function hideRepairNotice(){ const el = document.getElementById('repairNotice'); if(el) el.style.display = 'none'; }
-async function checkRepairOnLoad(docKey){
+async function checkRepairOnLoad(docKey, company){
   hideRepairNotice();
-  items.forEach(it => { delete it.repairLeft; });
+  items.forEach(it => { delete it.repairLeft; delete it.repairNo; });
   const loadedKey = currentDocumentKey;
   await refreshRepairStock(4000); // 다른 노트북이 방금 쓴 것까지 반영된 남은 수량으로
   if(currentDocumentKey !== loadedKey) return; // 그새 다른 전표로 넘어갔으면 무시
+  // 10/28: 수선품이 안 나가는 업체면 빨간 안내만 하고, 수선품에서 빼지 않는다 (repairLeft를 안 붙임)
+  const ck = normalizeCompanyKey(String(company || '').replace(/\s*\(도착보장\)\s*$/, ''));
+  const noRepair = (repairStock.noRepair || []).some(c => normalizeCompanyKey(c) === ck);
   const hits = [];
   items.forEach(it => {
     const r = (repairStock.items || {})[String(it.code).toUpperCase()];
-    if(r && r.l > 0){ it.repairLeft = r.l; hits.push(it); }
+    if(r && r.l > 0){ if(noRepair) it.repairNo = r.l; else it.repairLeft = r.l; hits.push({ it, l: r.l }); }
   });
   renderTable();
   if(!hits.length) return;
-  document.getElementById('repairNoticeList').innerHTML = hits.map(it =>
-    `<div style="padding:5px 0; border-top:1px dashed #FCD34D"><b style="font-family:monospace; font-size:17px">${escapeHtml(it.code)}</b> ${escapeHtml(it.spec || '')} · 주문 ${it.orderQty}개 → 수선품 남은 <b>${it.repairLeft}개</b></div>`).join('');
-  document.getElementById('repairNotice').style.display = 'block';
-  try{ addScreenOnlyLog('🧵 수선품 안내', hits.map(it => `${it.code}(남은 ${it.repairLeft})`).join(', '), '🧵'); }catch(e){}
+  const box = document.getElementById('repairNotice');
+  box.style.background = noRepair ? '#FEF2F2' : '#FFFBEB';
+  box.style.borderColor = noRepair ? '#DC2626' : '#F59E0B';
+  box.style.color = noRepair ? '#7F1D1D' : '#78350F';
+  document.getElementById('repairNoticeTitle').textContent = noRepair ? '⛔ 이 업체는 수선품 출고 안 돼요' : '🧵 수선품에 있는 품목이에요';
+  document.getElementById('repairNoticeFoot').textContent = noRepair ? '수선품에 있어도 이 업체에는 쓰지 마세요 (수선품 재고에서도 빠지지 않아요)' : '이 전표에서 이 품목들 출고분은 검수완료 때 수선품 재고에서 자동으로 빠져요';
+  document.getElementById('repairNoticeClose').style.background = noRepair ? '#DC2626' : '#B45309';
+  document.getElementById('repairNoticeList').innerHTML = hits.map(h =>
+    `<div style="padding:5px 0; border-top:1px dashed ${noRepair ? '#FCA5A5' : '#FCD34D'}"><b style="font-family:monospace; font-size:17px">${escapeHtml(h.it.code)}</b> ${escapeHtml(h.it.spec || '')} · 주문 ${h.it.orderQty}개 → 수선품 ${noRepair ? '' : '남은 '}<b>${h.l}개</b>${noRepair ? ' 있지만 쓰지 마세요' : ''}</div>`).join('');
+  box.style.display = 'block';
+  try{ addScreenOnlyLog(noRepair ? '⛔ 수선품 출고 금지 업체' : '🧵 수선품 안내', hits.map(h => `${h.it.code}(${h.l})`).join(', '), noRepair ? '⛔' : '🧵'); }catch(e){}
+  if(noRepair) setTimeout(() => { try{ playErrSound(); speakKorean('수선품 출고 안 되는 업체예요'); }catch(e){} }, 600);
 }
 // 검수완료 때 서버로 보낼 "수선품에서 뺄 수량" (안내가 뜬 품목의 실제 출고 수량)
 function buildRepairUse(){
@@ -3159,7 +3170,7 @@ async function processDocumentLookup(raw){
       showWorkerReminderBanner(); // 전표를 처음 불러온 직후(작업자 아직 없음)라서 크게 알림
     }
     try{ checkExclusiveOnLoad(data.company, data.key || raw); }catch(e){ console.warn('완전분배 확인 실패(무시):', e); }
-    try{ checkRepairOnLoad(data.key || raw); }catch(e){ console.warn('수선품 확인 실패(무시):', e); }
+    try{ checkRepairOnLoad(data.key || raw, data.company); }catch(e){ console.warn('수선품 확인 실패(무시):', e); }
 
     if(fromCache){
       // 캐시로 찾은 경우엔 서버가 피킹카운터를 못 건드렸으니, 여기서 별도로(백그라운드로) 반영 요청을 보낸다.
