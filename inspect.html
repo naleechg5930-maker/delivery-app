@@ -507,6 +507,19 @@
   <button type="button" id="mispickConfirmBtn" tabindex="-1" style="margin-top:22px; padding:16px 64px; font-size:26px; font-weight:900; border:0; border-radius:14px; background:#fff; color:#B91C1C; cursor:pointer; box-shadow:0 6px 18px rgba(0,0,0,.3);">확인</button>
   <div id="mispickBlockedMsg" style="font-size:16px; margin-top:12px; min-height:22px; font-weight:800; color:#fde047;"></div>
 </div>
+<!-- 10/28: 완전분배 품목이 다른 업체 전표에 들어 있거나, 배분 수량보다 많을 때 경고 (확인을 마우스로 눌러야 작업 가능) -->
+<div id="exclusiveOverlay" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(127,29,29,0.94); color:#fff; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:28px;">
+  <div style="font-size:60px; line-height:1;">⛔</div>
+  <div style="font-size:32px; font-weight:900; margin-top:12px;">완전분배 품목이 있어요</div>
+  <div id="exclusiveDoc" style="font-size:20px; margin-top:10px; font-weight:700; color:#fde047;"></div>
+  <div id="exclusiveList" style="margin-top:16px; max-height:52vh; overflow:auto; width:min(900px, 96vw); text-align:left; background:rgba(0,0,0,0.25); border-radius:14px; padding:12px 16px; font-size:19px; line-height:1.55;"></div>
+  <div style="font-size:16px; margin-top:14px; opacity:0.9;">출고해도 되는지 확인한 뒤 눌러주세요 (빼야 하면 그 품목은 찍지 말고 미스캔 제외로 마무리)</div>
+  <button type="button" id="exclusiveConfirmBtn" tabindex="-1" style="margin-top:18px; padding:16px 44px; font-size:24px; font-weight:900; border:0; border-radius:14px; background:#fff; color:#991B1B; cursor:pointer;">확인했어요 · 작업 시작</button>
+  <div id="exclusiveBlockedMsg" style="font-size:15px; margin-top:12px; min-height:20px; font-weight:800; color:#fde047;"></div>
+</div>
+<style>
+.ex-tag{ display:block; margin-top:3px; font-size:12px; font-weight:900; color:#fff; background:#DC2626; border-radius:6px; padding:2px 6px; width:fit-content; }
+</style>
 <!-- 10/22: 검수 중에 다른 전표를 찍었을 때 바로 초기화하지 않고 묻는 창 -->
 <div id="docSwitchOverlay" style="display:none; position:fixed; inset:0; z-index:9998; background:rgba(15,23,42,0.88); color:#fff; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:32px;">
   <div style="font-size:64px; line-height:1;">✋</div>
@@ -2110,6 +2123,12 @@ function confirmMispick(){
 }
 // 막혀 있는 동안 스캐너로 들어온 입력: 처리하지 않고 경고만
 function blockedByMispick(){
+  if(typeof exclusiveBlocking !== 'undefined' && exclusiveBlocking){
+    const m3 = document.getElementById('exclusiveBlockedMsg');
+    if(m3) m3.textContent = '⛔ [확인했어요]를 마우스로 먼저 눌러주세요';
+    try{ playErrSound(); }catch(e){}
+    return true;
+  }
   if(typeof docSwitchBlocking !== 'undefined' && docSwitchBlocking){
     const m2 = document.getElementById('docSwitchBlockedMsg');
     if(m2) m2.textContent = '⛔ 위 버튼 중 하나를 마우스로 먼저 눌러주세요';
@@ -2399,7 +2418,7 @@ function statusBadge(it){
 function rowHtml(it){
   return `
     <td class="code-cell">${it.code}</td>
-    <td class="name-cell"><span class="nm">${it.name}</span>${it.spec ? `<span class="sp">${it.spec}</span>` : ''}</td>
+    <td class="name-cell"><span class="nm">${it.name}</span>${it.spec ? `<span class="sp">${it.spec}</span>` : ''}${it.exNote ? `<span class="ex-tag">⛔ ${escapeHtml(it.exNote)}</span>` : ''}</td>
     <td class="qty-cell">${it.orderQty}</td>
     <td class="qty-cell"${it.overShown ? ' style="color:#DC2626;font-weight:900"' : ''}>${it.scannedQty + (it.overShown || 0)}</td>
     <td style="text-align:center;">${statusBadge(it)}</td>
@@ -2581,6 +2600,73 @@ document.getElementById('returnFileInput').addEventListener('change', function(e
     }
   };
   reader.readAsArrayBuffer(file);
+});
+
+/* ===================== 완전분배 (10/28) =====================
+   검수기록 시트 "완전분배" 탭(업체명 | 품번 | 수량)에 적힌 품번은 그 업체에만, 그 수량까지만 나간다.
+   전표를 불러올 때 ① 배분 대상이 아닌 업체 전표에 들어 있거나 ② 배분 수량보다 많으면 화면 가득 경고 → [확인]을 눌러야 작업.
+   품번을 앞자리만 적으면(11자리 미만) 그 계열 전체에 적용. 5분마다 새로 받아온다. */
+let exclusiveAlloc = { exact: {}, prefix: [] }, exclusiveBlocking = false;
+function buildExclusiveIndex(list){
+  const idx = { exact: {}, prefix: [] }, pre = {};
+  (list || []).forEach(r => {
+    const code = String(r.code || '').trim().toUpperCase(), company = String(r.company || '').trim();
+    if(!code || !company) return;
+    const key = normalizeCompanyKey(company);
+    const bucket = code.length >= PRODUCT_CODE_LEN ? (idx.exact[code] = idx.exact[code] || []) : (pre[code] = pre[code] || []);
+    const hit = bucket.find(e => e.key === key);
+    if(hit) hit.qty += Number(r.qty) || 0; else bucket.push({ company, key, qty: Number(r.qty) || 0 });
+  });
+  idx.prefix = Object.keys(pre).sort((a, b) => b.length - a.length).map(p => ({ p, list: pre[p] }));
+  exclusiveAlloc = idx;
+}
+function exclusiveEntriesFor(code){
+  const c = String(code || '').toUpperCase();
+  if(exclusiveAlloc.exact[c]) return exclusiveAlloc.exact[c];
+  const hit = exclusiveAlloc.prefix.find(x => c.startsWith(x.p));
+  return hit ? hit.list : null;
+}
+async function refreshExclusiveAlloc(){
+  if(!gasWebhookUrl) return;
+  try{
+    const r = await (await fetch(gasWebhookUrl + '?action=getExclusiveAlloc')).json();
+    if(r && r.ok && Array.isArray(r.list)){ buildExclusiveIndex(r.list); idbSet('exclusiveAlloc', r.list).catch(()=>{}); }
+  }catch(err){ console.warn('완전분배 목록 받기 실패(이전 목록 사용):', err); }
+}
+(async function(){ try{ const saved = await idbGet('exclusiveAlloc'); if(Array.isArray(saved)) buildExclusiveIndex(saved); }catch(e){} })();
+setTimeout(refreshExclusiveAlloc, 3000);
+setInterval(refreshExclusiveAlloc, 5 * 60 * 1000);
+function checkExclusiveOnLoad(company, docKey){
+  items.forEach(it => { delete it.exNote; });
+  const ck = normalizeCompanyKey(String(company || '').replace(/\s*\(도착보장\)\s*$/, ''));
+  const problems = [];
+  items.forEach(it => {
+    const list = exclusiveEntriesFor(it.code);
+    if(!list || !list.length) return;
+    const mine = list.find(e => e.key === ck);
+    const others = list.map(e => `${e.company} ${e.qty}`).join(', ');
+    if(!mine){
+      it.exNote = '완전분배 · 이 업체 배분 없음';
+      problems.push(`<b>${escapeHtml(it.code)}</b> ${escapeHtml(it.spec || '')} · 주문 ${it.orderQty}개<br><span style="color:#fecaca">→ 이 업체는 배분 대상이 아니에요 (배분: ${escapeHtml(others)})</span>`);
+    } else if(it.orderQty > mine.qty){
+      it.exNote = `완전분배 · 배분 ${mine.qty}개 초과`;
+      problems.push(`<b>${escapeHtml(it.code)}</b> ${escapeHtml(it.spec || '')} · 주문 ${it.orderQty}개<br><span style="color:#fecaca">→ 배분 수량 ${mine.qty}개보다 ${it.orderQty - mine.qty}개 많아요</span>`);
+    }
+  });
+  renderTable();
+  if(!problems.length) return;
+  document.getElementById('exclusiveDoc').textContent = `${docKey || ''} · ${company || ''}`;
+  document.getElementById('exclusiveList').innerHTML = problems.map(t => `<div style="padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.15)">${t}</div>`).join('');
+  document.getElementById('exclusiveBlockedMsg').textContent = '';
+  document.getElementById('exclusiveOverlay').style.display = 'flex';
+  exclusiveBlocking = true;
+  try{ addScreenOnlyLog('⛔ 완전분배 확인', `${problems.length}품목 — 배분 대상 아님/수량 초과`, '⛔'); }catch(e){}
+  setTimeout(() => { try{ playErrSound(); speakKorean('완전분배 품목이 있어요. 확인해주세요'); }catch(e){} }, 400);
+}
+document.getElementById('exclusiveConfirmBtn').addEventListener('click', () => {
+  document.getElementById('exclusiveOverlay').style.display = 'none';
+  exclusiveBlocking = false;
+  if(typeof focusInput === 'function') focusInput();
 });
 
 async function refreshTablesFromSheet(showAlert){
@@ -3023,6 +3109,7 @@ async function processDocumentLookup(raw){
     if(currentWorker === ''){
       showWorkerReminderBanner(); // 전표를 처음 불러온 직후(작업자 아직 없음)라서 크게 알림
     }
+    try{ checkExclusiveOnLoad(data.company, data.key || raw); }catch(e){ console.warn('완전분배 확인 실패(무시):', e); }
 
     if(fromCache){
       // 캐시로 찾은 경우엔 서버가 피킹카운터를 못 건드렸으니, 여기서 별도로(백그라운드로) 반영 요청을 보낸다.
