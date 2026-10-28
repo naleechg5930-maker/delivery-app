@@ -72,6 +72,12 @@
   .st .dot{width:12px;height:12px;border-radius:6px}.st .t{font-size:17px;font-weight:900}.st .t small{display:block;font-size:12.5px;color:var(--sub);font-weight:500;margin-top:2px;line-height:1.45}
   .st .q{font-size:26px;font-weight:900}
   details summary{cursor:pointer;font-size:13px;color:var(--sub)}
+  .line.rp{background:#FFFBEB;border-radius:10px;padding:10px 12px;border:1.5px solid #F59E0B;margin:6px 0;color:#92400E}
+  .line.rp .v{color:#B45309}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:10px 0}
+  .kpi{background:var(--bg);border-radius:10px;padding:8px 4px;text-align:center;font-size:12px;color:var(--sub)}
+  .kpi b{display:block;font-size:22px;color:var(--navy)}
+  .kpi.y b{color:#B45309}
 </style>
 </head>
 <body>
@@ -138,6 +144,19 @@
   </div>
 
   <div class="panel">
+    <h2>4. 🧵 수선품 (수선창고) 올리기</h2>
+    <div class="hint">이카운트 <b>창고별재고현황 · 수선창고</b> 화면을 회사명 줄부터 합계 줄까지 그대로 붙여넣으세요. 올리면 그 순간부터 <b>다시 셀 때까지</b> 검수완료된 출고만큼 자동으로 빠져요. 새로 올리면 처음부터 다시 세요.</div>
+    <textarea id="repairText" placeholder="회사명 : 루나앤솔 / 수선창고 / 2026/10/28&#10;품목코드	품목명	규격	합계	수선창고	출고단가	입고단가&#10;NTA8019C111	NT-8019-C1BA	화이트-기본-S	147	147	..."></textarea>
+    <div id="repairStatus"></div>
+    <button type="button" class="btn primary hidden" id="repairUploadBtn" style="margin-top:8px;width:100%">수선품 올리기</button>
+  </div>
+
+  <div class="panel">
+    <h2>🧵 수선품 사용 현황</h2>
+    <div id="repairBox" class="hint">불러오는 중...</div>
+  </div>
+
+  <div class="panel">
     <h2>등록된 기타이동·입고 (마감 기준일 이후)</h2>
     <div id="batchList" class="hint">불러오는 중...</div>
   </div>
@@ -180,7 +199,7 @@ function showTab(which){
   $('tabReg').classList.toggle('on', which === 'reg');
   $('viewFind').classList.toggle('hidden', which !== 'find');
   $('viewReg').classList.toggle('hidden', which !== 'reg');
-  if(which === 'reg'){ stopCamera(); loadBatches(); }
+  if(which === 'reg'){ stopCamera(); loadBatches(); loadRepair(); }
 }
 $('tabFind').addEventListener('click', () => showTab('find'));
 $('tabReg').addEventListener('click', () => showTab('reg'));
@@ -210,7 +229,7 @@ async function loadStock(force){
   }
 }
 loadStock(false);
-setInterval(() => { if(!document.hidden) loadStock(false); }, 120000); // 2분마다 (검수완료 반영)
+setInterval(() => { if(!document.hidden){ loadStock(false); loadRepair(); } }, 120000); // 2분마다 (검수완료 반영)
 $('refreshBtn').addEventListener('click', () => loadStock(true));
 
 /* ---------- 조회 ---------- */
@@ -287,6 +306,7 @@ function showItem(code, quiet){
       dates.map(d => `<div style="margin-top:8px;font-size:13px;font-weight:800;color:var(--in)">${d ? esc(md(d)) + ' 입고' : '입고'}</div>${boxSummaryHtml(byDate[d])}`).join('') + `</div>`;
   }
   html += `<div class="line out"><span>− 피킹완료<span class="sm">이미 선반에서 가져간 수량 (검수완료 포함)</span></span><span class="v">${k ? '−' + fmt(k) : '0'}</span></div>
+    ${repairLine(code)}
     <button type="button" class="livebtn" id="liveBtn"><span class="lt"><span>실재고 움직임 보기</span><span>▸</span></span>
       <span class="ls">피킹 전 ${fmt(nPre)}${nIng ? ' · 피킹 중 ' + fmt(nIng) : ''} · 피킹완료 ${fmt(nPicked)} · 검수완료 ${fmt(nDone)}</span></button>`;
   if(!stock.items[code]) html += `<div class="note">재고현황(${esc(md(stock.baseDate))} 마감)에 없는 품목코드예요.</div>`;
@@ -645,6 +665,104 @@ $('inUploadBtn').addEventListener('click', async () => {
   }catch(err){ setStatus('inStatus', 'err', '등록 실패: ' + err.message); }
   finally{ btn.disabled = false; btn.textContent = '입고 등록'; }
 });
+
+/* ---------- 4. 수선품 (10/28) ---------- */
+let repair = null, pendingRepair = null, repairView = 'today';
+function repairLine(code){
+  const r = repair && repair.items ? repair.items[code] : null;
+  if(!r || !(r.b > 0 || r.u > 0)) return '';
+  return `<div class="line rp"><span>🧵 수선품 남은 수량<span class="sm">${esc(repair.uploadedAt)} 올린 ${fmt(r.b)}개 중 ${fmt(r.u)}개 사용 (위 수량과 별도)</span></span><span class="v">${fmt(r.l)}</span></div>`;
+}
+async function loadRepair(){
+  try{
+    const data = await getJson('action=getRepairStock');
+    if(!data.ok) throw new Error(data.error);
+    repair = data.has ? data : null;
+    renderRepair();
+    if(lastCode && stock) showItem(lastCode, true);
+  }catch(err){ $('repairBox').textContent = '불러오기 실패: ' + err.message; }
+}
+function prevDay(ymd){ const d = new Date(ymd + 'T00:00:00'); d.setDate(d.getDate() - 1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function renderRepair(){
+  if(!repair){ $('repairBox').innerHTML = '아직 올린 수선품이 없어요. 위 4번에 붙여넣어 주세요.'; return; }
+  const items = repair.items || {}, logs = repair.logs || [], today = repair.today;
+  const base = Object.values(items).reduce((a, r) => a + (r.b || 0), 0);
+  const usedAll = logs.reduce((a, l) => a + l.qty, 0);
+  const todayLogs = logs.filter(l => l.date === today), yLogs = logs.filter(l => l.date === prevDay(today));
+  const usedToday = todayLogs.reduce((a, l) => a + l.qty, 0);
+  let html = `<div>기준: <b>${esc(repair.uploadedAt)}</b> 수선창고 올림 (${fmt(Object.keys(items).length)}품목 ${fmt(base)}개)</div>
+    <div class="kpis"><div class="kpi">올린 수량<b>${fmt(base)}</b></div><div class="kpi y">오늘 사용<b>${fmt(usedToday)}</b></div><div class="kpi">올린 뒤 사용<b>${fmt(usedAll)}</b></div><div class="kpi">남은 수량<b>${fmt(base - usedAll)}</b></div></div>
+    <div class="chips" style="margin-top:0">${[['today','오늘'],['yday','어제'],['all','올린 뒤 전체'],['left','남은 재고']].map(([k, t]) => `<button type="button" class="chip${repairView === k ? ' cur' : ''}" data-rv="${k}">${t}</button>`).join('')}
+    <button type="button" class="chip" id="repairCopyBtn">📋 오늘 사용 복사</button></div>`;
+  if(repairView === 'left'){
+    const rows = Object.keys(items).sort().map(c => [c, items[c]]);
+    html += `<table style="margin-top:8px"><tr><th>품목코드</th><th>규격</th><th>올린</th><th>사용</th><th>남은</th></tr>` +
+      rows.map(([c, r]) => `<tr><td><b>${esc(c)}</b></td><td>${esc(r.s || '')}</td><td>${fmt(r.b)}</td><td>${fmt(r.u)}</td><td><b>${fmt(r.l)}</b></td></tr>`).join('') + '</table>';
+  } else {
+    const list = (repairView === 'today' ? todayLogs : repairView === 'yday' ? yLogs : logs).slice().reverse();
+    const sum = list.reduce((a, l) => a + l.qty, 0);
+    html += list.length ? `<table style="margin-top:8px"><tr><th>시각</th><th>전표 · 업체</th><th>품목 · 규격</th><th>사용</th><th>남은</th></tr>` +
+      list.map(l => `<tr><td>${esc(l.at.slice(6))}${repairView === 'all' ? '<br><span class="hint">' + esc(l.at.slice(0, 5)) + '</span>' : ''}</td><td>${esc(String(l.doc).replace(/^\d{4}\//, ''))}<br><span class="hint">${esc(l.company)}</span></td><td><b>${esc(l.code)}</b><br><span class="hint">${esc(l.spec)}</span></td><td><b>${fmt(l.qty)}</b></td><td>${fmt(l.left)}</td></tr>`).join('') +
+      `<tr><td colspan="3" style="text-align:right"><b>합계</b></td><td><b>${fmt(sum)}</b></td><td></td></tr></table>` : `<div style="margin-top:8px">사용한 수선품이 없어요.</div>`;
+  }
+  $('repairBox').innerHTML = html;
+  $('repairBox').querySelectorAll('[data-rv]').forEach(b => b.addEventListener('click', () => { repairView = b.dataset.rv; renderRepair(); }));
+  $('repairCopyBtn').addEventListener('click', async () => {
+    const codes = new Set(todayLogs.map(l => l.code));
+    const text = `수선품 사용 ${fmt(usedToday)}개 (${codes.size}품목)` + (todayLogs.length ? '\n' + todayLogs.map(l => `- ${l.code} ${l.spec} ${l.qty}개 (${l.company})`).join('\n') : '');
+    try{ await navigator.clipboard.writeText(text); $('repairCopyBtn').textContent = '✔ 복사됨'; }catch(e){ prompt('복사해서 쓰세요', text); }
+  });
+}
+function parseRepairRows(rows){
+  const cell = v => String(v == null ? '' : v).trim();
+  const ymd = t => { const m = String(t).match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/); return m ? `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}` : ''; };
+  let baseDate = '', hi = -1;
+  for(let k = 0; k < rows.length; k++){
+    const r = rows[k] || [];
+    if(!baseDate && /회사명/.test(r.join(' '))) baseDate = ymd(r.join(' '));
+    if(r.some(v => cell(v) === '품목코드') && r.some(v => cell(v) === '수선창고' || cell(v) === '합계')){ hi = k; break; }
+  }
+  if(hi < 0) throw new Error('"품목코드 · 품목명 · 규격 · 합계 · 수선창고" 머리글 줄을 찾지 못했어요. 머리글 줄까지 같이 긁어주세요.');
+  const head = rows[hi].map(cell);
+  if(!/수선/.test(rows.slice(0, hi + 1).map(r => (r || []).join(' ')).join(' '))) throw new Error('수선창고 화면이 아닌 것 같아요. "회사명 : 루나앤솔 / 수선창고" 줄부터 긁어주세요.');
+  const ci = head.indexOf('품목코드'), ni = head.indexOf('품목명'), si = head.indexOf('규격');
+  let qi = head.indexOf('수선창고'); if(qi < 0) qi = head.indexOf('합계');
+  const out = [], seen = {}; let listedTotal = null;
+  for(let k = hi + 1; k < rows.length; k++){
+    const r = rows[k] || []; const code = cell(r[ci]);
+    if(code === '합계'){ listedTotal = Number(cell(r[qi]).replace(/,/g, '')) || 0; break; }
+    if(!/^[A-Za-z][A-Za-z0-9]{4,}$/.test(code)) continue;
+    const key = code.toUpperCase(); if(seen[key]) continue; seen[key] = true;
+    out.push([code, cell(r[ni]), cell(r[si]), Number(cell(r[qi]).replace(/,/g, '')) || 0]);
+  }
+  if(!out.length) throw new Error('품목 줄을 찾지 못했어요.');
+  return { baseDate, rows: out, listedTotal };
+}
+$('repairText').addEventListener('input', () => {
+  pendingRepair = null; $('repairUploadBtn').classList.add('hidden'); setStatus('repairStatus', '', '');
+  if(!$('repairText').value.trim()) return;
+  try{
+    const p = parseRepairRows(textToRows($('repairText').value)); pendingRepair = p;
+    const total = p.rows.reduce((a, r) => a + r[3], 0);
+    let msg = `${p.baseDate || ''} 수선창고 · ${fmt(p.rows.length)}품목 · 총 ${fmt(total)}개`;
+    if(p.listedTotal != null) msg += p.listedTotal === total ? ' (화면 합계와 일치 ✓)' : `\n⚠ 화면 합계 ${fmt(p.listedTotal)}개와 달라요. 중간이 빠졌는지 확인해주세요.`;
+    if(repair) msg += `\n※ 올리면 지금 수선품(${repair.uploadedAt} 기준)은 지워지고 이 수량부터 다시 세요.`;
+    setStatus('repairStatus', 'info', msg); $('repairUploadBtn').classList.remove('hidden');
+  }catch(err){ setStatus('repairStatus', 'err', String(err.message || err)); }
+});
+$('repairUploadBtn').addEventListener('click', async () => {
+  if(!pendingRepair) return;
+  const btn = $('repairUploadBtn'); btn.disabled = true; btn.textContent = '올리는 중...';
+  try{
+    const res = await postJson({ type: 'uploadRepairStock', baseDate: pendingRepair.baseDate, rows: pendingRepair.rows });
+    if(!res.ok) throw new Error(res.error);
+    setStatus('repairStatus', 'ok', `올리기 완료: ${res.uploadedAt} · ${fmt(res.count)}품목 ${fmt(res.total)}개 — 지금부터 다시 세요`);
+    btn.classList.add('hidden'); $('repairText').value = ''; pendingRepair = null;
+    loadRepair();
+  }catch(err){ setStatus('repairStatus', 'err', '올리기 실패: ' + err.message); }
+  finally{ btn.disabled = false; btn.textContent = '수선품 올리기'; }
+});
+loadRepair();
 
 /* ---------- 등록 내역 ---------- */
 async function loadBatches(){
