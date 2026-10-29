@@ -1034,42 +1034,29 @@ function updateTableHeaders(){
 }
 
 // 박스 단위 검수 데이터를 메인 대기중/완료 테이블에 표시한다.
-// (공장+품목코드+사이즈) 단위로 한 행씩 묶고, "입고" 칸에는 그 안에 속한 박스번호들을 나열한다.
+// 10/29: 박스 1개 = 1줄. 같은 품번이라도 박스마다 따로 → 찍은 박스는 바로 완료로 넘어가고, 대기중에는 안 찍힌 박스만 남는다.
 function renderBoxItemsTable(){
   updateTableHeaders();
   const waitTbody = document.getElementById('waitTbody');
   const doneTbody = document.getElementById('doneTbody');
 
-  const groups = {};
-  const order = [];
-  packingListData.forEach(p => {
-    const key = `${p.factory}|${p.code}|${p.size}`;
-    if(!groups[key]){
-      groups[key] = { factory: p.factory, code: p.code, name: p.name, size: p.size, boxes: [] };
-      order.push(key);
-    }
-    groups[key].boxes.push(p);
-  });
+  // 같은 공장+품번+사이즈 중 하나도 안 찍힌 묶음은 (바코드 불량 등 의심) 빨간색으로 표시하던 규칙은 그대로 유지
+  const groupDone = {};
+  packingListData.forEach(p => { const k = `${p.factory}|${p.code}|${p.size}`; groupDone[k] = (groupDone[k] || 0) + (p.matched ? 1 : 0); });
 
-  const waitRows = [], doneRows = [];
-  order.forEach(key => {
-    const g = groups[key];
-    const allDone = g.boxes.every(b => b.matched);
-    const noneDone = g.boxes.every(b => !b.matched);
-    const boxListHtml = g.boxes
-      .map(b => `${escapeHtml(b.boxNumber)}번(${b.qty}개)${b.matched ? ' ✅' : ''}`)
-      .join(', ');
-    const badge = allDone ? '<span class="badge done">완료</span>' : '<span class="badge wait">대기</span>';
-    // 박스가 하나도 안 찍힌 품목(바코드 불량 등으로 못 찍었을 가능성)은 빨간색으로 눈에 띄게 표시
-    const rowStyle = noneDone ? ' style="background:#FEE2E2; color:#991B1B; font-weight:700;"' : '';
-    const row = `<tr${rowStyle}><td>${escapeHtml(g.code)}</td><td>${escapeHtml(g.name)}</td><td>${escapeHtml(g.size)}</td><td>${escapeHtml(g.factory)}</td><td>${boxListHtml}</td><td>${badge}</td></tr>`;
-    (allDone ? doneRows : waitRows).push(row);
-  });
+  const rowOf = p => {
+    const none = !p.matched && !groupDone[`${p.factory}|${p.code}|${p.size}`];
+    const rowStyle = none ? ' style="background:#FEE2E2; color:#991B1B; font-weight:700;"' : '';
+    const badge = p.matched ? '<span class="badge done">완료</span>' : '<span class="badge wait">대기</span>';
+    return `<tr${rowStyle}><td>${escapeHtml(p.code)}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.size)}</td><td>${escapeHtml(p.factory)}</td><td>${escapeHtml(p.boxNumber)}번 (${p.qty}개)</td><td>${badge}</td></tr>`;
+  };
+  const waiting = packingListData.filter(p => !p.matched);
+  const done = packingListData.filter(p => p.matched).sort((x, y) => (y.matchedAt || 0) - (x.matchedAt || 0)); // 방금 찍은 박스가 맨 위
 
-  waitTbody.innerHTML = waitRows.join('');
-  doneTbody.innerHTML = doneRows.join('');
-  document.getElementById('waitCount').textContent = waitRows.length + '품목';
-  document.getElementById('doneTableCount').textContent = doneRows.length + '품목';
+  waitTbody.innerHTML = waiting.map(rowOf).join('');
+  doneTbody.innerHTML = done.map(rowOf).join('');
+  document.getElementById('waitCount').textContent = waiting.length + '박스';
+  document.getElementById('doneTableCount').textContent = done.length + '박스';
 }
 
 function handleBoxNumberScan(boxNumberRaw){
@@ -1152,6 +1139,7 @@ function handleItemScanForBox(rawCode){
     }
 
     matchedCandidate.matched = true;
+    matchedCandidate.matchedAt = Date.now(); // 10/29: 완료 표에서 방금 찍은 박스를 맨 위로
     okCount += part.qty;
     matchedNames.push(`${matchedCandidate.name}/${matchedCandidate.size}`);
     addLog(timeStr, part.code, true, `${matchedCandidate.factory} ${currentBoxNumber}번 박스 - ${matchedCandidate.size} 확인됨`);
