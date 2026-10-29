@@ -2690,16 +2690,21 @@ async function refreshRepairStock(timeoutMs){
   }catch(err){ console.warn('수선품 재고 받기 실패(이전 값 사용):', err); }
 }
 (async function(){ try{ const saved = await idbGet('repairStock'); if(saved && saved.items) repairStock = saved; }catch(e){} })();
-setTimeout(() => refreshRepairStock(), 4000);
+setTimeout(() => refreshRepairStock(30000), 3000);
 setInterval(() => refreshRepairStock(), 3 * 60 * 1000);
 function hideRepairNotice(){ const el = document.getElementById('repairNotice'); if(el) el.style.display = 'none'; }
+// 10/28: 서버가 늦어도 안내가 빠지지 않게 — 받아둔 값으로 바로 확인하고, 새 값이 늦게 와도 같은 전표가 열려 있으면 다시 확인한다
+let repairClosedSig = '';
 async function checkRepairOnLoad(docKey, company){
   hideRepairNotice();
   items.forEach(it => { delete it.repairLeft; delete it.repairNo; });
   const loadedKey = currentDocumentKey;
-  await refreshRepairStock(4000); // 다른 노트북이 방금 쓴 것까지 반영된 남은 수량으로
-  if(currentDocumentKey !== loadedKey) return; // 그새 다른 전표로 넘어갔으면 무시
-  // 10/28: 수선품이 안 나가는 업체면 빨간 안내만 하고, 수선품에서 빼지 않는다 (repairLeft를 안 붙임)
+  applyRepairCheck(company, loadedKey);
+  refreshRepairStock(30000).then(() => { if(currentDocumentKey === loadedKey && items.length) applyRepairCheck(company, loadedKey); });
+}
+function applyRepairCheck(company, loadedKey){
+  items.forEach(it => { delete it.repairLeft; delete it.repairNo; });
+  // 수선품이 안 나가는 업체면 빨간 안내만 하고, 수선품에서 빼지 않는다 (repairLeft를 안 붙임)
   const ck = normalizeCompanyKey(String(company || '').replace(/\s*\(도착보장\)\s*$/, ''));
   const noRepair = (repairStock.noRepair || []).some(c => normalizeCompanyKey(c) === ck);
   const hits = [];
@@ -2708,8 +2713,12 @@ async function checkRepairOnLoad(docKey, company){
     if(r && r.l > 0){ if(noRepair) it.repairNo = r.l; else it.repairLeft = r.l; hits.push({ it, l: r.l }); }
   });
   renderTable();
-  if(!hits.length) return;
+  const sig = loadedKey + '|' + noRepair + '|' + hits.map(h => h.it.code + ':' + h.l).join(',');
+  if(!hits.length){ hideRepairNotice(); return; }
+  if(sig === repairClosedSig) return; // 같은 내용을 이미 [확인]으로 닫았으면 다시 띄우지 않음
   const box = document.getElementById('repairNotice');
+  if(box.style.display === 'block' && box.dataset.sig === sig) return; // 이미 같은 내용이 떠 있음
+  box.dataset.sig = sig;
   box.style.background = noRepair ? '#FEF2F2' : '#FFFBEB';
   box.style.borderColor = noRepair ? '#DC2626' : '#F59E0B';
   box.style.color = noRepair ? '#7F1D1D' : '#78350F';
@@ -2727,7 +2736,7 @@ function buildRepairUse(){
   return items.filter(it => it.repairLeft > 0 && it.scannedQty > 0)
     .map(it => ({ code: it.code, name: it.name, spec: it.spec, qty: Math.min(it.scannedQty, it.orderQty) }));
 }
-document.getElementById('repairNoticeClose').addEventListener('click', () => { hideRepairNotice(); if(typeof focusInput === 'function') focusInput(); });
+document.getElementById('repairNoticeClose').addEventListener('click', () => { repairClosedSig = document.getElementById('repairNotice').dataset.sig || ''; hideRepairNotice(); if(typeof focusInput === 'function') focusInput(); });
 
 async function refreshTablesFromSheet(showAlert){
   if(!gasWebhookUrl){
