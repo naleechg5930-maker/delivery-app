@@ -266,27 +266,21 @@ function lookup(raw){
 }
 
 // 입고 박스 목록 → 공장별 한 줄: "YL  266~268번 각 40 · 270번 12"
+// 11/01: 입고를 박스(CTN)별로 한 줄씩 — "YL 1번 50개", "YL 10번 20개" (같은 박스가 여러 줄이면 합침)
 function boxSummaryHtml(inb){
-  const byF = {}, other = [];
+  const boxes = {}, order = [];
   inb.forEach(x => {
-    const m = String(x[1]).match(/^([^\d]+?)\s*(\d+)$/);
-    if(m){ (byF[m[1]] = byF[m[1]] || []).push({ n: Number(m[2]), q: Number(x[2]) || 0 }); }
-    else other.push(`${x[0]} ${x[1]} ${fmt(x[2])}개`);
+    const label = String(x[1] || '').trim();
+    const m = label.match(/^([^\d]+?)\s*(\d+)$/); // "YL 268" → 공장 YL, 박스 268
+    const key = m ? `${m[1]}|${Number(m[2])}` : `?|${label}`;
+    if(!boxes[key]){ boxes[key] = { f: m ? m[1] : '', n: m ? Number(m[2]) : null, label, q: 0 }; order.push(key); }
+    boxes[key].q += Number(x[2]) || 0;
   });
-  const lines = Object.keys(byF).sort().map(f => {
-    const arr = byF[f].sort((a, b) => a.n - b.n);
-    const parts = []; let k = 0;
-    while(k < arr.length){
-      let j = k;
-      while(j + 1 < arr.length && arr[j + 1].n === arr[j].n + 1 && arr[j + 1].q === arr[k].q) j++;
-      parts.push(j > k ? `${arr[k].n}~${arr[j].n} CTN 각 ${fmt(arr[k].q)}` : `${arr[k].n} CTN ${fmt(arr[k].q)}`);
-      k = j + 1;
-    }
-    const tot = arr.reduce((s, a) => s + a.q, 0);
-    return `<div style="margin-top:6px;font-size:15px"><span class="tag 입고" style="font-size:14px">${esc(f)}</span> <b>${esc(parts.join(' · '))}</b> <span class="hint" style="color:var(--in)">(${arr.length}CTN ${fmt(tot)}개)</span></div>`;
-  });
-  if(other.length) lines.push(`<div class="sm" style="color:var(--in);margin-top:4px">${esc(other.join(' · '))}</div>`);
-  return lines.join('');
+  const list = order.map(k => boxes[k]).sort((a, b) => (a.f || '~').localeCompare(b.f || '~') || ((a.n == null ? 1e9 : a.n) - (b.n == null ? 1e9 : b.n)));
+  return `<div style="margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:6px">` + list.map(b =>
+    `<div style="background:#fff;border-radius:8px;padding:7px 10px;display:flex;justify-content:space-between;align-items:baseline;font-size:15px">` +
+      (b.n != null ? `<span><span class="tag 입고" style="font-size:13px">${esc(b.f)}</span> <b>${b.n}번</b></span>` : `<span style="font-size:13px">${esc(b.label || '입고')}</span>`) +
+      `<b>${fmt(b.q)}개</b></div>`).join('') + `</div>`;
 }
 
 function sumQty(list){ return (list || []).reduce((a, x) => a + (Number(x[1]) || 0), 0); }
