@@ -568,7 +568,10 @@
       <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--sub); cursor:pointer; white-space:nowrap;">
         <input type="checkbox" id="bundleContinuousToggle" tabindex="-1"> 연속
       </label>
+      <!-- 11/01: [이 봉투 마감]을 묶음 버튼 줄로 올려서 항상 보이게 (마감할 게 없으면 흐리게) -->
+      <button type="button" tabindex="-1" id="closeBagBtn" disabled title="지금까지 찍은 것으로 이 봉투를 마감하고 다음 봉투를 새로 시작합니다" style="padding:10px 14px; font-size:14px; font-weight:900; border:0; border-radius:10px; background:var(--ok); color:#fff; cursor:pointer; white-space:nowrap;">✂ 이 봉투 마감</button>
     </div>
+    <style>#closeBagBtn:disabled{ opacity:.35; cursor:default; }</style>
     <div id="bundleModeIndicator" style="display:none; background:#DC2626; color:#fff; font-weight:800; text-align:center; padding:8px; border-radius:8px;">
       <span id="bundleModeIndicatorText">📦 묶음처리 모드 켜짐 — 다음 스캔은 묶음수량으로 처리됩니다</span>
     </div>
@@ -675,7 +678,6 @@
 
 <div class="live-packing" id="livePackingBanner" style="display:none;">
   <span id="livePackingText">📦 포장 진행중</span>
-  <button type="button" class="close-bag-btn" id="closeBagBtn" style="display:none;" title="지금까지 찍은 것으로 이 봉투를 마감하고 다음 봉투를 새로 시작합니다">이 봉투 마감</button>
 </div>
 
 <div class="footer-settings">
@@ -2390,6 +2392,7 @@ function addLog(timeStr, code, ok, note){
 }
 
 function updateMiniStats(){
+  try{ updateCloseBagBtn(); }catch(e){}
   document.getElementById('okCount').textContent = okCount;
   document.getElementById('errCount').textContent = errCount;
   const doneLines = items.filter(it => it.scannedQty >= it.orderQty).length;
@@ -3508,16 +3511,80 @@ let expectedTotalBags = 0; // 전표 불러온 시점에 미리 한 번 계산�
 
 // [이 봉투 마감] 버튼: 봉투가 덜 찼어도 지금까지 찍은 것으로 이 봉투를 닫고(에이블리(오더)는 포장명세 즉시 인쇄),
 // 다음에 찍는 상품부터 새 봉투로 시작한다. 최종 라벨 계산에도 같은 자리에서 봉투가 나뉘도록 scanSequence에 표시를 남긴다.
+// 11/01: 지금 봉투(마지막 [이 봉투 마감] 뒤로 찍은 것) 내용 — 캐파시티표에 없는 품번이 있어 자동계산이 꺼졌을 때 쓴다
+function openBagSegment(){
+  let k = scanSequence.length - 1;
+  while(k >= 0 && !scanSequence[k].bagClose) k--;
+  const bucket = {}, order = [];
+  for(let i = k + 1; i < scanSequence.length; i++){
+    const e = scanSequence[i]; if(!e || e.bagClose || !(e.qty > 0)) continue;
+    const it = codeIndex[String(e.code).toUpperCase()];
+    const key = String(e.code).toUpperCase();
+    if(!bucket[key]){ bucket[key] = { code: e.code, name: it ? it.name : '', spec: it ? it.spec : '', qty: 0 }; order.push(key); }
+    bucket[key].qty += e.qty;
+  }
+  return order.map(k2 => bucket[k2]);
+}
+function closedManualBagCount(){ return scanSequence.filter(e => e && e.bagClose).length; }
+function canCloseBag(){
+  if(!items.length) return false;
+  if(allItemsHaveCapacity()) return liveBagState.size !== null && liveBagState.used > 0;
+  return openBagSegment().length > 0;
+}
+function updateCloseBagBtn(){
+  const btn = document.getElementById('closeBagBtn');
+  if(btn) btn.disabled = !canCloseBag();
+}
+// 자동계산이 꺼진 전표(캐파시티표에 없는 품번 포함)에서 [이 봉투 마감]을 쓴 경우: 마감한 자리마다 봉투 1개로 센다
+function packBagsByManualClose(sequence){
+  const segs = [[]];
+  sequence.forEach(e => { if(e && e.bagClose){ if(segs[segs.length - 1].length) segs.push([]); } else if(e && e.qty > 0) segs[segs.length - 1].push(e); });
+  if(!segs[segs.length - 1].length) segs.pop();
+  const bagContentLists = segs.map(seg => {
+    const b = {}, o = [];
+    seg.forEach(e => { const k = String(e.code).toUpperCase(); const it = codeIndex[k];
+      if(!b[k]){ b[k] = { code: e.code, name: it ? it.name : '', spec: it ? it.spec : '', qty: 0 }; o.push(k); } b[k].qty += e.qty; });
+    return o.map(k => b[k]);
+  });
+  return { bagSizes: bagContentLists.map(() => '수동'), bagContentLists };
+}
+// 봉투 계산: 캐파시티가 다 있으면 자동계산, 없으면 [이 봉투 마감]을 쓴 경우에만 마감 자리 기준 (둘 다 아니면 null = 예전처럼)
+function packBagsForLabels(sequence, skipSqueeze){
+  if(!sequence.length) return null;
+  if(allItemsHaveCapacity()) return computeBagPacking(sequence, skipSqueeze);
+  if(sequence.some(e => e && e.bagClose)) return packBagsByManualClose(sequence);
+  return null;
+}
+
+// [이 봉투 마감] 버튼: 봉투가 덜 찼어도 지금까지 찍은 것으로 이 봉투를 닫고(에이블리(오더)는 포장명세 즉시 인쇄),
+// 다음에 찍는 상품부터 새 봉투로 시작한다. 최종 라벨 계산에도 같은 자리에서 봉투가 나뉘도록 scanSequence에 표시를 남긴다.
 function manualCloseBag(){
-  if(liveBagState.size === null || !(liveBagState.used > 0)){ if(typeof focusInput === 'function') focusInput(); return; }
-  const bagNo = liveBagState.bagNumber;
-  scanSequence.push({ code: '', qty: 0, bagClose: true });
-  liveBagState.used = 1;
-  liveBagState.size = null;
-  try{ addScreenOnlyLog('봉투 마감', `${bagNo}번째 봉투 수동 마감 (다음 상품부터 새 봉투)`, '📦'); }catch(e){}
-  announceBagFilled();
-  maybePrintCompletedBagsImmediately();
-  updateLivePackingBanner();
+  if(!canCloseBag()){ if(typeof focusInput === 'function') focusInput(); return; }
+  if(allItemsHaveCapacity()){
+    const bagNo = liveBagState.bagNumber;
+    scanSequence.push({ code: '', qty: 0, bagClose: true });
+    liveBagState.used = 1;
+    liveBagState.size = null;
+    try{ addScreenOnlyLog('봉투 마감', `${bagNo}번째 봉투 수동 마감 (다음 상품부터 새 봉투)`, '📦'); }catch(e){}
+    announceBagFilled();
+    maybePrintCompletedBagsImmediately();
+    updateLivePackingBanner();
+  } else {
+    // 자동계산이 꺼진 전표: 지금까지 찍은 것만으로 봉투를 끊고, 에이블리(오더)면 그 봉투 포장명세를 바로 인쇄
+    const contents = openBagSegment();
+    scanSequence.push({ code: '', qty: 0, bagClose: true });
+    const bagNo = closedManualBagCount();
+    try{ addScreenOnlyLog('봉투 마감', `${bagNo}번째 봉투 수동 마감 · ${contents.reduce((a, c) => a + c.qty, 0)}개 (다음 상품부터 새 봉투)`, '📦'); }catch(e){}
+    announceBagFilled();
+    const companyName = document.getElementById('companyNameInput').value;
+    if(normalizeCompanyKey(companyName) === normalizeCompanyKey('에이블리(오더)')){
+      const container = document.getElementById('printLabelArea');
+      container.innerHTML = buildPackingListPageHTML(bagNo, '즉시', contents);
+      printedPackingBagCount = Math.max(printedPackingBagCount, bagNo);
+      setTimeout(()=>{ waitForImagesThenPrint(container, 3000); }, 100);
+    }
+  }
+  updateCloseBagBtn();
   if(typeof focusInput === 'function') focusInput();
 }
 document.addEventListener('click', e => { if(e.target && e.target.id === 'closeBagBtn') manualCloseBag(); });
@@ -3591,8 +3658,7 @@ function getMissingCapacityItems(){
 function updateLivePackingBanner(){
   const el = document.getElementById('livePackingBanner');
   if(!el) return;
-  const closeBtn = document.getElementById('closeBagBtn');
-  if(closeBtn) closeBtn.style.display = (liveBagState.size !== null && liveBagState.used > 0) ? '' : 'none';
+  updateCloseBagBtn();
   const missing = getMissingCapacityItems();
   if(missing.length > 0){
     el.style.display = '';
@@ -3842,8 +3908,8 @@ function computeLabelJobData(){
   const isAblyOrder = normalizeCompanyKey(document.getElementById('companyNameInput').value) === normalizeCompanyKey('에이블리(오더)');
   let bagSizes = [];
   let bagContentLists = [];
-  if(allItemsHaveCapacity() && scanSequence.length > 0){
-    const result = computeBagPacking(scanSequence, isAblyOrder);
+  const result = packBagsForLabels(scanSequence, isAblyOrder);
+  if(result){
     bagSizes = result.bagSizes;
     bagContentLists = result.bagContentLists;
   }
@@ -3881,8 +3947,8 @@ function printCompletionLabelInner(companyName, zoneValue, container){
 
   let bagSizes = [];
   let bagContentLists = [];
-  if(allItemsHaveCapacity() && scanSequence.length > 0){
-    const result = computeBagPacking(scanSequence, wantsPackingList);
+  const result = packBagsForLabels(scanSequence, wantsPackingList);
+  if(result){
     bagSizes = result.bagSizes;
     bagContentLists = result.bagContentLists;
   }
@@ -3933,9 +3999,9 @@ function checkAllComplete(){
       let bagCount = '';
       let bagContentLists = [];
       try{
-        if(allItemsHaveCapacity() && scanSequence.length > 0){
-          const isAblyOrd = normalizeCompanyKey(company) === normalizeCompanyKey('에이블리(오더)');
-          const packed = computeBagPacking(scanSequence, isAblyOrd);
+        const isAblyOrd = normalizeCompanyKey(company) === normalizeCompanyKey('에이블리(오더)');
+        const packed = packBagsForLabels(scanSequence, isAblyOrd);
+        if(packed){
           bagContentLists = packed.bagContentLists;
           bagCount = packed.bagSizes.length + boxScanEvents.length;
         } else if(boxScanEvents.length > 0){
