@@ -502,6 +502,7 @@ body { padding: 0 !important; gap: 0 !important; }
       <input type="checkbox" id="noPrinterToggle"> 이 컴퓨터엔 프린터 없음(대기열로 보내기)
     </label>
     <button id="moreMenuBtn" style="margin-left:8px;">☰ 더보기</button>
+    <button id="shortListBtn" style="display:none; margin-left:8px; background:#F59E0B; color:#fff; border-color:#F59E0B; font-weight:800;" title="아직 덜 찍힌 품목과 남은 수량 보기/출력">📋 남은수량</button>
     <button id="restBtn" style="margin-left:8px;">⏸ 휴식</button>
     <button id="tabletSettingsBtn" style="margin-left:8px;background:#2D3570;color:#8890C0;border-color:#2D3570;">⚙️ 설정</button>
   </div>
@@ -917,6 +918,49 @@ body { padding: 0 !important; gap: 0 !important; }
 </div>
 
 <!-- 검수완료 라벨 (평소엔 숨겨져 있다가 인쇄할 때만 나타남, 세로 10cm x 가로 12cm, 봉투가 여러개면 라벨도 여러장) -->
+<!-- 11/03: 미스캔 남은수량 (덜 가져온 품목 확인/라벨프린터 출력). 띄워둔 채로 계속 스캔 가능 — 찍을 때마다 목록이 줄어든다 -->
+<style>
+  #shortListOverlay{ display:none; position:fixed; inset:0; z-index:9990; background:rgba(0,0,0,0.45); align-items:center; justify-content:center; }
+  #shortListOverlay.show{ display:flex; }
+  #shortListOverlay .sl-card{ background:#fff; color:#111; border-radius:14px; width:min(640px,94vw); max-height:88vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,.3); font-family:inherit; }
+  #shortListOverlay .sl-head{ background:#F59E0B; color:#fff; padding:14px 18px; font-size:20px; font-weight:900; }
+  #shortListOverlay .sl-head small{ display:block; font-size:13px; font-weight:600; margin-top:2px; opacity:.95; }
+  #shortListOverlay .sl-kpis{ display:flex; gap:10px; padding:14px 18px; }
+  #shortListOverlay .sl-k{ flex:1; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; padding:8px 10px; text-align:center; }
+  #shortListOverlay .sl-k b{ display:block; font-size:24px; }
+  #shortListOverlay .sl-k span{ font-size:12px; color:#64748B; }
+  #shortListOverlay .sl-k.hot{ background:#FEF2F2; border-color:#FCA5A5; }
+  #shortListOverlay .sl-k.hot b{ color:#DC2626; }
+  #shortListOverlay .sl-body{ overflow:auto; flex:1; }
+  #shortListOverlay table{ width:100%; border-collapse:collapse; font-size:14px; }
+  #shortListOverlay th{ background:#F1F5F9; color:#475569; font-size:12px; padding:7px 8px; text-align:left; border-bottom:1px solid #E2E8F0; position:sticky; top:0; }
+  #shortListOverlay td{ padding:8px; border-bottom:1px solid #F1F5F9; color:#111; }
+  #shortListOverlay td.n{ text-align:center; }
+  #shortListOverlay td.rem{ text-align:center; font-weight:900; color:#DC2626; font-size:17px; }
+  #shortListOverlay tr.zero td{ background:#FFF7ED; }
+  #shortListOverlay .sl-tag{ font-size:11px; background:#FEE2E2; color:#B91C1C; border-radius:5px; padding:1px 5px; margin-left:4px; white-space:nowrap; }
+  #shortListOverlay .sl-empty{ padding:30px; text-align:center; font-size:16px; font-weight:700; color:#16A34A; }
+  #shortListOverlay .sl-foot{ display:flex; gap:8px; padding:14px 18px; justify-content:flex-end; background:#F8FAFC; }
+  #shortListOverlay .sl-foot button{ font-size:14px; padding:9px 14px; border-radius:8px; border:1px solid #CBD5E1; background:#fff; color:#111; font-weight:700; cursor:pointer; }
+  #shortListOverlay .sl-foot .sl-print{ background:#111827; color:#fff; border-color:#111827; }
+</style>
+<div id="shortListOverlay">
+  <div class="sl-card">
+    <div class="sl-head">📋 미스캔 남은수량<small id="shortListSub"></small></div>
+    <div class="sl-kpis">
+      <div class="sl-k"><b id="slOrder">0</b><span>주문</span></div>
+      <div class="sl-k"><b id="slScan">0</b><span>스캔</span></div>
+      <div class="sl-k hot"><b id="slRemain">0</b><span>남은 수량</span></div>
+      <div class="sl-k hot"><b id="slLines">0</b><span>남은 품목</span></div>
+    </div>
+    <div class="sl-body" id="shortListBody"></div>
+    <div class="sl-foot">
+      <button id="shortListCopyBtn">📄 복사(카톡용)</button>
+      <button id="shortListPrintBtn" class="sl-print">🖨️ 남은수량 출력</button>
+      <button id="shortListCloseBtn">닫기</button>
+    </div>
+  </div>
+</div>
 <div id="printLabelArea"></div>
 
 <script>
@@ -1239,6 +1283,10 @@ function updateRestButtonLabel(){
 setInterval(updateRestButtonLabel, 1000); // 쉬는 중이면 버튼 위 시간 표시를 1초마다 갱신
 
 let currentOrderTag = ''; // '' (단가 있음, 표시 없음) | 'S/P' (단가 없음, 샘플 표시)
+let currentRoundTag = ''; // 11/01: 에이블리(오더) 비고의 "1차"·"2차" → 라벨 업체명 뒤·포장명세 머리글에 붙임
+// 판매현황 비고에서 숫자+차만 읽는다 (예: "1차 오전" → "1차")
+function roundFromNote(note){ const m = String(note || '').match(/(\d+)\s*차/); return m ? m[1] + '차' : ''; }
+function isAblyOrderCompany(name){ return normalizeCompanyKey(String(name || '').replace(/\s*\(도착보장\)\s*$/, '')) === normalizeCompanyKey('에이블리(오더)'); }
 let currentDocumentKey = ''; // 전표번호 (QR 조회로 불러온 경우만 값이 있음, 그 외엔 빈 값)
 let currentWorker = ''; // 작업자 QR을 찍으면 채워짐 (전표 찍고 그다음에 찍는 방식)
 // 10/21: 피킹 완료(2번째 전표 스캔) = 바로 검수 시작. 검수자는 피킹한 사람으로 자동 지정하고,
@@ -1606,6 +1654,7 @@ function loadItems(rawList){
   errLogEntries = [];
   errorSkuDetails = [];
   currentOrderTag = '';
+  currentRoundTag = '';
   currentDocumentKey = '';
   updateOrderTagBadge();
   resetLiveBagState();
@@ -2649,7 +2698,109 @@ function addLog(timeStr, code, ok, note){
   }
 }
 
+// ===== 11/03: 미스캔 남은수량 =====
+// 피킹자가 덜 가져온 경우, 아직 덜 찍힌 품목과 남은 수량을 보여주고 라벨프린터(12x10cm)로 출력한다.
+// 출력물: 제목 "미스캔 남은수량" + 품목명 / 규격 / 남은수량 만.
+function getShortItems(){
+  return items.filter(it => it.scannedQty < it.orderQty)
+    .map(it => ({ code: it.code, name: it.name || it.code, spec: it.spec || '', orderQty: it.orderQty, scannedQty: it.scannedQty, remain: it.orderQty - it.scannedQty }));
+}
+function updateShortListBtn(){
+  const btn = document.getElementById('shortListBtn');
+  if(!btn) return;
+  const short = getShortItems();
+  const anyScanned = items.some(it => it.scannedQty > 0) || (typeof boxScanEvents !== 'undefined' && boxScanEvents.length > 0);
+  if(items.length && anyScanned && short.length){
+    const remain = short.reduce((a, it) => a + it.remain, 0);
+    btn.textContent = `📋 남은수량 (${short.length}품목 · ${remain}개)`;
+    btn.style.display = '';
+  } else {
+    btn.style.display = 'none';
+  }
+  if(document.getElementById('shortListOverlay').classList.contains('show')) renderShortList();
+}
+function renderShortList(){
+  const short = getShortItems();
+  const totalOrder = items.reduce((a, it) => a + (it.orderQty || 0), 0);
+  const totalScan  = items.reduce((a, it) => a + Math.min(it.scannedQty || 0, it.orderQty || 0), 0);
+  const remain = short.reduce((a, it) => a + it.remain, 0);
+  const company = (document.getElementById('companyNameInput').value || '').trim();
+  document.getElementById('shortListSub').textContent = [company, currentDocumentKey ? '전표 ' + currentDocumentKey : ''].filter(Boolean).join(' · ');
+  document.getElementById('slOrder').textContent = totalOrder;
+  document.getElementById('slScan').textContent = totalScan;
+  document.getElementById('slRemain').textContent = remain;
+  document.getElementById('slLines').textContent = short.length;
+  const body = document.getElementById('shortListBody');
+  if(!short.length){
+    body.innerHTML = '<div class="sl-empty">✅ 남은 품목이 없습니다. 전부 다 찍혔어요.</div>';
+  } else {
+    body.innerHTML = `<table><thead><tr><th>품목코드</th><th>품목명 / 규격</th><th style="text-align:center">주문</th><th style="text-align:center">스캔</th><th style="text-align:center">남은</th></tr></thead><tbody>` +
+      short.map(it => `<tr class="${it.scannedQty === 0 ? 'zero' : ''}"><td>${escapeHtml(it.code)}</td><td>${escapeHtml(it.name)}${it.spec ? ' (' + escapeHtml(it.spec) + ')' : ''}${it.scannedQty === 0 ? '<span class="sl-tag">한 개도 안 찍힘</span>' : ''}</td><td class="n">${it.orderQty}</td><td class="n">${it.scannedQty}</td><td class="rem">${it.remain}</td></tr>`).join('') +
+      `</tbody></table>`;
+  }
+  document.getElementById('shortListPrintBtn').disabled = !short.length;
+  document.getElementById('shortListCopyBtn').disabled = !short.length;
+}
+function openShortList(){
+  renderShortList();
+  document.getElementById('shortListOverlay').classList.add('show');
+}
+function closeShortList(){
+  document.getElementById('shortListOverlay').classList.remove('show');
+  focusInput();
+}
+// 라벨 1장(12x10cm)에 최대 12줄, 넘으면 여러 장으로 나눠 출력
+function buildShortListPagesHTML(short){
+  const PER = 12;
+  const pages = [];
+  for(let i = 0; i < short.length; i += PER) pages.push(short.slice(i, i + PER));
+  return pages.map((rowsArr, idx) => {
+    const n = rowsArr.length;
+    const fontSize = n <= 6 ? '5mm' : n <= 10 ? '4.2mm' : '3.6mm';
+    const rows = rowsArr.map(it => `<tr><td>${escapeHtml(it.name)}</td><td>${escapeHtml(it.spec)}</td><td class="pl-qty" style="text-align:right;font-weight:900;">${it.remain}</td></tr>`).join('');
+    return `
+      <div class="label-content packing-list-page">
+        <div class="pl-header">미스캔 남은수량${pages.length > 1 ? ` (${idx + 1}/${pages.length})` : ''}</div>
+        <table class="pl-table" style="font-size:${fontSize};">
+          <thead><tr><th style="background:#fff;color:#000;">품목명</th><th style="background:#fff;color:#000;">규격</th><th style="background:#fff;color:#000;text-align:right;">남은수량</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }).join('');
+}
+function printShortList(){
+  const short = getShortItems();
+  if(!short.length){ alert('남은 품목이 없습니다.'); return; }
+  const container = document.getElementById('printLabelArea');
+  container.innerHTML = buildShortListPagesHTML(short);
+  setTimeout(()=>{ waitForImagesThenPrint(container, 500, ()=>{ focusInput(); }); }, 100);
+}
+function copyShortList(){
+  const short = getShortItems();
+  if(!short.length) return;
+  const company = (document.getElementById('companyNameInput').value || '').trim();
+  const remain = short.reduce((a, it) => a + it.remain, 0);
+  const text = `[미스캔 남은수량]${company ? ' ' + company : ''}\n` +
+    short.map(it => `${it.name}${it.spec ? ' (' + it.spec + ')' : ''} : ${it.remain}개`).join('\n') +
+    `\n합계 ${short.length}품목 ${remain}개`;
+  const done = ()=>{ const b = document.getElementById('shortListCopyBtn'); const t = b.textContent; b.textContent = '✅ 복사됨'; setTimeout(()=>{ b.textContent = t; }, 1500); };
+  const fallback = ()=>{
+    const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); done(); }catch(e){ alert(text); }
+    ta.remove();
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+  else fallback();
+}
+document.getElementById('shortListBtn').addEventListener('click', openShortList);
+document.getElementById('shortListCloseBtn').addEventListener('click', closeShortList);
+document.getElementById('shortListPrintBtn').addEventListener('click', printShortList);
+document.getElementById('shortListCopyBtn').addEventListener('click', copyShortList);
+document.getElementById('shortListOverlay').addEventListener('click', e => { if(e.target.id === 'shortListOverlay') closeShortList(); });
+
 function updateMiniStats(){
+  try{ updateShortListBtn(); }catch(e){}
   document.getElementById('okCount').textContent = okCount;
   document.getElementById('errCount').textContent = errCount;
   const doneLines = items.filter(it => it.scannedQty >= it.orderQty).length;
@@ -3294,7 +3445,7 @@ function findInSalesCache(raw){
   if(!key) return null;
 
   const matched = [];
-  let companyName = '', hasPrice = false, arrivalGuaranteed = false;
+  let companyName = '', hasPrice = false, arrivalGuaranteed = false, round = '';
   salesCache.forEach(row => {
     if(key.candidates.indexOf(row.key) === -1) return;
     const qty = parseFloat(String(row.qty).replace(/,/g, '')) || 0;
@@ -3303,11 +3454,12 @@ function findInSalesCache(raw){
     if(!companyName) companyName = row.company;
     if(price > 0) hasPrice = true;
     if(row.note && row.note.indexOf('도착보장') !== -1) arrivalGuaranteed = true;
+    if(!round) round = roundFromNote(row.note);
     matched.push({ code: row.code, name: row.name, spec: row.spec, qty });
   });
 
   if(matched.length === 0) return null;
-  return { ok:true, company: companyName, hasPrice, key: key.displayKey, rows: matched, arrivalGuaranteed };
+  return { ok:true, company: companyName, hasPrice, key: key.displayKey, rows: matched, arrivalGuaranteed, round };
 }
 
 async function processDocumentLookup(raw){
@@ -3446,6 +3598,8 @@ async function processDocumentLookup(raw){
       `<b>전표 조회로 불러온 주문서</b> · <b>전표:</b> ${data.key || raw} · <b>품목수:</b> ${list.length}개`;
     currentOrderTag = data.hasPrice ? '' : 'S/P';
     updateOrderTagBadge();
+    currentRoundTag = (isAblyOrderCompany(data.company) && data.round) ? data.round : ''; // 에이블리(오더)만
+    if(currentRoundTag){ try{ addScreenOnlyLog('에이블리(오더) ' + currentRoundTag, `라벨에 "에이블리(오더)${currentRoundTag}"로 인쇄돼요`, '🏷️'); }catch(e){} }
     showBanner('ok', '전표 조회 완료', data.key || raw, `${data.company || ''} · 품목 ${list.length}개 불러옴`, '✅');
     addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), data.key || raw, true, `전표 조회 → ${list.length}품목 불러옴`);
     playOkSound();
@@ -3995,7 +4149,7 @@ function buildBagLabelText(total, num){
 }
 
 function buildLabelPageHTML(companyName, zoneValue, bagLabelText, isLast, deliveryQrPayload, totalBags){
-  const baseName = companyName || '업체명 미입력';
+  const baseName = (companyName || '업체명 미입력') + (currentRoundTag && isAblyOrderCompany(companyName) ? currentRoundTag : '');
   const name = currentOrderTag ? `${baseName} ${currentOrderTag}` : baseName;
   const fontSize = fitVendorFontSize(name);
   const { x, y } = getLabelOffsets();
@@ -4031,7 +4185,7 @@ function buildPackingListPageHTML(bagNum, total, contentList){
   `).join('');
   return `
     <div class="label-content packing-list-page">
-      <div class="pl-header">${total}-${bagNum} 포장명세</div>
+      <div class="pl-header">${currentRoundTag ? escapeHtml(currentRoundTag) + ' · ' : ''}${total}-${bagNum} 포장명세</div>
       <table class="pl-table" style="font-size:${fontSize};">
         <thead><tr><th>품목명</th><th>규격</th><th>수량</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -4142,6 +4296,7 @@ function sendToPrintQueue(companyName, zoneValue){
       company: companyName,
       zone: zoneValue,
       orderTag: currentOrderTag,
+      round: currentRoundTag,
       documentKey: currentDocumentKey,
       bagSizes, boxCount, bagContentLists,
     })
@@ -4370,8 +4525,9 @@ function printQueuedItem(item, btnEl){
   const qrPayload = buildDeliveryQrPayload(company, zone, total, { documentKey: item.documentKey || '', orderTag: orderTag || '' });
 
   const container = document.getElementById('printLabelArea');
-  const savedTag = currentOrderTag;
+  const savedTag = currentOrderTag, savedRound = currentRoundTag;
   currentOrderTag = orderTag || ''; // buildLabelPageHTML이 currentOrderTag(S/P표시)를 참조하므로, 라벨 만들기 전에 먼저 맞춰둠
+  currentRoundTag = (labelData && labelData.round) || '';
 
   let html = '';
   if(total === 0){
@@ -4390,10 +4546,10 @@ function printQueuedItem(item, btnEl){
     }
   }
 
+  currentOrderTag = savedTag; currentRoundTag = savedRound; // 원래 값으로 복원 (라벨 html은 위에서 이미 만들어 둠)
   // 11/01: 앞 건 인쇄가 끝나기 전에 다음 건이 화면(인쇄영역)을 덮어써서 라벨이 밀려 나오던 문제 → 한 건씩 차례로(앞 건 인쇄가 끝난 뒤) 인쇄
   const job = () => new Promise(resolve => {
     container.innerHTML = html;
-    currentOrderTag = savedTag; // 원래 값으로 복원
     setTimeout(()=>{
       waitForImagesThenPrint(container, 3000, resolve);
       fetch(gasWebhookUrl, { method:'POST', body: JSON.stringify({ type:'markPrinted', id: item.id }) })
