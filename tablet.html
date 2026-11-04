@@ -943,6 +943,24 @@ body { padding: 0 !important; gap: 0 !important; }
   #shortListOverlay .sl-foot{ display:flex; gap:8px; padding:14px 18px; justify-content:flex-end; background:#F8FAFC; }
   #shortListOverlay .sl-foot button{ font-size:14px; padding:9px 14px; border-radius:8px; border:1px solid #CBD5E1; background:#fff; color:#111; font-weight:700; cursor:pointer; }
   #shortListOverlay .sl-foot .sl-print{ background:#111827; color:#fff; border-color:#111827; }
+  #shortListOverlay .sl-foot .sl-kakao{ background:#FEE500; color:#191919; border-color:#E5CE00; margin-right:auto; }
+  #shortListOverlay .sl-kstatus{ display:none; margin:0 18px 10px; border-radius:10px; padding:9px 12px; font-size:13px; font-weight:800; }
+  #shortListOverlay .sl-kstatus small{ display:block; font-weight:500; font-size:12px; margin-top:2px; }
+  #shortListOverlay .sl-kstatus.wait{ display:block; background:#FEF3C7; color:#92400E; }
+  #shortListOverlay .sl-kstatus.ok{ display:block; background:#DCFCE7; color:#166534; }
+  #shortListOverlay .sl-kstatus.err{ display:block; background:#FEE2E2; color:#991B1B; }
+  #kakaoConfirmOverlay{ display:none; position:fixed; inset:0; z-index:9991; background:rgba(0,0,0,0.45); align-items:center; justify-content:center; }
+  #kakaoConfirmOverlay.show{ display:flex; }
+  #kakaoConfirmOverlay .kc-card{ background:#fff; color:#111; border-radius:14px; width:min(420px,94vw); padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.3); }
+  #kakaoConfirmOverlay h3{ margin:0 0 10px; font-size:17px; color:#111; }
+  #kakaoConfirmOverlay .kc-lbl{ font-size:12px; color:#64748B; margin:8px 0 4px; }
+  #kakaoConfirmOverlay .kc-to{ border:1px solid #CBD5E1; border-radius:8px; padding:8px 10px; font-weight:800; color:#111; }
+  #kakaoConfirmOverlay .kc-chat{ background:#B2C7D9; border-radius:10px; padding:10px; }
+  #kakaoConfirmOverlay textarea{ width:100%; box-sizing:border-box; min-height:150px; background:#FEE500; color:#191919; border:none; border-radius:10px; padding:9px 11px; font-size:13px; line-height:1.55; font-family:inherit; resize:vertical; }
+  #kakaoConfirmOverlay .kc-warn{ display:none; margin-top:8px; background:#FEF3C7; color:#92400E; border-radius:8px; padding:7px 10px; font-size:12px; font-weight:700; }
+  #kakaoConfirmOverlay .kc-btns{ display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
+  #kakaoConfirmOverlay .kc-btns button{ font-size:14px; padding:9px 14px; border-radius:8px; border:1px solid #CBD5E1; background:#fff; color:#111; font-weight:700; cursor:pointer; }
+  #kakaoConfirmOverlay .kc-btns .kc-send{ background:#FEE500; border-color:#E5CE00; color:#191919; }
 </style>
 <div id="shortListOverlay">
   <div class="sl-card">
@@ -954,11 +972,25 @@ body { padding: 0 !important; gap: 0 !important; }
       <div class="sl-k hot"><b id="slLines">0</b><span>남은 품목</span></div>
     </div>
     <div class="sl-body" id="shortListBody"></div>
+    <div class="sl-kstatus" id="shortKakaoStatus"></div>
     <div class="sl-foot">
+      <button id="shortListKakaoBtn" class="sl-kakao">💬 카톡 보내기</button>
       <button id="shortListCopyBtn">📄 복사(카톡용)</button>
       <button id="shortListPrintBtn" class="sl-print">🖨️ 남은수량 출력</button>
       <button id="shortListCloseBtn">닫기</button>
     </div>
+  </div>
+</div>
+<!-- 11/03: 남은수량 → 물류팀 단톡방으로 보내기 확인창 -->
+<div id="kakaoConfirmOverlay">
+  <div class="kc-card">
+    <h3>💬 카톡으로 보내기</h3>
+    <div class="kc-lbl">받는 곳</div>
+    <div class="kc-to">물류팀 단톡방</div>
+    <div class="kc-lbl">보낼 내용 (필요하면 고쳐서 보내도 돼요)</div>
+    <div class="kc-chat"><textarea id="kakaoConfirmText"></textarea></div>
+    <div class="kc-warn" id="kakaoConfirmWarn"></div>
+    <div class="kc-btns"><button id="kakaoConfirmCancelBtn">취소</button><button id="kakaoConfirmSendBtn" class="kc-send">보내기</button></div>
   </div>
 </div>
 <div id="printLabelArea"></div>
@@ -1904,7 +1936,8 @@ const logList = document.getElementById('logList');
 function anyModalOpen(){
   return document.getElementById('overlay').classList.contains('show') ||
          document.getElementById('pasteOverlay').classList.contains('show') ||
-         document.getElementById('confirmOverlay').classList.contains('show');
+         document.getElementById('confirmOverlay').classList.contains('show') ||
+         document.getElementById('kakaoConfirmOverlay').classList.contains('show');
 }
 // 10/21: 일부 바코드(겨울 신상 등)는 내용 중간에 탭(Tab) 문자가 들어있다. 브라우저는 탭을 "다음 버튼으로 이동"으로 처리해서
 // 포커스가 [묶음처리]/[연속]으로 넘어가고, 뒤따라오는 엔터·스페이스가 그 버튼을 눌러버렸다. → 스캔칸에서는 탭을 막고 구분자로만 남긴다.
@@ -2725,7 +2758,7 @@ function renderShortList(){
   const totalScan  = items.reduce((a, it) => a + Math.min(it.scannedQty || 0, it.orderQty || 0), 0);
   const remain = short.reduce((a, it) => a + it.remain, 0);
   const company = (document.getElementById('companyNameInput').value || '').trim();
-  document.getElementById('shortListSub').textContent = [company, currentDocumentKey ? '전표 ' + currentDocumentKey : ''].filter(Boolean).join(' · ');
+  document.getElementById('shortListSub').textContent = [company, currentDocumentKey ? '전표 ' + currentDocumentKey : '', currentPickerName() ? '피킹 ' + currentPickerName() : ''].filter(Boolean).join(' · ');
   document.getElementById('slOrder').textContent = totalOrder;
   document.getElementById('slScan').textContent = totalScan;
   document.getElementById('slRemain').textContent = remain;
@@ -2738,6 +2771,8 @@ function renderShortList(){
       short.map(it => `<tr class="${it.scannedQty === 0 ? 'zero' : ''}"><td>${escapeHtml(it.code)}</td><td>${escapeHtml(it.name)}${it.spec ? ' (' + escapeHtml(it.spec) + ')' : ''}${it.scannedQty === 0 ? '<span class="sl-tag">한 개도 안 찍힘</span>' : ''}</td><td class="n">${it.orderQty}</td><td class="n">${it.scannedQty}</td><td class="rem">${it.remain}</td></tr>`).join('') +
       `</tbody></table>`;
   }
+  if(kakaoStatusFor && kakaoStatusFor !== shortListDocTag()){ kakaoStatusFor = ''; setKakaoStatus('', '', ''); }
+  document.getElementById('shortListKakaoBtn').disabled = !short.length;
   document.getElementById('shortListPrintBtn').disabled = !short.length;
   document.getElementById('shortListCopyBtn').disabled = !short.length;
 }
@@ -2793,6 +2828,121 @@ function copyShortList(){
   if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
   else fallback();
 }
+// ===== 11/03: 남은수량 → 물류팀 단톡방 카톡 =====
+// [💬 카톡 보내기] → 확인창 → 서버 "카톡발송" 탭에 한 줄 → 카톡 자동발송 PC가 15초마다 확인해서 단톡방에 보냄
+let kakaoStatusFor = '';      // 지금 표시 중인 발송 상태가 어느 전표 것인지
+let kakaoPollTimer = null;
+function shortListDocTag(){
+  const company = (document.getElementById('companyNameInput').value || '').trim();
+  return (currentDocumentKey || '') + '|' + company;
+}
+function currentPickerName(){
+  try{
+    if(!currentDocumentKey) return '';
+    const c = pickingStateCache[canonicalDocKeyJS(currentDocumentKey)] || pickingStateCache[currentDocumentKey];
+    return (c && c.worker) || '';
+  }catch(e){ return ''; }
+}
+function buildShortKakaoText(){
+  const short = getShortItems();
+  const company = (document.getElementById('companyNameInput').value || '').trim();
+  const picker = currentPickerName();
+  const remain = short.reduce((a, it) => a + it.remain, 0);
+  const info = [currentDocumentKey ? '전표 ' + currentDocumentKey : '', picker ? '피킹 ' + picker : '', currentWorker ? '검수 ' + currentWorker : ''].filter(Boolean).join(' · ');
+  return `[미스캔 남은수량]${company ? ' ' + company : ''}\n` + (info ? info + '\n' : '') +
+    short.map(it => `${it.name}${it.spec ? ' (' + it.spec + ')' : ''} : ${it.remain}개`).join('\n') +
+    `\n합계 ${short.length}품목 ${remain}개`;
+}
+function setKakaoStatus(kind, title, sub){
+  const el = document.getElementById('shortKakaoStatus');
+  el.className = 'sl-kstatus' + (kind ? ' ' + kind : '');
+  el.innerHTML = kind ? `${escapeHtml(title)}${sub ? `<small>${escapeHtml(sub)}</small>` : ''}` : '';
+}
+function kakaoSentKey(){ return 'kakaoSent:' + shortListDocTag(); }
+function openKakaoConfirm(){
+  if(!gasWebhookUrl){ alert('구글시트 연동이 설정되어 있지 않아서 카톡을 보낼 수 없습니다. [복사]로 직접 보내주세요.'); return; }
+  if(!getShortItems().length){ alert('남은 품목이 없습니다.'); return; }
+  document.getElementById('kakaoConfirmText').value = buildShortKakaoText();
+  const warn = document.getElementById('kakaoConfirmWarn');
+  let prev = null;
+  try{ prev = JSON.parse(localStorage.getItem(kakaoSentKey()) || 'null'); }catch(e){}
+  if(prev && prev.at){
+    warn.textContent = `⚠️ 이 전표는 ${prev.at}에 이미 단톡방으로 보냈어요. 또 보내면 한 번 더 올라가요.`;
+    warn.style.display = 'block';
+  } else {
+    warn.style.display = 'none';
+  }
+  document.getElementById('kakaoConfirmOverlay').classList.add('show');
+  setTimeout(()=>{ try{ const ta = document.getElementById('kakaoConfirmText'); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }catch(e){} }, 50); // 보내기 버튼에 포커스를 두면 스캐너 엔터로 잘못 보내질 수 있어서 글자칸에 둔다
+}
+function closeKakaoConfirm(){
+  document.getElementById('kakaoConfirmOverlay').classList.remove('show');
+  focusInput();
+}
+async function sendKakaoNotify(){
+  const text = document.getElementById('kakaoConfirmText').value.trim();
+  if(!text){ alert('보낼 내용이 비어 있습니다.'); return; }
+  const btn = document.getElementById('kakaoConfirmSendBtn');
+  btn.disabled = true;
+  const id = 'K' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
+  const company = (document.getElementById('companyNameInput').value || '').trim();
+  kakaoStatusFor = shortListDocTag();
+  setKakaoStatus('wait', '⏳ 서버로 보내는 중...', '');
+  closeKakaoConfirm();
+  try{
+    const resp = await fetchWithTimeout(gasWebhookUrl, { method:'POST', body: JSON.stringify({
+      type:'kakaoNotify', id, company, documentKey: currentDocumentKey || '', picker: currentPickerName(), inspector: currentWorker || '', text
+    }) }, 15000);
+    const res = await resp.json();
+    if(!res || !res.ok) throw new Error((res && res.error) || '서버 응답 오류');
+    const at = new Date().toLocaleTimeString('ko-KR', {hour12:false, hour:'2-digit', minute:'2-digit'});
+    try{ localStorage.setItem(kakaoSentKey(), JSON.stringify({ id, at })); }catch(e){}
+    addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), '카톡', true, '미스캔 남은수량 → 물류팀 단톡방 발송 요청');
+    setKakaoStatus('wait', '⏳ 발송 대기중 · 물류팀 단톡방', '카톡 자동발송 PC가 확인하면 보내요 (보통 15~30초)');
+    startKakaoStatusPoll(id);
+  }catch(err){
+    setKakaoStatus('err', '⚠️ 서버 전송 실패 — 다시 눌러주세요', String(err && err.message || err));
+  }finally{
+    btn.disabled = false;
+  }
+}
+function startKakaoStatusPoll(id){
+  if(kakaoPollTimer) clearTimeout(kakaoPollTimer);
+  const forTag = kakaoStatusFor;
+  let tries = 0;
+  const tick = async ()=>{
+    kakaoPollTimer = null;
+    if(kakaoStatusFor !== forTag) return; // 다른 전표로 넘어감
+    tries++;
+    try{
+      const resp = await fetchWithTimeout(gasWebhookUrl + '?action=getKakaoNotifyStatus&ids=' + encodeURIComponent(id), {}, 12000);
+      const res = await resp.json();
+      const it = res && res.items && res.items[id];
+      if(kakaoStatusFor !== forTag) return;
+      if(it && it.status === '완료'){
+        setKakaoStatus('ok', `✅ 물류팀 단톡방에 발송완료 ${it.sentAt ? String(it.sentAt).slice(-8, -3) : ''}`, '');
+        return;
+      }
+      if(it && (it.status === '실패' || it.status === '만료')){
+        setKakaoStatus('err', `⚠️ 발송 ${it.status}`, (it.memo ? it.memo + ' — ' : '') + '[복사]로 직접 보내주세요');
+        return;
+      }
+      if(res && res.ok && res.heartbeatAgeSec != null && res.heartbeatAgeSec > 90){
+        setKakaoStatus('err', '⚠️ 카톡 자동발송 PC가 꺼져 있어요', '켜지면 자동으로 보내요. 급하면 [출력]이나 [복사]를 써주세요');
+      } else if(res && res.ok && res.heartbeatAgeSec == null && tries >= 4){
+        setKakaoStatus('err', '⚠️ 카톡 자동발송 PC가 아직 연결 안 됐어요', '자동발송 프로그램(새 버전)을 켜면 자동으로 보내요. 급하면 [출력]이나 [복사]를 써주세요');
+      } else if(it && it.memo){
+        setKakaoStatus('wait', '⏳ 발송 재시도 중', it.memo);
+      }
+    }catch(e){ /* 잠깐 통신이 안 돼도 다음 확인 때 다시 */ }
+    if(tries < 40) kakaoPollTimer = setTimeout(tick, 5000);
+  };
+  kakaoPollTimer = setTimeout(tick, 4000);
+}
+document.getElementById('shortListKakaoBtn').addEventListener('click', openKakaoConfirm);
+document.getElementById('kakaoConfirmCancelBtn').addEventListener('click', closeKakaoConfirm);
+document.getElementById('kakaoConfirmSendBtn').addEventListener('click', sendKakaoNotify);
+document.getElementById('kakaoConfirmOverlay').addEventListener('click', e => { if(e.target.id === 'kakaoConfirmOverlay') closeKakaoConfirm(); });
 document.getElementById('shortListBtn').addEventListener('click', openShortList);
 document.getElementById('shortListCloseBtn').addEventListener('click', closeShortList);
 document.getElementById('shortListPrintBtn').addEventListener('click', printShortList);
