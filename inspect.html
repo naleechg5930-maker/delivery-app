@@ -211,6 +211,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
   .status-banner .reason{font-size:12.5px;color:var(--sub);}
   .status-banner.pick{background:radial-gradient(ellipse at center, rgba(37,99,235,0.18), var(--panel)); border-color:#2563EB;}
   .status-banner.pick .verdict{color:#2563EB;}
+  .status-banner.warn{background:radial-gradient(ellipse at center, rgba(245,158,11,0.22), var(--panel)); border-color:#F59E0B;}
+  .status-banner.warn .verdict{color:#F59E0B;}
   .status-banner.idle .verdict{color:var(--sub);font-size:17px;font-weight:700;}
 
   .mini-stats{display:flex;gap:10px;}
@@ -512,7 +514,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
   <div id="mispickOverlayCode" style="font-size:28px; font-weight:700; margin-top:12px; font-family:monospace; opacity:0.9;"></div>
   <div id="mispickOverlayDesc" style="font-size:20px; margin-top:10px; opacity:0.85; max-width:600px; line-height:1.5;"></div>
   <div id="mispickOverlayTimer" style="font-size:16px; margin-top:24px; opacity:0.75;"></div>
-  <button type="button" id="mispickConfirmBtn" tabindex="-1" style="margin-top:22px; padding:16px 64px; font-size:26px; font-weight:900; border:0; border-radius:14px; background:#fff; color:#B91C1C; cursor:pointer; box-shadow:0 6px 18px rgba(0,0,0,.3);">확인</button>
+  <button type="button" id="mispickConfirmBtn" tabindex="-1" style="margin-top:22px; padding:16px 64px; font-size:26px; font-weight:900; border:0; border-radius:14px; background:#fff; color:#B91C1C; cursor:pointer; box-shadow:0 6px 18px rgba(0,0,0,.3);">확인 (QR 없을 때)</button>
   <div id="mispickBlockedMsg" style="font-size:16px; margin-top:12px; min-height:22px; font-weight:800; color:#fde047;"></div>
 </div>
 <!-- 10/28: 수선품 안내 (작업은 막지 않음) -->
@@ -1812,7 +1814,7 @@ function flushScanBuffer(){
   const lines = scanLineBuffer.map(l => pickScanPartFromTabbed(l).trim()).filter(Boolean);
   scanLineBuffer = [];
   if(!lines.length) return;
-  if(blockedByMispick()) return;
+  if(blockedByMispick(lines.length === 1 ? lines[0] : null)) return;
   if(lines.length === 1) handleScanRaw(lines[0]);
   else handleMultiLineScan(lines);
 }
@@ -1879,7 +1881,7 @@ function addScreenOnlyLog(code, note, label){
 }
 
 function handleScanRaw(raw){
-  if(blockedByMispick()) return;
+  if(blockedByMispick(raw)) return;
   {
     raw = String(raw || '').trim();
     if(!raw) return;
@@ -1954,7 +1956,7 @@ let lastScannedItem = null;
 const PRODUCT_CODE_LEN = 11; // 기본 품목코드 자릿수 (예: NTA8000A117)
 
 function processScan(rawCode){
-  if(blockedByMispick()) return;
+  if(blockedByMispick(rawCode)) return;
   // 10/27: 열린 전표가 없으면(패킹완료로 비운 뒤 등) 상품 스캔은 받지 않는다 — 오피킹·녹화 없이 안내만
   if(!items.length && !/^DLV\|/i.test(String(rawCode || ''))){
     showBanner('err', '전표를 먼저 찍어주세요', rawCode, '지금 열려 있는 전표가 없어요', '📄');
@@ -2054,6 +2056,20 @@ function processScan(rawCode){
   }
 
   const remaining = item.orderQty - item.scannedQty;
+
+  // 11/05: 묶음·박스/마대(여러 개를 한 번에 찍는 스캔)가 남은 수량보다 많으면 통째로 반영하지 않는다.
+  //        (예전: 남은 4개에 5개 묶음 → 4개 반영 + 1개 오피킹) → 이제: 안 찍은 걸로, 오피킹에도 안 들어감
+  if(bulkQty > 1 && bulkQty > remaining){
+    const overKind = bundleApplied ? '묶음' : '박스/마대';
+    const left = Math.max(0, remaining);
+    showBanner('warn', `${overKind} 수량이 남은 수량보다 많아요 — 반영 안 함`, displayCode,
+      `${item.name} / ${item.spec} — ${overKind} ${bulkQty}개 > 남은 ${left}개. ${left > 0 ? '낱개로 찍어주세요' : '이미 다 찍은 품목이에요'}`, '✋');
+    addScreenOnlyLog(displayCode, `${overKind} ${bulkQty}개 초과 · 미반영 (남은 ${left}개)`);
+    try{ playErrSound(); }catch(e){}
+    try{ speakKorean(left > 0 ? '낱개로 찍어주세요' : '이미 다 찍었어요'); }catch(e){}
+    updateMiniStats();
+    return;
+  }
 
   if(remaining <= 0){
     errCount += bulkQty;
@@ -2201,7 +2217,7 @@ function showMispickOverlay(title, code, desc, overItem, overQty) {
   document.getElementById('mispickOverlayTitle').textContent = title;
   document.getElementById('mispickOverlayCode').textContent = code;
   document.getElementById('mispickOverlayDesc').textContent = desc;
-  document.getElementById('mispickOverlayTimer').textContent = '상품을 다시 확인하고 [확인]을 마우스로 눌러야 다음 스캔이 돼요';
+  document.getElementById('mispickOverlayTimer').textContent = '상품을 다시 확인하고 [확인 QR]을 찍어야 다음 스캔이 돼요';
   document.getElementById('mispickBlockedMsg').textContent = '';
   clearInterval(mispickOverlayTimer);
   if(overItem && overQty > 0){
@@ -2220,8 +2236,18 @@ function confirmMispick(){
   if(changed){ try{ renderTable(); updateProgress(); }catch(e){} }
   if(typeof focusInput === 'function') focusInput();
 }
+// 11/05: 오피킹 경고를 닫는 전용 "확인 QR" (내용: LUNASOL-OK). 한/영 상태로 찍혀도 알아본다.
+const MISPICK_CONFIRM_QR = 'LUNASOL-OK';
+function isMispickConfirmQr(raw){
+  if(raw == null) return false;
+  let t = String(raw).trim();
+  try{ if(containsHangul(t)) t = hangulToEnglish(t); }catch(e){}
+  t = t.toUpperCase().replace(/\s+/g, '');
+  return t === MISPICK_CONFIRM_QR || t.replace(/[^A-Z0-9]/g, '') === MISPICK_CONFIRM_QR.replace(/[^A-Z0-9]/g, '');
+}
 // 막혀 있는 동안 스캐너로 들어온 입력: 처리하지 않고 경고만
-function blockedByMispick(){
+// raw: 방금 찍힌 값 (확인 QR인지 보려고 받음)
+function blockedByMispick(raw){
   if(typeof exclusiveBlocking !== 'undefined' && exclusiveBlocking){
     const m3 = document.getElementById('exclusiveBlockedMsg');
     if(m3) m3.textContent = '⛔ [확인했어요]를 마우스로 먼저 눌러주세요';
@@ -2234,9 +2260,21 @@ function blockedByMispick(){
     try{ playErrSound(); }catch(e){}
     return true;
   }
+  if(isMispickConfirmQr(raw)){
+    // 확인 QR: 경고가 떠 있으면 닫고, 아니면 그냥 무시 (품목으로 처리하지 않음)
+    if(mispickBlocking){
+      confirmMispick();
+      try{ playOkSound(); }catch(e){}
+      try{ speakKorean('확인'); }catch(e){}
+      showBanner('idle', '확인했어요 — 다음 상품을 찍어주세요', '', '', '✔️');
+    } else {
+      showBanner('idle', '확인 QR', '', '지금은 닫을 경고가 없어요', 'ℹ️');
+    }
+    return true;
+  }
   if(!mispickBlocking) return false;
   const m = document.getElementById('mispickBlockedMsg');
-  if(m){ m.textContent = '⛔ [확인]을 먼저 눌러주세요 — 방금 찍은 건 반영되지 않았어요'; }
+  if(m){ m.textContent = '⛔ [확인 QR]을 찍어야 닫혀요 — 방금 찍은 건 반영되지 않았어요'; }
   try{ playErrSound(); }catch(e){}
   return true;
 }
@@ -2289,6 +2327,17 @@ function adjustLastScanned(amount){
   const now = new Date();
   const timeStr = now.toLocaleTimeString('ko-KR', {hour12:false});
   const remaining = item.orderQty - item.scannedQty;
+
+  // 11/05: 수량버튼이 남은 수량보다 많으면 반영 안 함 (오피킹으로도 안 잡음)
+  if(amount > 0 && amount > remaining){
+    const left = Math.max(0, remaining);
+    showBanner('warn', '수량버튼이 남은 수량보다 많아요 — 반영 안 함', item.code,
+      `${item.name} / ${item.spec} — +${amount}개 > 남은 ${left}개. ${left > 0 ? '낱개로 찍어주세요' : '이미 다 찍은 품목이에요'}`, '✋');
+    addScreenOnlyLog(item.code, `수량버튼 +${amount} 초과 · 미반영 (남은 ${left}개)`);
+    try{ playErrSound(); }catch(e){}
+    try{ focusInput(); }catch(e){}
+    return;
+  }
 
   if(remaining <= 0){
     errCount += amount;
