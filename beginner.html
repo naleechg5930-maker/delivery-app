@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>배송앱(초보자용)</title>
+<!-- 11/05 배송앱(초보자용): 구역 고르기 → 정해둔 순서대로 "지금 갈 곳" 안내 → 송장 스캔 → 사진 → 다음 안내.
+     배송 기록·사진·카톡 발송은 기존 배송앱과 똑같은 서버 기능을 그대로 쓴다 (두 앱을 섞어 써도 기록이 꼬이지 않음).
+     순서·찾아가는 법·사입자 연락처는 "배송기록_백업" 파일 "배송순서" 탭에서 관리. -->
+<style>
+  :root{ --navy:#161D65; --line:#DCE0EE; --sub:#64748B; --ok:#16A34A; --err:#DC2626; --blue:#0EA5E9; --amber:#F59E0B; --text:#111827; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; height:100%; background:#fff; color:var(--text);
+    font-family:'Pretendard','Malgun Gothic','Apple SD Gothic Neo',sans-serif; -webkit-tap-highlight-color:transparent; overscroll-behavior:none; }
+  #app{ display:flex; flex-direction:column; height:100vh; height:100dvh; }
+  .topbar{ background:var(--navy); color:#fff; padding:12px 14px 10px; }
+  .topbar .row1{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .topbar .t{ font-weight:900; font-size:16px; }
+  .topbar .s{ font-size:12px; opacity:.85; margin-top:3px; min-height:15px; }
+  .topbar .ic{ font-size:20px; padding:2px 6px; cursor:pointer; }
+  .prog{ height:7px; background:#2B3178; border-radius:7px; margin-top:8px; overflow:hidden; display:none; }
+  .prog i{ display:block; height:100%; width:0; background:#22C55E; transition:width .3s; }
+  .screen{ flex:1; display:none; flex-direction:column; min-height:0; overflow-y:auto; padding:14px; gap:12px; }
+  .screen.active{ display:flex; }
+  button{ font-family:inherit; }
+  .btn{ border:0; border-radius:14px; padding:15px; font-size:17px; font-weight:900; color:#fff; background:#111827; width:100%; cursor:pointer; }
+  .btn.blue{ background:var(--blue); } .btn.green{ background:var(--ok); } .btn.amber{ background:var(--amber); }
+  .btn.ghost{ background:#F1F5F9; color:#111827; } .btn.small{ padding:10px; font-size:14px; border-radius:10px; }
+  .btn:disabled{ opacity:.45; }
+  .row{ display:flex; gap:8px; } .row > *{ flex:1; }
+  .muted{ color:var(--sub); font-size:12px; }
+  .center{ text-align:center; }
+  .h{ font-weight:900; font-size:16px; }
+  /* 구역 고르기 */
+  .zg{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+  .zb{ border:2px solid #CBD5E1; border-radius:14px; padding:10px 2px 8px; text-align:center; background:#fff; cursor:pointer; user-select:none; }
+  .zb .L{ font-size:26px; font-weight:900; line-height:1.1; } .zb .c{ font-size:11px; color:var(--sub); margin-top:3px; line-height:1.3; }
+  .zb.on{ border-color:var(--blue); background:#E0F2FE; } .zb.on .L{ color:#0369A1; }
+  .zb.full{ border-color:var(--ok); background:#F0FDF4; } .zb.full .L{ color:var(--ok); }
+  .zb.dim{ opacity:.35; pointer-events:none; }
+  .zb .who{ font-size:10px; color:#B45309; font-weight:800; }
+  .chips{ display:flex; gap:6px; flex-wrap:wrap; }
+  .chip{ border-radius:999px; padding:4px 10px; font-size:12px; font-weight:800; background:#E0F2FE; color:#0369A1; }
+  .card{ border:1px solid var(--line); border-radius:14px; padding:12px; background:#F8FAFC; }
+  .ck{ display:flex; flex-direction:column; gap:6px; }
+  .ck button{ text-align:left; }
+  /* 목록 */
+  .sec{ font-size:12px; font-weight:900; color:#0369A1; padding:6px 4px 4px; border-bottom:2px solid #E0F2FE; }
+  .it{ display:flex; align-items:center; gap:8px; padding:9px 4px; border-bottom:1px solid #F1F5F9; font-size:14px; cursor:pointer; }
+  .it .n{ flex:0 0 26px; height:26px; border-radius:50%; background:#E2E8F0; font-weight:900; display:flex; align-items:center; justify-content:center; font-size:12px; }
+  .it .z{ flex:0 0 40px; font-weight:900; }
+  .it .m{ flex:1; min-width:0; } .it .m small{ display:block; color:var(--sub); font-size:11px; }
+  .it.done{ color:#94A3B8; } .it.done .n{ background:var(--ok); color:#fff; }
+  .it.cur{ background:#F0F9FF; border-radius:8px; } .it.cur .n{ background:var(--blue); color:#fff; }
+  .it.skip .n{ background:var(--amber); color:#fff; }
+  /* 지금 갈 곳 */
+  .next{ border:3px solid var(--blue); border-radius:16px; padding:12px; background:#F0F9FF; }
+  .next .lab{ font-size:12px; color:#0369A1; font-weight:800; }
+  .next .zone{ font-size:34px; font-weight:900; line-height:1.1; margin-top:2px; }
+  .next .co{ font-size:13px; color:var(--sub); margin-top:2px; }
+  .next.green{ border-color:var(--ok); background:#F0FDF4; } .next.green .lab{ color:#166534; }
+  .cos{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+  .coit{ display:flex; align-items:center; gap:8px; background:#fff; border:2px solid #E2E8F0; border-radius:10px; padding:8px 10px; font-size:17px; font-weight:900; }
+  .coit .b{ margin-left:auto; font-size:13px; color:var(--sub); font-weight:700; white-space:nowrap; }
+  .coit.scanned{ border-color:var(--ok); background:#F0FDF4; } .coit.scanned::before{ content:'✅'; }
+  .coit.wait::before{ content:'⬜'; } .coit.delivered{ opacity:.5; } .coit.delivered::before{ content:'✔️'; }
+  .gps{ display:flex; align-items:center; gap:8px; font-size:14px; font-weight:800; background:#EEF2FF; color:#3730A3; border-radius:10px; padding:8px 10px; }
+  .gps.near{ background:#DCFCE7; color:#166534; } .gps.off{ background:#F1F5F9; color:var(--sub); font-weight:600; }
+  .guide{ background:#FFFBEB; border:1px solid #FDE68A; border-radius:12px; padding:10px; font-size:14px; line-height:1.55; }
+  .guide b{ color:#92400E; }
+  .note{ background:#FEF2F2; border:1px solid #FECACA; border-radius:12px; padding:10px; font-size:13px; line-height:1.5; color:#991B1B; }
+  .photos{ display:flex; gap:8px; overflow-x:auto; }
+  .photos img{ height:150px; border-radius:12px; border:1px solid var(--line); background:#F1F5F9; cursor:pointer; flex:0 0 auto; }
+  .tel{ display:inline-block; margin:2px 6px 2px 0; padding:6px 10px; border-radius:999px; background:#DCFCE7; color:#166534; font-weight:800; font-size:13px; text-decoration:none; }
+  .nearby{ display:none; background:#FEF3C7; border:2px solid var(--amber); border-radius:12px; padding:10px; font-size:14px; font-weight:800; color:#92400E; }
+  .scanbox{ border:2px dashed #94A3B8; border-radius:14px; padding:12px; text-align:center; }
+  .scanbox .dot{ display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--ok); animation:pd 1.4s infinite; margin-right:6px; }
+  @keyframes pd{ 0%,100%{opacity:1} 50%{opacity:.3} }
+  .last{ font-family:monospace; font-size:11px; color:var(--sub); word-break:break-all; margin-top:4px; }
+  /* 완료 */
+  .okbox{ background:#DCFCE7; border-radius:16px; padding:18px; text-align:center; }
+  .okbox .big{ font-size:44px; } .okbox .m{ font-size:19px; font-weight:900; color:#166534; margin-top:4px; }
+  /* 오버레이 */
+  .ov{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:60; align-items:center; justify-content:center; padding:16px; }
+  .ov.show{ display:flex; }
+  .ovc{ background:#fff; border-radius:16px; padding:16px; width:100%; max-width:400px; max-height:90vh; overflow-y:auto; display:flex; flex-direction:column; gap:10px; }
+  .ovc h3{ margin:0; font-size:17px; }
+  .ovc input, .ovc select{ width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:10px; font-size:15px; }
+  .warn{ background:#FEF2F2; border:3px solid var(--err); border-radius:14px; padding:12px; }
+  .warn .t{ color:#B91C1C; font-weight:900; font-size:18px; }
+  #previewImg{ width:100%; border-radius:12px; background:#000; max-height:55vh; object-fit:contain; }
+  #camVideo{ width:100%; border-radius:12px; background:#000; max-height:50vh; }
+  .toast{ position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#111827; color:#fff; padding:10px 16px; border-radius:999px; font-size:14px; font-weight:800; z-index:80; display:none; max-width:92vw; text-align:center; }
+  .notice{ white-space:pre-wrap; font-size:14px; line-height:1.6; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="topbar">
+    <div class="row1"><span class="ic" id="homeBtn">🏠</span><span class="t" id="topTitle">🚚 배송앱(초보자용)</span><span class="ic" id="settingsBtn">⚙️</span></div>
+    <div class="s" id="topSub"></div>
+    <div class="prog" id="topProg"><i id="topProgBar"></i></div>
+  </div>
+
+  <!-- ① 홈: 구역 고르기 -->
+  <div class="screen active" id="homeScreen">
+    <div class="row" style="align-items:center"><div class="h" style="flex:3">오늘 내가 갈 구역을 골라주세요</div><button class="btn ghost small" id="noticeBtn" style="flex:1">📋 배송 규칙</button></div>
+    <div class="zg" id="zoneGrid"></div>
+    <div class="muted center" id="zoneHint">숫자 = 오늘 출고된 곳 / 아직 배송 안 한 곳</div>
+    <div class="chips" id="selChips"></div>
+    <button class="btn blue" id="startBtn" disabled>구역을 골라주세요</button>
+    <button class="btn ghost small" id="resumeBtn" style="display:none">↩ 하던 배송 이어서 하기</button>
+    <div class="card">
+      <div class="h" style="font-size:14px;margin-bottom:6px">구간 체크포인트 (사진)</div>
+      <div class="ck">
+        <button class="btn ghost small ms" data-ms="상차전">📦 상차전 (화물칸 촬영)</button>
+        <button class="btn ghost small ms" data-ms="상차후">📦 상차후 (화물칸 촬영)</button>
+        <button class="btn ghost small ms" data-ms="출발">🚗 출발 (계기판 촬영)</button>
+        <button class="btn ghost small ms" data-ms="도착">🅿️ 도착 (계기판 촬영)</button>
+        <button class="btn ghost small" id="ddmEndBtn">🏁 동대문 배송 종료</button>
+      </div>
+    </div>
+    <div class="muted center" id="dataInfo"></div>
+  </div>
+
+  <!-- ② 목록 -->
+  <div class="screen" id="listScreen">
+    <div class="row"><button class="btn ghost small" id="changeZoneBtn">⚙️ 구역 바꾸기</button><button class="btn ghost small" id="refreshBtn">🔄 새로고침</button></div>
+    <div id="stopList"></div>
+    <button class="btn" id="goCurrentBtn">▶ 지금 갈 곳 보기</button>
+  </div>
+
+  <!-- ③ 지금 갈 곳 -->
+  <div class="screen" id="stopScreen">
+    <div class="nearby" id="nearbyBox"></div>
+    <div class="next" id="stopCard">
+      <div class="lab" id="stopLab">지금 갈 곳</div>
+      <div class="zone" id="stopZone">-</div>
+      <div class="co" id="stopPlace"></div>
+      <div class="cos" id="stopCos"></div>
+    </div>
+    <div class="gps off" id="gpsBox">📍 위치 확인 중…</div>
+    <div class="guide" id="stopGuide"></div>
+    <div class="note" id="stopNote" style="display:none"></div>
+    <div id="stopPhone"></div>
+    <div class="photos" id="stopPhotos"></div>
+    <div class="row"><button class="btn ghost small" id="mapBtn">🗺 지도에서 보기</button><button class="btn ghost small" id="listBtn">📋 전체 목록</button></div>
+    <div class="scanbox">
+      <div style="font-weight:900"><span class="dot"></span><span id="scanMsg">송장을 스캐너로 찍어주세요</span></div>
+      <div class="last" id="lastScan"></div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn ghost small" id="camScanBtn">📷 카메라로 QR</button>
+        <button class="btn ghost small" id="pickBtn">⌨️ 목록에서 선택</button>
+      </div>
+    </div>
+    <button class="btn green" id="photoBtn" disabled>📸 배송 사진 찍기</button>
+    <button class="btn ghost small" id="skipBtn">⏭ 나중에 (건너뛰기)</button>
+  </div>
+
+  <!-- ④ 사진 확인 -->
+  <div class="screen" id="previewScreen">
+    <div class="h" id="previewTitle">사진 확인</div>
+    <img id="previewImg" alt="">
+    <div class="muted" id="previewInfo"></div>
+    <div class="row"><button class="btn ghost" id="retakeBtn">다시 찍기</button><button class="btn amber" id="sendBtn">전송</button></div>
+  </div>
+
+  <!-- ⑤ 완료 → 다음 안내 -->
+  <div class="screen" id="doneScreen">
+    <div class="okbox"><div class="big" id="doneIcon">✅</div><div class="m" id="doneMsg">배송완료</div><div class="muted" id="doneSub"></div></div>
+    <div class="next green" id="doneNext"></div>
+    <div id="statsBlock" class="card" style="display:none"></div>
+    <button class="btn green" id="nextBtn">다음 →</button>
+  </div>
+</div>
+
+<input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
+
+<!-- 설정 -->
+<div class="ov" id="settingsOv"><div class="ovc">
+  <h3>⚙️ 설정</h3>
+  <label class="muted">구글시트 연동 주소 (기존 배송앱과 같은 주소)</label>
+  <input id="setUrl" placeholder="https://script.google.com/macros/s/.../exec">
+  <label class="muted">배송자 이름</label>
+  <input id="setDriver" placeholder="예: 정진재">
+  <label style="display:flex;gap:8px;align-items:center;font-size:14px"><input type="checkbox" id="setGps" style="width:auto"> GPS로 거리·도착 알림 쓰기</label>
+  <div class="row"><button class="btn ghost small" id="setCancel">닫기</button><button class="btn blue small" id="setSave">저장</button></div>
+</div></div>
+
+<!-- 배송 규칙 -->
+<div class="ov" id="noticeOv"><div class="ovc"><h3>📋 배송 규칙</h3><div class="notice" id="noticeText"></div><button class="btn small" id="noticeClose">확인</button></div></div>
+
+<!-- 순서 다름 / 안내 -->
+<div class="ov" id="warnOv"><div class="ovc">
+  <div class="warn"><div class="t" id="warnTitle">⚠️ 순서가 달라요</div><div id="warnMsg" style="font-size:15px;margin-top:6px;line-height:1.5"></div></div>
+  <button class="btn ghost" id="warnBack">↩ 지금 차례 먼저 갈게요</button>
+  <button class="btn amber" id="warnGo">그래도 여기 배송하기</button>
+</div></div>
+
+<!-- 목록에서 선택 (스캔이 안 될 때) -->
+<div class="ov" id="pickOv"><div class="ovc">
+  <h3>⌨️ 송장 대신 목록에서 고르기</h3>
+  <div class="muted">스캔이 안 될 때만 쓰세요. 이 장소에서 배송할 업체를 눌러요.</div>
+  <div id="pickList" class="ck"></div>
+  <button class="btn ghost small" id="pickClose">닫기</button>
+</div></div>
+
+<!-- 카메라로 QR -->
+<div class="ov" id="camOv"><div class="ovc">
+  <h3>📷 송장 QR을 비춰주세요</h3>
+  <video id="camVideo" playsinline muted></video>
+  <div class="muted" id="camMsg"></div>
+  <button class="btn ghost small" id="camClose">닫기</button>
+</div></div>
+
+<!-- 카톡 자동발송 실패 알림 (기존 배송앱과 같음) -->
+<div class="ov" id="failOv"><div class="ovc">
+  <h3>⚠️ 카톡 자동발송 실패</h3><div id="failList" style="font-size:13px;line-height:1.6"></div>
+  <button class="btn amber small" id="failAck">확인했습니다</button>
+</div></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ===================== 기본 ===================== */
+const $ = id => document.getElementById(id);
+const LS = { get(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : v; }catch(e){ return d; } }, set(k, v){ try{ localStorage.setItem(k, v); }catch(e){} } };
+let gasUrl = LS.get('deliveryGasUrl', '');          // 기존 배송앱과 같은 저장값 → 같은 폰이면 다시 안 넣어도 됨
+let driver = LS.get('bgnDriver', '');
+let gpsOn = LS.get('bgnGps', '1') === '1';
+const ZONE_ORDER = ['E', 'C', 'A', 'B', 'D', 'F', 'G', '기타'];   // 배송매뉴얼: E → C → A·B·D → F → G
+const ZONE_SUB_ORDER = ['E1', 'E2', 'E3', 'C0', 'C1', 'C2'];
+let data = null;            // 서버에서 받은 것 { route, hubs, notice, docs, drivers, today }
+let stops = [];             // 오늘 배송할 장소 목록 (정해둔 순서)
+let selZones = [];          // 고른 구역
+let curKey = '';            // 지금 갈 곳
+let skipped = {};           // 건너뛴 장소
+let scanned = {};           // 지금 장소에서 스캔한 전표 { docKey: true }
+let outOfOrder = false;
+let pendingMode = '';       // 'delivery' | 'milestone:상차전' ...
+let capturedDataUrl = '';
+let posNow = null;          // { lat, lng, acc }
+let nearAlerted = {};
+let doneCountSession = 0;
+
+function toast(msg, ms){ const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast._t); toast._t = setTimeout(() => t.style.display = 'none', ms || 2200); }
+function nowHMS(){ const d = new Date(), z = n => ('0' + n).slice(-2); return `${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`; }
+function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function ckey(s){ return String(s || '').replace(/ /g,' ').replace(/\s+/g,'').replace(/\(주\)|（주）|㈜/g,'').replace(/[()（）\-_.]/g,'').toLowerCase(); }
+function zoneLetter(z){ const m = String(z || '').toUpperCase().replace(/O/g,'0').match(/^([A-G])/); return m ? m[1] : '기타'; }
+function zoneShort(z){ const m = String(z || '').toUpperCase().replace(/O/g,'0').match(/^([A-G]\d?)/); return m ? m[1] : String(z || '').replace(/\(.*?\)/g,'').trim() || '기타'; }
+function zoneRank(z){
+  const s = zoneShort(z), L = zoneLetter(z);
+  const sub = ZONE_SUB_ORDER.indexOf(s);
+  return ZONE_ORDER.indexOf(L) * 10 + (sub >= 0 ? sub % 3 : 0);
+}
+function showScreen(id){
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === id));
+  window.scrollTo(0, 0);
+  updateTop();
+}
+function activeScreen(){ const a = document.querySelector('.screen.active'); return a ? a.id : ''; }
+function vib(p){ try{ navigator.vibrate && navigator.vibrate(p); }catch(e){} }
+function beep(ok){
+  try{
+    const ctx = beep.ctx || (beep.ctx = new (window.AudioContext || window.webkitAudioContext)());
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = ok ? 880 : 220; o.connect(g); g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.15, ctx.currentTime); o.start(); o.stop(ctx.currentTime + (ok ? 0.12 : 0.35));
+  }catch(e){}
+}
+
+/* ===================== 저장 (새로고침해도 이어서) ===================== */
+function saveState(){
+  if(!data) return;
+  LS.set('bgnState', JSON.stringify({ day: data.today, selZones, curKey, skipped, doneCountSession }));
+}
+function loadState(){
+  try{
+    const st = JSON.parse(LS.get('bgnState', '{}'));
+    if(data && st.day === data.today){
+      selZones = st.selZones || []; curKey = st.curKey || ''; skipped = st.skipped || {}; doneCountSession = st.doneCountSession || 0;
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+
+/* ===================== 서버 ===================== */
+async function fetchJson(url, opt, ms){
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), ms || 30000);
+  try{ const r = await fetch(url, Object.assign({}, opt || {}, { signal: ctl.signal })); return await r.json(); }
+  finally{ clearTimeout(t); }
+}
+async function loadData(silent){
+  if(!gasUrl){ openSettings(); return false; }
+  if(!silent) $('dataInfo').textContent = '오늘 배송 목록 받는 중…';
+  try{
+    const res = await fetchJson(gasUrl + '?action=getBeginnerRoute&t=' + Date.now(), {}, 40000);
+    if(!res || !res.ok) throw new Error((res && res.error) || '응답 오류');
+    // 내가 방금 보낸 건(서버에 아직 안 찍힌 것)은 배송완료로 유지
+    const localDone = data ? data.docs.filter(d => d.delivered && d._local).reduce((m, d) => (m[d.documentKey || d.company] = d.delivered, m), {}) : {};
+    data = res;
+    data.docs.forEach(d => { const k = d.documentKey || d.company; if(!d.delivered && localDone[k]){ d.delivered = localDone[k]; d._local = true; } });
+    buildStops();
+    $('dataInfo').textContent = `오늘 출고 ${data.docs.length}건 · 배송순서 ${data.route.length}줄 · ${nowHMS()} 기준`;
+    return true;
+  }catch(e){
+    if(!silent) $('dataInfo').textContent = '⚠️ 목록을 못 받았어요: ' + e.message + ' (인터넷·설정 주소 확인)';
+    return false;
+  }
+}
+function post(payload){
+  return fetchJson(gasUrl, { method: 'POST', body: JSON.stringify(payload) }, 90000);
+}
+
+/* ===================== 장소(정류장) 만들기 ===================== */
+// 배송순서 탭: 같은 순서 번호 = 같은 장소. 오늘 출고 전표를 업체명으로 연결한다.
+function routeFor(doc){
+  const k = ckey(doc.company);
+  let rows = data.route.filter(r => ckey(r.company) === k);
+  if(!rows.length) rows = data.route.filter(r => { const rk = ckey(r.company); return rk && k && (rk.includes(k) || k.includes(rk)); });
+  if(!rows.length) return null;
+  if(rows.length > 1){
+    const sample = doc.spTag === 'SP' || /샘플|S\/P/i.test(doc.company);
+    const pref = rows.find(r => sample ? /샘플/.test(r.place) : /주문/.test(r.place));
+    if(pref) return pref;
+  }
+  return rows.slice().sort((a, b) => a.no - b.no)[0];
+}
+function buildStops(){
+  const map = {};
+  data.docs.forEach((d, i) => {
+    const r = routeFor(d);
+    let key, st;
+    if(r){
+      key = 'R' + r.no;
+      st = map[key] || (map[key] = { key, no: r.no, routed: true, zone: zoneShort(r.zone || d.zone), place: r.place, guide: r.guide, note: r.note,
+        phone: r.phone, photos: [r.photo1, r.photo2].filter(Boolean), lat: r.lat, lng: r.lng, docs: [] });
+      if(!st.lat && r.lat){ st.lat = r.lat; st.lng = r.lng; }
+    } else {
+      key = 'U' + ckey(d.company);
+      st = map[key] || (map[key] = { key, no: 100000 + zoneRank(d.zone) * 100 + i, routed: false, zone: zoneShort(d.zone), place: '', guide: '', note: '',
+        phone: '', photos: [], lat: 0, lng: 0, docs: [] });
+    }
+    st.docs.push(d);
+  });
+  stops = Object.values(map).sort((a, b) => a.no - b.no);
+  stops.forEach(s => {
+    s.letter = zoneLetter(s.zone);
+    s.done = s.docs.every(d => d.delivered);
+    const hub = (data.hubs || []).find(h => zoneShort(h.zone) === s.zone);
+    s.hub = hub || null;
+  });
+}
+function selStops(){ return stops.filter(s => selZones.includes(s.letter)); }
+function curStop(){ return stops.find(s => s.key === curKey) || null; }
+function pickNextKey(){
+  const list = selStops();
+  const pending = list.filter(s => !s.done && !skipped[s.key]);
+  if(pending.length) return pending[0].key;
+  const sk = list.filter(s => !s.done);       // 건너뛴 곳만 남았으면 그쪽으로
+  return sk.length ? sk[0].key : '';
+}
+
+/* ===================== ① 홈: 구역 고르기 ===================== */
+function renderHome(){
+  const grid = $('zoneGrid');
+  const byL = {};
+  stops.forEach(s => { (byL[s.letter] = byL[s.letter] || []).push(s); });
+  const others = {};
+  (data && data.drivers || []).forEach(dv => { if(dv.driver !== driver) (dv.zones || []).forEach(z => { (others[z] = others[z] || []).push(dv.driver); }); });
+  let html = '';
+  ZONE_ORDER.forEach(L => {
+    const arr = byL[L] || [];
+    if(L === '기타' && !arr.length) return;
+    const left = arr.filter(s => !s.done).length;
+    const cls = !arr.length ? 'dim' : (left === 0 ? 'full' : (selZones.includes(L) ? 'on' : ''));
+    const sub = !arr.length ? '오늘 없음' : (left === 0 ? '✓ 다 끝남' : `${arr.length}곳 · 남음 ${left}`);
+    const who = others[L] ? `<div class="who">${esc(others[L].join(','))} 진행 중</div>` : '';
+    html += `<div class="zb ${cls}${selZones.includes(L) && left === 0 ? ' on' : ''}" data-z="${L}"><div class="L" style="${L === '기타' ? 'font-size:16px;padding:5px 0' : ''}">${L}</div><div class="c">${sub}</div>${who}</div>`;
+  });
+  html += `<div class="zb" data-z="ALL" style="border-style:dashed"><div class="L" style="font-size:16px;padding:5px 0">전체</div><div class="c">한 번에 선택</div></div>`;
+  grid.innerHTML = html;
+  grid.querySelectorAll('.zb').forEach(b => b.addEventListener('click', () => {
+    const z = b.dataset.z;
+    if(z === 'ALL'){
+      const avail = ZONE_ORDER.filter(L => (byL[L] || []).some(s => !s.done));
+      selZones = selZones.length === avail.length ? [] : avail;
+    } else {
+      selZones = selZones.includes(z) ? selZones.filter(x => x !== z) : selZones.concat(z);
+    }
+    selZones.sort((a, b) => ZONE_ORDER.indexOf(a) - ZONE_ORDER.indexOf(b));
+    saveState(); renderHome();
+  }));
+  const ss = selStops(), left = ss.filter(s => !s.done);
+  const bags = left.reduce((a, s) => a + s.docs.filter(d => !d.delivered).reduce((b, d) => b + (Number(d.bagCount) || 0), 0), 0);
+  $('selChips').innerHTML = selZones.map(L => `<span class="chip">${L} ${(byL[L] || []).filter(s => !s.done).length}곳</span>`).join('') + (left.length ? `<span class="chip">봉투 ${bags}개</span>` : '');
+  const btn = $('startBtn');
+  btn.disabled = !left.length;
+  btn.textContent = selZones.length ? (left.length ? `▶ ${selZones.join(' · ')} 구역 배송 시작 (${left.length}곳)` : '고른 구역은 다 끝났어요') : '구역을 골라주세요';
+  $('resumeBtn').style.display = curKey && curStop() && !curStop().done ? '' : 'none';
+}
+$('startBtn').addEventListener('click', () => {
+  if(!driver){ toast('⚙️ 설정에서 배송자 이름을 먼저 넣어주세요'); openSettings(); return; }
+  if(!curKey || !curStop() || curStop().done || !selZones.includes(curStop().letter)) curKey = pickNextKey();
+  saveState(); sendProgress(); renderList(); showScreen('listScreen');
+});
+$('resumeBtn').addEventListener('click', () => { openStop(curKey); });
+
+/* ===================== ② 목록 ===================== */
+function renderList(){
+  const list = selStops();
+  let html = '', lastL = '', i = 0;
+  list.forEach(s => {
+    i++;
+    if(s.letter !== lastL){ lastL = s.letter; html += `<div class="sec">${s.letter} 구역 (${list.filter(x => x.letter === s.letter).length}곳)</div>`; }
+    const cls = s.done ? 'done' : (s.key === curKey ? 'cur' : (skipped[s.key] ? 'skip' : ''));
+    const names = s.docs.map(d => d.company).join(', ');
+    const bags = s.docs.reduce((a, d) => a + (Number(d.bagCount) || 0), 0);
+    html += `<div class="it ${cls}" data-k="${esc(s.key)}"><div class="n">${s.done ? '✓' : i}</div><div class="z">${esc(s.zone)}</div>
+      <div class="m">${esc(names)} · ${bags}봉투<small>${s.done ? '배송완료' : (skipped[s.key] ? '건너뜀 — 나중에' : (s.routed ? esc(s.guide).slice(0, 40) : '배송순서 탭에 없는 업체'))}</small></div></div>`;
+  });
+  $('stopList').innerHTML = html || '<div class="muted center">고른 구역에 오늘 배송할 곳이 없어요</div>';
+  $('stopList').querySelectorAll('.it').forEach(el => el.addEventListener('click', () => {
+    const s = stops.find(x => x.key === el.dataset.k);
+    if(!s || s.done) return;
+    openStop(s.key);
+  }));
+  $('goCurrentBtn').style.display = curKey ? '' : 'none';
+}
+$('goCurrentBtn').addEventListener('click', () => { if(!curKey) curKey = pickNextKey(); if(curKey) openStop(curKey); });
+$('changeZoneBtn').addEventListener('click', () => { renderHome(); showScreen('homeScreen'); });
+$('refreshBtn').addEventListener('click', async () => { await loadData(); renderList(); toast('새로고침했어요'); });
+$('listBtn').addEventListener('click', () => { renderList(); showScreen('listScreen'); });
+
+/* ===================== ③ 지금 갈 곳 ===================== */
+function openStop(key){
+  const s = stops.find(x => x.key === key);
+  if(!s){ showScreen('listScreen'); return; }
+  if(key !== curKey){ scanned = {}; }
+  curKey = key; delete skipped[key]; saveState();
+  renderStop(); showScreen('stopScreen'); startGps(); requestWakeLock(); sendProgress();
+}
+function renderStop(){
+  const s = curStop(); if(!s) return;
+  const list = selStops(), idx = list.indexOf(s) + 1;
+  $('stopLab').textContent = s.routed ? `지금 갈 곳 · ${idx}번째 / ${list.length}` : `지금 갈 곳 · ${idx}번째 / ${list.length} (배송순서 탭에 없는 업체)`;
+  $('stopZone').textContent = s.zone;
+  $('stopPlace').textContent = s.place && s.place !== s.docs.map(d => d.company).join('+') ? '장소: ' + s.place : '';
+  $('stopCos').innerHTML = s.docs.map(d => {
+    const st = d.delivered ? 'delivered' : (scanned[d.documentKey || d.company] ? 'scanned' : 'wait');
+    return `<div class="coit ${st}"><span>${esc(d.company)}</span><span class="b">${d.spTag === 'SP' ? '샘플 · ' : ''}${esc(d.bagCount || '?')}봉투${d.delivered ? ' · 완료' : ''}</span></div>`;
+  }).join('');
+  $('stopGuide').innerHTML = s.guide ? `<b>📍 찾아가는 법</b><br>${esc(s.guide)}` : `<b>📍 찾아가는 법</b><br><span class="muted">아직 안내가 없어요 (배송순서 탭에 적어두면 여기 나와요)</span>`;
+  $('stopNote').style.display = s.note ? '' : 'none';
+  $('stopNote').innerHTML = s.note ? `⚠️ <b>특이사항</b> ${esc(s.note)}` : '';
+  $('stopPhone').innerHTML = s.phone ? '📞 사입자 ' + s.phone.split(/[,\/]/).map(p => p.trim()).filter(Boolean).map(p => {
+    const num = (p.match(/01[016789][\d\- ]{7,11}\d/) || [''])[0].replace(/[\s-]/g, '');
+    return num ? `<a class="tel" href="tel:${num}">${esc(p)}</a>` : esc(p);
+  }).join('') : '';
+  $('stopPhotos').innerHTML = s.photos.map(u => `<img src="${esc(u)}" alt="참고 사진" loading="lazy" onerror="this.style.display='none'" onclick="window.open(this.src,'_blank')">`).join('');
+  $('mapBtn').style.display = s.lat ? '' : 'none';
+  updateScanState();
+  updateGpsBox();
+  updateTop();
+}
+function updateScanState(){
+  const s = curStop(); if(!s) return;
+  const pend = s.docs.filter(d => !d.delivered);
+  const got = pend.filter(d => scanned[d.documentKey || d.company]);
+  $('photoBtn').disabled = !got.length;
+  $('photoBtn').textContent = got.length === pend.length ? `📸 배송 사진 찍기 (${got.length}곳)` : (got.length ? `📸 스캔한 ${got.length}곳만 사진 찍기 (${pend.length - got.length}곳 남음)` : '📸 배송 사진 찍기 (먼저 송장 스캔)');
+  $('scanMsg').textContent = pend.length > 1 ? `송장을 스캐너로 찍어주세요 (${got.length}/${pend.length})` : (got.length ? '스캔 완료 — 사진을 찍어주세요' : '송장을 스캐너로 찍어주세요');
+}
+function updateTop(){
+  const id = activeScreen();
+  const list = selStops(), done = list.filter(s => s.done).length;
+  const bar = $('topProg');
+  if(id === 'homeScreen'){ $('topTitle').textContent = '🚚 배송앱(초보자용)'; $('topSub').textContent = (data ? data.today + ' · ' : '') + (driver ? '배송자 ' + driver : '배송자 이름을 설정해주세요'); bar.style.display = 'none'; return; }
+  $('topTitle').textContent = `${selZones.join(' · ')} 구역 · ${done} / ${list.length} 완료`;
+  const s = curStop(), nxt = s ? list.filter(x => !x.done && x.key !== s.key && !skipped[x.key])[0] : null;
+  $('topSub').textContent = nxt ? `다음: ${nxt.zone} ${nxt.docs.map(d => d.company).join(', ')}` : '';
+  bar.style.display = 'block';
+  $('topProgBar').style.width = (list.length ? Math.round(done / list.length * 100) : 0) + '%';
+}
+$('mapBtn').addEventListener('click', () => {
+  const s = curStop(); if(!s || !s.lat) return;
+  window.open(`https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`, '_blank');
+});
+$('skipBtn').addEventListener('click', () => {
+  const s = curStop(); if(!s) return;
+  skipped[s.key] = true; scanned = {};
+  curKey = pickNextKey(); saveState();
+  if(curKey && curKey !== s.key){ toast('건너뛰었어요 — 목록 끝에서 다시 안내해요'); openStop(curKey); }
+  else { renderList(); showScreen('listScreen'); }
+});
+
+/* ===================== 스캔 ===================== */
+// 스캐너는 키보드처럼 아주 빠르게 글자를 보낸다 → 화면 어디서든 받아서 모은다 (기존 배송앱과 같은 방식)
+const HANGUL_CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+const HANGUL_JUNG = ['ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ','ㅚ','ㅛ','ㅜ','ㅝ','ㅞ','ㅟ','ㅠ','ㅡ','ㅢ','ㅣ'];
+const HANGUL_JONG = ['', 'ㄱ','ㄲ','ㄳ','ㄴ','ㄵ','ㄶ','ㄷ','ㄹ','ㄺ','ㄻ','ㄼ','ㄽ','ㄾ','ㄿ','ㅀ','ㅁ','ㅂ','ㅄ','ㅅ','ㅆ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+const HANGUL_KEY_MAP = {'ㄱ':'r','ㄲ':'R','ㄴ':'s','ㄷ':'e','ㄸ':'E','ㄹ':'f','ㅁ':'a','ㅂ':'q','ㅃ':'Q','ㅅ':'t','ㅆ':'T','ㅇ':'d','ㅈ':'w','ㅉ':'W','ㅊ':'c','ㅋ':'z','ㅌ':'x','ㅍ':'v','ㅎ':'g',
+  'ㅏ':'k','ㅐ':'o','ㅑ':'i','ㅒ':'O','ㅓ':'j','ㅔ':'p','ㅕ':'u','ㅖ':'P','ㅗ':'h','ㅘ':'hk','ㅙ':'ho','ㅚ':'hl','ㅛ':'y','ㅜ':'n','ㅝ':'nj','ㅞ':'np','ㅟ':'nl','ㅠ':'b','ㅡ':'m','ㅢ':'ml','ㅣ':'l',
+  'ㄳ':'rt','ㄵ':'sw','ㄶ':'sg','ㄺ':'rf','ㄻ':'fa','ㄼ':'fq','ㄽ':'ft','ㄾ':'fx','ㄿ':'fv','ㅀ':'fg','ㅄ':'qt'};
+function hangulToEnglish(str){
+  let out = '';
+  for(const ch of str){
+    const c = ch.codePointAt(0);
+    if(c >= 0xAC00 && c <= 0xD7A3){ const o = c - 0xAC00; out += (HANGUL_KEY_MAP[HANGUL_CHO[Math.floor(o / 588)]] || '') + (HANGUL_KEY_MAP[HANGUL_JUNG[Math.floor((o % 588) / 28)]] || '') + (o % 28 ? (HANGUL_KEY_MAP[HANGUL_JONG[o % 28]] || '') : ''); }
+    else out += HANGUL_KEY_MAP[ch] || ch;
+  }
+  return out;
+}
+let scanBuf = '', scanLast = 0;
+document.addEventListener('keydown', e => {
+  const el = document.activeElement;
+  if(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) return;
+  if(document.querySelector('.ov.show')) return;
+  const now = Date.now();
+  if(now - scanLast > 300) scanBuf = '';
+  scanLast = now;
+  if(e.key === 'Enter'){ e.preventDefault(); const raw = scanBuf.trim(); scanBuf = ''; if(raw) onScan(raw); }
+  else if(e.key.length === 1) scanBuf += e.key;
+});
+function parseDlv(raw){
+  let t = String(raw || '').trim();
+  if(/[ㄱ-ㆎ가-힣]/.test(t)) t = hangulToEnglish(t);
+  const m = t.match(/^dlv\|\s*([^|]*)/i);
+  if(!m) return null;
+  return { suffix: m[1].trim(), old: t.split('|').length > 2 ? t : '' };
+}
+function findDocBySuffix(suffix){
+  const list = (data && data.docs || []).filter(d => String(d.suffix) === String(suffix));
+  return list.find(d => !d.delivered) || list[0] || null;
+}
+async function onScan(raw){
+  $('lastScan').textContent = '최근 인식: ' + raw.slice(0, 50);
+  if(activeScreen() !== 'stopScreen'){ toast('"지금 갈 곳" 화면에서 찍어주세요'); return; }
+  const p = parseDlv(raw);
+  if(!p){ beep(false); toast('배송 송장 QR이 아니에요'); return; }
+  let doc = findDocBySuffix(p.suffix);
+  if(!doc){ await loadData(true); doc = findDocBySuffix(p.suffix); }
+  if(!doc){ beep(false); vib(300); toast('오늘 출고 목록에 없는 송장이에요 (전표 ' + p.suffix + ')', 3500); return; }
+  acceptDoc(doc, false);
+}
+function acceptDoc(doc, viaList){
+  const s = curStop();
+  if(doc.delivered){ beep(false); toast(`${doc.company}는 이미 배송완료(${(String(doc.delivered).match(/\d{1,2}:\d{2}/) || [''])[0]})예요`, 3000); return; }
+  if(s && s.docs.includes(doc)){
+    scanned[doc.documentKey || doc.company] = true;
+    beep(true); vib(60);
+    renderStop();
+    const pend = s.docs.filter(d => !d.delivered);
+    if(pend.every(d => scanned[d.documentKey || d.company])) toast(viaList ? '선택했어요 — 사진을 찍어주세요' : '✅ 스캔 완료 — 사진을 찍어주세요');
+    else toast(`✅ ${doc.company} · 같은 장소 ${pend.length - pend.filter(d => scanned[d.documentKey || d.company]).length}곳 더 찍어주세요`);
+    return;
+  }
+  // 다른 장소의 송장 → 순서 확인
+  const other = stops.find(x => x.docs.includes(doc));
+  const list = selStops();
+  const io = list.indexOf(other) + 1, ic = list.indexOf(s) + 1;
+  beep(false); vib([200, 100, 200]);
+  $('warnTitle').textContent = '⚠️ 순서가 달라요';
+  $('warnMsg').innerHTML = `지금 찍은 건 <b>${esc(other ? other.zone : doc.zone)} ${esc(doc.company)}</b>${io ? ` (${io}번)` : (other ? ' (고른 구역 밖)' : '')}<br>지금 차례는 <b>${esc(s ? s.zone : '')} ${esc(s ? s.docs.map(d => d.company).join(', ') : '')}</b>${ic ? ` (${ic}번)` : ''}이에요`;
+  $('warnGo').textContent = `그래도 ${doc.company} 배송하기`;
+  $('warnOv').classList.add('show');
+  $('warnGo').onclick = () => {
+    $('warnOv').classList.remove('show');
+    if(!other) return;
+    if(!selZones.includes(other.letter)){ selZones = selZones.concat(other.letter).sort((a, b) => ZONE_ORDER.indexOf(a) - ZONE_ORDER.indexOf(b)); }
+    outOfOrder = true;
+    if(s && s.key !== other.key) skipped[s.key] = true;
+    openStop(other.key);
+    scanned[doc.documentKey || doc.company] = true;
+    renderStop();
+    toast('순서를 바꿔서 배송해요 — 기록에 "순서변경"으로 남아요', 3000);
+  };
+  $('warnBack').onclick = () => { $('warnOv').classList.remove('show'); };
+}
+$('pickBtn').addEventListener('click', () => {
+  const s = curStop(); if(!s) return;
+  $('pickList').innerHTML = s.docs.filter(d => !d.delivered).map((d, i) => `<button class="btn ghost small" data-i="${s.docs.indexOf(d)}">${esc(d.company)} · ${esc(d.bagCount || '?')}봉투${d.spTag === 'SP' ? ' (샘플)' : ''}</button>`).join('') || '<div class="muted">이 장소는 다 배송했어요</div>';
+  $('pickList').querySelectorAll('button').forEach(b => b.addEventListener('click', () => { $('pickOv').classList.remove('show'); acceptDoc(s.docs[Number(b.dataset.i)], true); }));
+  $('pickOv').classList.add('show');
+});
+$('pickClose').addEventListener('click', () => $('pickOv').classList.remove('show'));
+
+// 카메라로 QR (스캐너가 없을 때) — 안드로이드 크롬 등 BarcodeDetector 지원 기기만
+let camStream = null, camTimer = null;
+if(!('BarcodeDetector' in window)) $('camScanBtn').style.display = 'none';
+$('camScanBtn').addEventListener('click', async () => {
+  try{
+    const det = new BarcodeDetector({ formats: ['qr_code'] });
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    const v = $('camVideo'); v.srcObject = camStream; await v.play();
+    $('camMsg').textContent = '송장 QR을 화면 가운데에 맞춰주세요';
+    $('camOv').classList.add('show');
+    const loop = async () => {
+      if(!camStream) return;
+      try{ const r = await det.detect(v); if(r && r.length){ const val = r[0].rawValue; closeCam(); onScan(val); return; } }catch(e){}
+      camTimer = setTimeout(loop, 250);
+    };
+    loop();
+  }catch(e){ toast('카메라를 열 수 없어요: ' + e.message, 3000); closeCam(); }
+});
+function closeCam(){ clearTimeout(camTimer); if(camStream){ camStream.getTracks().forEach(t => t.stop()); camStream = null; } $('camOv').classList.remove('show'); }
+$('camClose').addEventListener('click', closeCam);
+
+/* ===================== 사진 → 전송 ===================== */
+$('photoBtn').addEventListener('click', () => { pendingMode = 'delivery'; $('photoInput').click(); });
+document.querySelectorAll('.ms').forEach(b => b.addEventListener('click', () => {
+  if(!gasUrl){ openSettings(); return; }
+  pendingMode = 'milestone:' + b.dataset.ms; $('photoInput').click();
+}));
+$('ddmEndBtn').addEventListener('click', async () => {
+  if(!gasUrl){ openSettings(); return; }
+  if(!confirm('동대문 배송 종료를 기록할까요?')) return;
+  try{ const r = await post({ type: 'dongdaemun_end' }); toast(r && r.ok ? '🏁 동대문 배송 종료 기록됨' : '기록 실패: ' + (r && r.error), 3000); }catch(e){ toast('전송 실패: ' + e.message, 3000); }
+});
+$('photoInput').addEventListener('change', e => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if(!f) return;
+  const rd = new FileReader();
+  rd.onload = async () => {
+    capturedDataUrl = await resizeImage(rd.result, 1280, 0.72);
+    $('previewImg').src = capturedDataUrl;
+    if(pendingMode === 'delivery'){
+      const s = curStop(), got = s ? s.docs.filter(d => !d.delivered && scanned[d.documentKey || d.company]) : [];
+      $('previewTitle').textContent = '배송 사진 확인';
+      $('previewInfo').textContent = got.map(d => `${d.company} ${d.bagCount || ''}봉투`).join(', ') + ' — 배송 위치가 잘 보이게 넓게 찍혔는지 확인하세요';
+    } else {
+      $('previewTitle').textContent = pendingMode.split(':')[1] + ' 사진 확인';
+      $('previewInfo').textContent = '';
+    }
+    showScreen('previewScreen');
+  };
+  rd.readAsDataURL(f);
+});
+$('retakeBtn').addEventListener('click', () => $('photoInput').click());
+function resizeImage(dataUrl, maxSize, quality){
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      if(w > h && w > maxSize){ h = Math.round(h * maxSize / w); w = maxSize; } else if(h >= w && h > maxSize){ w = Math.round(w * maxSize / h); h = maxSize; }
+      const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+$('sendBtn').addEventListener('click', async () => {
+  if(!capturedDataUrl) return;
+  if(pendingMode.indexOf('milestone:') === 0){
+    const ms = pendingMode.split(':')[1];
+    $('sendBtn').disabled = true;
+    try{
+      const r = await post({ type: 'milestone', milestoneType: ms, image: capturedDataUrl });
+      showDone('📸', `${ms} 사진 기록됨`, (r && (r.recordedTime || '')) + (r && r.elapsed ? ' · 소요시간 ' + r.elapsed : ''), null);
+      if(ms === '도착' && r && r.stats) renderStats(r.stats);
+    }catch(e){ alert('전송 실패: ' + e.message + '\n인터넷 확인 후 다시 시도해주세요.'); }
+    finally{ $('sendBtn').disabled = false; }
+    return;
+  }
+  const s = curStop(); if(!s) return;
+  const got = s.docs.filter(d => !d.delivered && scanned[d.documentKey || d.company]);
+  if(!got.length){ toast('스캔한 송장이 없어요'); return; }
+  const payload = got.length === 1
+    ? { type: 'delivery', company: got[0].company, zone: got[0].zone, bagCount: got[0].bagCount, spTag: got[0].spTag, documentKey: got[0].documentKey, image: capturedDataUrl }
+    : { type: 'batchDelivery', companies: got.map(d => ({ company: d.company, zone: d.zone, bagCount: d.bagCount, spTag: d.spTag })), image: capturedDataUrl };
+  // 기다리지 않고 바로 다음 안내 (기존 배송앱과 같음). 실패하면 알림
+  const nowT = nowHMS();
+  got.forEach(d => { d.delivered = nowT; d._local = true; });
+  const list = selStops(), plannedNo = list.indexOf(s) + 1;
+  doneCountSession++;
+  const dist = (posNow && s.lat) ? Math.round(distM(posNow.lat, posNow.lng, s.lat, s.lng)) : null;
+  const wasOut = outOfOrder; outOfOrder = false;
+  s.done = s.docs.every(d => d.delivered);
+  if(!s.done){ /* 같은 장소에 아직 안 찍은 업체가 남음 → 이 장소를 계속 */ }
+  scanned = {};
+  post(payload).then(r => {
+    if(!r || !r.ok){ alert('⚠️ 방금 배송(' + got.map(d => d.company).join(', ') + ') 전송이 실패했을 수 있어요: ' + (r && r.error) + '\n이 화면을 캡처해서 알려주세요.'); got.forEach(d => { d.delivered = ''; d._local = false; }); buildStops(); }
+  }).catch(err => { alert('⚠️ 전송 실패(인터넷 확인): ' + err.message + '\n' + got.map(d => d.company).join(', ') + ' — 다시 스캔해서 보내주세요.'); got.forEach(d => { d.delivered = ''; d._local = false; }); buildStops(); });
+  got.forEach(d => post({ type: 'beginnerLog', driver, company: d.company, zone: d.zone, documentKey: d.documentKey, plannedNo, actualNo: doneCountSession, outOfOrder: wasOut, distanceM: dist }).catch(() => {}));
+  const prevLetter = s.letter;
+  if(s.done) curKey = pickNextKey();
+  saveState(); sendProgress();
+  const nxt = curStop();
+  const zoneDone = s.done && !selStops().some(x => x.letter === prevLetter && !x.done);
+  showDone(zoneDone ? '🎉' : '✅', zoneDone ? `${prevLetter} 구역 다 끝났어요` : '배송완료 · 사진 전송 중',
+    `${got.map(d => d.company).join(', ')} · ${nowT}${got.length > 1 ? ' (한 장으로 같이)' : ''} — 거래처 카톡 사진은 자동 발송돼요`, nxt && nxt.key !== s.key ? nxt : (s.done ? null : s));
+});
+function showDone(icon, msg, sub, nxt){
+  $('doneIcon').textContent = icon; $('doneMsg').textContent = msg; $('doneSub').textContent = sub || '';
+  $('statsBlock').style.display = 'none';
+  const box = $('doneNext');
+  if(pendingMode !== 'delivery'){ box.style.display = 'none'; $('nextBtn').textContent = '처음 화면으로'; $('nextBtn').onclick = () => { renderHome(); showScreen('homeScreen'); }; showScreen('doneScreen'); return; }
+  box.style.display = '';
+  if(nxt){
+    const list = selStops(), idx = list.indexOf(nxt) + 1;
+    const zoneChange = list.find(x => x.key === nxt.key) && curStopPrevLetter() !== nxt.letter;
+    box.innerHTML = `<div class="lab">${nxt.done ? '' : `다음 갈 곳 (${idx}번)`}${zoneChange ? ` · ${nxt.letter} 구역 시작` : ''}</div><div class="zone">${esc(nxt.zone)}</div>
+      <div style="font-size:20px;font-weight:900">${esc(nxt.docs.filter(d => !d.delivered).map(d => d.company).join(', '))}</div>
+      <div class="muted" style="margin-top:4px">봉투 ${nxt.docs.filter(d => !d.delivered).reduce((a, d) => a + (Number(d.bagCount) || 0), 0)}개${nxt.guide ? ' · ' + esc(nxt.guide).slice(0, 50) : ''}</div>`;
+    $('nextBtn').textContent = `다음 → ${nxt.docs.filter(d => !d.delivered).map(d => d.company)[0] || ''}${nxt.docs.filter(d => !d.delivered).length > 1 ? ' 외' : ''}로 이동`;
+    $('nextBtn').onclick = () => openStop(nxt.key);
+  } else {
+    box.innerHTML = `<div class="lab">고른 구역 배송 끝!</div><div style="font-size:18px;font-weight:900;margin-top:4px">${esc(selZones.join(' · '))} 구역을 모두 배송했어요 🎉</div><div class="muted">다른 구역을 더 가려면 "구역 고르기"로 가세요</div>`;
+    $('nextBtn').textContent = '구역 고르기로';
+    $('nextBtn').onclick = () => { renderHome(); showScreen('homeScreen'); };
+  }
+  showScreen('doneScreen');
+}
+let _prevLetter = '';
+function curStopPrevLetter(){ return _prevLetter; }
+function renderStats(stats){
+  const b = $('statsBlock'); const dd = stats.dongdaemun;
+  b.innerHTML = `<div class="h" style="font-size:14px">📊 오늘 배송 통계</div>
+    <div class="row" style="justify-content:space-between"><span>배송건수 / 봉지수</span><b>${stats.totalDeliveries}건 · ${stats.totalBags}봉</b></div>
+    <div class="row"><span>업체간 평균소요시간</span><b>${stats.avgBetweenAll || '-'}</b></div>` +
+    (dd ? `<div class="row"><span>동대문 총소요시간</span><b>${dd.totalElapsed || '-'}</b></div><div class="row"><span>동대문 업체 / 봉지</span><b>${dd.companyCount}곳 · ${dd.bagCount}봉</b></div>` : '');
+  b.style.display = 'block';
+}
+
+/* ===================== GPS ===================== */
+let gpsWatch = null;
+function distM(a1, o1, a2, o2){
+  const R = 6371000, t = Math.PI / 180;
+  const dA = (a2 - a1) * t, dO = (o2 - o1) * t;
+  const x = Math.sin(dA / 2) ** 2 + Math.cos(a1 * t) * Math.cos(a2 * t) * Math.sin(dO / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+function startGps(){
+  if(!gpsOn || !navigator.geolocation){ updateGpsBox(); return; }
+  if(gpsWatch !== null) return;
+  gpsWatch = navigator.geolocation.watchPosition(p => {
+    posNow = { lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy || 0) };
+    updateGpsBox();
+  }, err => { posNow = null; $('gpsBox').className = 'gps off'; $('gpsBox').textContent = '📍 위치를 못 잡았어요 (' + (err.code === 1 ? '위치 권한을 허용해주세요' : '건물 안이면 밖으로 나가면 잡혀요') + ')'; },
+  { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+}
+function updateGpsBox(){
+  const box = $('gpsBox'), s = curStop();
+  if(!gpsOn){ box.className = 'gps off'; box.textContent = '📍 GPS 꺼짐 (⚙️ 설정에서 켤 수 있어요)'; $('nearbyBox').style.display = 'none'; return; }
+  if(!s || !s.lat){ box.className = 'gps off'; box.textContent = '📍 이 장소는 지도 위치가 없어요 (배송순서 탭 위도·경도)'; }
+  else if(!posNow){ box.className = 'gps off'; box.textContent = '📍 위치 확인 중…'; }
+  else {
+    const d = Math.round(distM(posNow.lat, posNow.lng, s.lat, s.lng));
+    const near = d <= Math.max(25, Math.min(posNow.acc, 40));
+    box.className = 'gps' + (near ? ' near' : '');
+    box.textContent = near ? `📍 거의 다 왔어요! (약 ${d}m · 오차 ±${posNow.acc}m) — 사진과 찾아가는 법을 확인하세요` : `📍 ${s.docs[0].company}까지 약 ${d >= 1000 ? (d / 1000).toFixed(1) + 'km' : d + 'm'} (오차 ±${posNow.acc}m)`;
+    if(near && !nearAlerted[s.key]){ nearAlerted[s.key] = true; vib([150, 80, 150]); beep(true); }
+  }
+  // 근처에 아직 안 간 다른 배송지
+  const nb = $('nearbyBox');
+  if(posNow && s){
+    const cand = selStops().filter(x => !x.done && x.key !== s.key && x.lat)
+      .map(x => ({ x, d: distM(posNow.lat, posNow.lng, x.lat, x.lng) })).filter(o => o.d <= 30).sort((a, b) => a.d - b.d)[0];
+    if(cand){
+      nb.style.display = 'block';
+      nb.innerHTML = `👀 바로 옆: <b>${esc(cand.x.zone)} ${esc(cand.x.docs.filter(d => !d.delivered).map(d => d.company).join(', '))}</b> (약 ${Math.round(cand.d)}m) <button class="btn amber small" style="width:auto;margin-left:6px;padding:6px 10px" id="nearGo">그쪽 먼저</button>`;
+      $('nearGo').onclick = () => { outOfOrder = true; skipped[s.key] = true; openStop(cand.x.key); };
+    } else nb.style.display = 'none';
+  } else nb.style.display = 'none';
+}
+let wakeLock = null;
+async function requestWakeLock(){ try{ if('wakeLock' in navigator && !wakeLock){ wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } }catch(e){} }
+document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible' && activeScreen() !== 'homeScreen') requestWakeLock(); });
+
+/* ===================== 진행 상황 공유 (구역 겹치지 않게) ===================== */
+function sendProgress(){
+  if(!gasUrl || !driver || !selZones.length) return;
+  const list = selStops(), s = curStop();
+  post({ type: 'beginnerProgress', driver, zones: selZones, done: list.filter(x => x.done).length, total: list.length, current: s ? s.zone + ' ' + s.docs[0].company : '' }).catch(() => {});
+}
+setInterval(sendProgress, 60 * 1000);
+setInterval(async () => {
+  if(!gasUrl || !data) return;
+  const keep = curKey;
+  if(await loadData(true)){
+    if(activeScreen() === 'homeScreen') renderHome();
+    if(activeScreen() === 'listScreen') renderList();
+    if(activeScreen() === 'stopScreen' && curStop()){ const s = curStop(); if(s.done && !Object.keys(scanned).length){ toast(`${s.docs[0].company}은 다른 사람이 배송했어요`, 3000); curKey = pickNextKey(); if(curKey) openStop(curKey); } else renderStop(); }
+  }
+}, 60 * 1000);
+
+/* ===================== 배송 규칙 / 설정 ===================== */
+$('noticeBtn').addEventListener('click', () => { $('noticeText').textContent = (data && data.notice) || '아직 배송 규칙이 없어요 (배송기록_백업 → 배송안내 탭)'; $('noticeOv').classList.add('show'); });
+$('noticeClose').addEventListener('click', () => $('noticeOv').classList.remove('show'));
+function openSettings(){ $('setUrl').value = gasUrl; $('setDriver').value = driver; $('setGps').checked = gpsOn; $('settingsOv').classList.add('show'); }
+$('settingsBtn').addEventListener('click', openSettings);
+$('setCancel').addEventListener('click', () => $('settingsOv').classList.remove('show'));
+$('setSave').addEventListener('click', async () => {
+  gasUrl = $('setUrl').value.trim(); driver = $('setDriver').value.trim(); gpsOn = $('setGps').checked;
+  LS.set('deliveryGasUrl', gasUrl); LS.set('bgnDriver', driver); LS.set('bgnGps', gpsOn ? '1' : '0');
+  $('settingsOv').classList.remove('show');
+  if(!gpsOn && gpsWatch !== null){ navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null; }
+  await boot();
+});
+$('homeBtn').addEventListener('click', () => { renderHome(); showScreen('homeScreen'); });
+
+/* ===================== 카톡 자동발송 실패 알림 (기존 배송앱과 같음) ===================== */
+let failRows = [];
+async function checkFailed(){
+  if(!gasUrl) return;
+  try{
+    const r = await fetchJson(gasUrl + '?action=getFailedSends', {}, 20000);
+    if(r && r.ok && Array.isArray(r.list) && r.list.length){
+      failRows = r.list.map(x => x.row);
+      $('failList').innerHTML = r.list.map(x => `• ${esc(x.time)} — <b>${esc(x.company)}</b><br>&nbsp;&nbsp;${esc(x.reason || '')}`).join('<br>');
+      $('failOv').classList.add('show');
+    }
+  }catch(e){}
+}
+$('failAck').addEventListener('click', async () => {
+  $('failOv').classList.remove('show');
+  if(failRows.length){ try{ await post({ type: 'acknowledgeFailedSends', rows: failRows }); }catch(e){} failRows = []; }
+});
+setInterval(checkFailed, 30 * 1000);
+
+/* ===================== 시작 ===================== */
+async function boot(){
+  if(!gasUrl){ openSettings(); return; }
+  const ok = await loadData();
+  if(!ok) return;
+  const resumed = loadState();
+  renderHome();
+  updateTop();
+  if(!driver) openSettings();
+  checkFailed();
+  if(resumed && curKey && curStop() && !curStop().done) toast('하던 배송이 있어요 — "하던 배송 이어서 하기"를 누르세요', 3500);
+}
+// 완료 화면의 "구역 바뀜" 표시를 위해, 사진 전송 직전 장소의 구역을 기억해둔다
+$('sendBtn').addEventListener('click', () => { const s = curStop(); _prevLetter = s ? s.letter : ''; }, true);
+boot();
+</script>
+<script>
+// GitHub에 새 버전이 올라오면, 배송 중이 아닐 때(처음 화면·목록·완료 화면에서 2분 조용할 때) 자동으로 새로고침
+(function(){
+  if(!/^https?:$/.test(location.protocol)) return;
+  let base = null, pending = false, last = Date.now();
+  ['touchstart','keydown','mousedown'].forEach(ev => document.addEventListener(ev, () => { last = Date.now(); }, true));
+  const h = t => { let x = 0x811c9dc5; for(let i = 0; i < t.length; i++){ x ^= t.charCodeAt(i); x = Math.imul(x, 0x01000193); } return (x >>> 0).toString(16) + ':' + t.length; };
+  const ok = t => t && t.length > 20000 && t.indexOf('</html>') !== -1 && t.indexOf('getBeginnerRoute') !== -1;
+  async function get(force){ const r = await fetch(location.origin + location.pathname + (force ? '?v=' + Date.now() : ''), { cache: force ? 'no-store' : 'force-cache' }); return r.ok ? r.text() : ''; }
+  async function check(){
+    try{
+      if(base === null){ const t = await get(false); if(ok(t)) base = h(t); else return; }
+      const t = await get(true);
+      if(ok(t) && h(t) !== base){ pending = true; toast('🔄 새 버전이 있어요 — 배송 끝난 화면에서 자동으로 바뀌어요', 4000); }
+    }catch(e){}
+  }
+  setInterval(() => {
+    if(!pending) return;
+    const scr = activeScreen();
+    if(Date.now() - last > 120000 && ['homeScreen','listScreen','doneScreen'].includes(scr) && !document.querySelector('.ov.show')) location.reload();
+  }, 15000);
+  setTimeout(check, 60000); setInterval(check, 5 * 60 * 1000);
+})();
+</script>
+</body>
+</html>
