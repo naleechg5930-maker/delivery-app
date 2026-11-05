@@ -423,7 +423,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       margin:3mm 0 0; margin-bottom:auto; text-align:center;
       white-space:nowrap; overflow:hidden;
     }
-    .label-dockey{ position:absolute; left:6mm; right:6mm; top:30mm; text-align:center; font-size:5mm; font-weight:700; color:#000; white-space:nowrap; overflow:hidden; }
+    .label-dockey{ position:absolute; left:6mm; right:6mm; top:1.2mm; text-align:center; font-size:3mm; line-height:1.2; font-weight:700; color:#000; white-space:nowrap; overflow:hidden; } /* 11/05: 업체명과 겹치지 않게 맨 위 여백으로 */
     .label-supplier{ width:100%; font-size:13mm; font-weight:800; color:#000; margin-top:4mm; text-align:center; }
     .label-bottom-row{
       width:100%; display:flex; align-items:flex-end;
@@ -465,10 +465,49 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     <button id="printQueueBtn">🖨️ 인쇄 대기열</button>
     <button id="labelReprintBtn">🔄 라벨 재출력</button>
     <button id="refreshSalesCacheBtn">🔄 판매현황 새로고침</button>
+    <button id="boxOutBtn" style="background:#0EA5E9; color:#fff; border-color:#0EA5E9; font-weight:800;" title="박스로 출고할 때: 박스번호 입력 → 박스 바코드 스캔 → 어느 출하일자·공장·박스인지 자동으로 찾기">📦 박스출고</button>
     <button id="shortListBtn" style="display:none; background:#F59E0B; color:#fff; border-color:#F59E0B; font-weight:800;" title="아직 덜 찍힌 품목과 남은 수량 보기/출력">📋 남은수량</button>
     <button id="partialCompleteBtn" style="background:#DC2626;color:#fff;border-color:#DC2626;" title="스캔 안 된 품목을 제외하고 스캔된 품목만으로 검수완료 처리">⚡ 미스캔 제외 강제완료</button>
     <button id="restBtn">⏸ 휴식</button>
   </div>
+<!-- 11/05: 박스출고 — 박스번호 입력 바 / 박스 목록 준비 상태 -->
+<style>
+  #boxOutBar{ display:none; margin-top:8px; background:#0F1550; border:2px solid #0EA5E9; border-radius:10px; padding:10px 12px; color:#ECEEFB; font-size:14px; align-items:center; gap:10px; flex-wrap:wrap; }
+  #boxOutBar.show{ display:flex; }
+  #boxOutBar input{ width:110px; font-size:18px; font-weight:800; padding:6px 10px; border-radius:8px; border:2px solid #0EA5E9; background:#fff; color:#111; }
+  #boxOutBar .hint{ color:#7DD3FC; font-size:12px; }
+  #boxOutBar button{ padding:6px 10px; font-size:12px; }
+  #boxCandChip{ display:none; margin-top:6px; font-size:12px; border-radius:20px; padding:4px 10px; font-weight:700; width:max-content; max-width:100%; }
+  #boxCandChip.ok{ display:block; background:#DCFCE7; color:#166534; }
+  #boxCandChip.wait{ display:block; background:#FEF3C7; color:#92400E; }
+  #boxCandChip.err{ display:block; background:#FEE2E2; color:#991B1B; }
+  #boxChoiceOverlay{ display:none; position:fixed; inset:0; z-index:9995; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; }
+  #boxChoiceOverlay.show{ display:flex; }
+  #boxChoiceOverlay .bc-card{ background:#fff; color:#111; border-radius:14px; width:min(640px,94vw); max-height:90vh; overflow:auto; box-shadow:0 10px 30px rgba(0,0,0,.3); }
+  #boxChoiceOverlay .bc-head{ background:#0EA5E9; color:#fff; padding:13px 16px; font-size:19px; font-weight:900; }
+  #boxChoiceOverlay .bc-head.red{ background:#DC2626; }
+  #boxChoiceOverlay .bc-head small{ display:block; font-size:13px; font-weight:600; margin-top:2px; }
+  #boxChoiceOverlay .bc-msg{ padding:10px 16px 0; font-size:13px; color:#475569; }
+  #boxChoiceOverlay .bc-opt{ display:flex; align-items:center; gap:12px; margin:10px 16px; border:2px solid #E2E8F0; border-radius:10px; padding:10px 12px; font-size:14px; cursor:pointer; background:#fff; width:calc(100% - 32px); text-align:left; color:#111; }
+  #boxChoiceOverlay .bc-opt:hover{ border-color:#0EA5E9; background:#F0F9FF; }
+  #boxChoiceOverlay .bc-k{ flex:0 0 32px; height:32px; border-radius:8px; background:#111827; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:16px; }
+  #boxChoiceOverlay .bc-m{ flex:1; }
+  #boxChoiceOverlay .bc-m b{ font-size:16px; }
+  #boxChoiceOverlay .bc-m span{ display:block; color:#64748B; font-size:12px; margin-top:2px; }
+  #boxChoiceOverlay .bc-tag{ display:inline-block; font-size:11px; border-radius:5px; padding:1px 6px; margin-left:6px; font-weight:700; }
+  #boxChoiceOverlay .bc-tag.old{ background:#DCFCE7; color:#166534; }
+  #boxChoiceOverlay .bc-tag.diff{ background:#FEF3C7; color:#92400E; }
+  #boxChoiceOverlay .bc-foot{ display:flex; justify-content:space-between; align-items:center; padding:8px 16px 14px; font-size:12px; color:#64748B; }
+  #boxChoiceOverlay .bc-foot button{ font-size:13px; padding:8px 12px; border-radius:8px; border:1px solid #CBD5E1; background:#fff; color:#111; font-weight:700; cursor:pointer; }
+</style>
+<div id="boxOutBar">
+  <span>📦 박스번호</span>
+  <input type="text" id="boxNoInput" inputmode="numeric" autocomplete="off" placeholder="예: 268">
+  <span id="boxOutBarMsg">박스 QR을 찍거나 숫자를 입력하고 Enter</span>
+  <span class="hint">[Esc] 취소</span>
+  <button id="boxOutCancelBtn">취소</button>
+</div>
+<div id="boxCandChip"></div>
   <div id="moreMenuPanel" style="display:none; border:1px solid var(--line); border-radius:10px; padding:10px; margin-top:8px; background:var(--panel);">
     <div style="display:flex; flex-wrap:wrap; gap:8px;">
       <label class="file-btn" for="aliasFileInput">🏷️ SF 바코드 매핑</label>
@@ -960,6 +999,14 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     <div class="kc-chat"><textarea id="kakaoConfirmText"></textarea></div>
     <div class="kc-warn" id="kakaoConfirmWarn"></div>
     <div class="kc-btns"><button id="kakaoConfirmCancelBtn">취소</button><button id="kakaoConfirmSendBtn" class="kc-send">보내기</button></div>
+  </div>
+</div>
+<div id="boxChoiceOverlay">
+  <div class="bc-card">
+    <div class="bc-head" id="boxChoiceHead"></div>
+    <div class="bc-msg" id="boxChoiceMsg"></div>
+    <div id="boxChoiceList"></div>
+    <div class="bc-foot"><span id="boxChoiceKeys">숫자키 또는 클릭</span><button id="boxChoiceCancelBtn">취소 (이 스캔 반영 안 함)</button></div>
   </div>
 </div>
 <div id="printLabelArea"></div>
@@ -1456,6 +1503,7 @@ function loadItems(rawList){
   printedPackingBagCount = 0;
   printedBoxEventCount = 0;
   boxScanEvents = [];
+  try{ resetBoxOutbound(); }catch(e){}
   inspectionStartTime = new Date();
   errLogEntries = [];
   errorSkuDetails = [];
@@ -1838,6 +1886,13 @@ const PRODUCT_CODE_PATTERN = /[A-Z]{2,4}[A-Z0-9]{3,5}[A-Z0-9]{2}\d{2}/;
 function handleMultiLineScan(lines, singleHandler){
   singleHandler = singleHandler || handleScanRaw;
   lines = lines.map(l => containsHangul(l) ? hangulToEnglish(l) : l);
+  // 11/05: 박스 QR — 첫 줄이 박스번호면 박스출고 시작, 나머지 줄은 그 박스 품목으로
+  let multiBox = null;
+  if(items.length && lines.length && parseBoxNoScan(lines[0])){
+    multiBox = parseBoxNoScan(lines[0]);
+    lines = lines.slice(1);
+    if(!lines.length){ setBoxNoFromScan(multiBox.no, multiBox.factory); return; }
+  }
   // 전표/작업자/배송라벨 QR이 섞여 들어온 경우는 줄마다 원래 방식대로 처리
   if(lines.some(l => /^WK[^0-9]*\d+$/i.test(l) || /^dlv\|/i.test(l) || l.includes('/'))){
     lines.forEach(l => singleHandler(l));
@@ -1862,13 +1917,18 @@ function handleMultiLineScan(lines, singleHandler){
       if(qm) entries[entries.length - 1].qty = parseInt(qm[1], 10);
     }
   });
+  if(!entries.length && multiBox){ setBoxNoFromScan(multiBox.no, multiBox.factory); return; }
   if(!entries.length){
     showBanner('err', '인식 오류', lines.join(' / ').slice(0, 60), 'QR 안에서 품목코드를 찾지 못했어요 — 기록하지 않았어요', '⚠️');
     addScreenOnlyLog(lines.join(' / ').slice(0, 60), 'QR 인식 오류 (기록 안 함)');
     playErrSound();
     return;
   }
-  entries.forEach(en => processScan(en.qty > 1 ? en.code + en.qty : en.code));
+  if(multiBox) setBoxNoFromScan(multiBox.no, multiBox.factory);
+  entries.forEach(en => {
+    if(multiBox && en.qty > 1){ boxModeNo = multiBox.no; boxModeFactory = multiBox.factory || ''; } // 박스 안 사이즈마다 같은 박스번호
+    processScan(en.qty > 1 ? en.code + en.qty : en.code);
+  });
 }
 
 // 화면 로그에만 남기고, 스캔로그/오피킹 통계에는 넣지 않는 기록 (인식 오류용)
@@ -1957,6 +2017,7 @@ const PRODUCT_CODE_LEN = 11; // 기본 품목코드 자릿수 (예: NTA8000A117)
 
 function processScan(rawCode){
   if(blockedByMispick(rawCode)) return;
+  { const bx = items.length ? parseBoxNoScan(rawCode) : null; if(bx){ setBoxNoFromScan(bx.no, bx.factory); return; } } // 11/05 박스번호 스캔
   // 10/27: 열린 전표가 없으면(패킹완료로 비운 뒤 등) 상품 스캔은 받지 않는다 — 오피킹·녹화 없이 안내만
   if(!items.length && !/^DLV\|/i.test(String(rawCode || ''))){
     showBanner('err', '전표를 먼저 찍어주세요', rawCode, '지금 열려 있는 전표가 없어요', '📄');
@@ -2096,6 +2157,7 @@ function processScan(rawCode){
     } else if(bulkQty > 1){
       // 박스/마대는 이미 포장된 채로 그대로 출고되므로, 봉투 재포장 계산에는 넣지 않고 따로 기록한다
       boxScanEvents.push({ code: item.code, name: item.name, spec: item.spec, qty: bulkQty });
+      { const _it = item, _q = bulkQty; setTimeout(() => { try{ onBoxBarcodeScanned(_it, _q); }catch(e){ console.warn('박스 찾기 오류:', e); } }, 0); } // 11/05 박스출고
       bagsFilled = 1; // 박스/마대도 스캔되는 즉시 확정된 1건이므로, 즉시인쇄 대상이 되도록 표시
     } else {
       scanSequence.push({ code: item.code, qty: bulkQty });
@@ -2257,6 +2319,11 @@ function blockedByMispick(raw){
   if(typeof docSwitchBlocking !== 'undefined' && docSwitchBlocking){
     const m2 = document.getElementById('docSwitchBlockedMsg');
     if(m2) m2.textContent = '⛔ 위 버튼 중 하나를 마우스로 먼저 눌러주세요';
+    try{ playErrSound(); }catch(e){}
+    return true;
+  }
+  if(typeof boxChoiceBlocking !== 'undefined' && boxChoiceBlocking){
+    try{ document.getElementById('boxChoiceKeys').textContent = '⛔ 먼저 박스를 골라주세요 (숫자키 또는 클릭) — 방금 찍은 건 반영되지 않았어요'; }catch(e){}
     try{ playErrSound(); }catch(e){}
     return true;
   }
@@ -2742,6 +2809,283 @@ document.getElementById('kakaoConfirmCancelBtn').addEventListener('click', close
 document.getElementById('kakaoConfirmSendBtn').addEventListener('click', sendKakaoNotify);
 document.getElementById('kakaoConfirmOverlay').addEventListener('click', e => { if(e.target.id === 'kakaoConfirmOverlay') closeKakaoConfirm(); });
 document.getElementById('shortListBtn').addEventListener('click', openShortList);
+
+// ===================== 11/05: 박스출고 (어느 출하일자·공장·박스번호인지) =====================
+// [📦 박스출고] → 박스번호 입력 → 박스 바코드(품목코드+수량) 스캔
+//  → 전표 열 때 미리 받아둔 "박스목록"에서 박스번호+품번+수량이 맞는 박스를 찾는다.
+//     1건: 자동 확정 / 여러 건: 선택 팝업(숫자키·클릭) / 0건: 기록없음 팝업
+//  → 검수완료 때 서버로 보내서 "박스출고기록" 탭에 남기고, 박스목록에 "출고" 표시 (다음부터 후보에서 빠짐)
+let boxCands = null;          // 이 전표 품번으로 들어온, 아직 출고 안 된 박스들 (null = 아직 못 받음)
+let boxCandsFor = '';
+let boxModeNo = '';           // 입력해둔 박스번호 (박스 바코드를 찍으면 소모)
+let boxOutboundList = [];     // 이 전표에서 확정한 박스들
+let boxPendingResolve = [];   // 목록을 아직 못 받았을 때 대기 중인 박스
+let boxChoiceBlocking = false;
+let boxChoiceState = null;
+let boxModeFactory = '';      // 박스 QR에 공장 글자가 같이 있으면 (예: YL-268) 그 공장으로 좁힌다
+
+// 11/05: 버튼 없이 박스번호만 찍어도 박스출고 시작 — "268" 또는 "YL-268" / "YL 268" 모양
+function parseBoxNoScan(raw){
+  let t = String(raw || '').trim();
+  try{ if(containsHangul(t)) t = hangulToEnglish(t); }catch(e){}
+  t = t.toUpperCase();
+  let m = t.match(/^#?(\d{1,5})$/);
+  if(m && Number(m[1]) > 0) return { no: String(Number(m[1])), factory: '' };
+  m = t.match(/^([A-Z]{1,4})[\s\-_#]?(\d{1,5})$/);
+  if(m && m[1] !== 'WK' && !codeIndex[t] && Number(m[2]) > 0) return { no: String(Number(m[2])), factory: m[1] };
+  return null;
+}
+function setBoxNoFromScan(no, factory){
+  if(!items.length){ showBanner('err', '전표를 먼저 불러와주세요', no, '박스출고는 전표를 연 다음에 할 수 있어요', '📄'); try{ playErrSound(); }catch(e){} return; }
+  boxModeNo = no; boxModeFactory = factory || '';
+  closeBoxBar(false);
+  updateBoxOutBtn();
+  const label = (factory ? factory + ' ' : '') + no + '번';
+  showBanner('pick', `📦 박스 ${label}`, '', '이제 박스 바코드(품목코드+수량)를 찍어주세요', '📦');
+  addScreenOnlyLog(`박스 ${label}`, '박스번호 입력 — 다음 박스 바코드에 적용', '박스');
+  try{ playOkSound(); }catch(e){}
+  try{ speakKorean(`박스 ${no}번`); }catch(e){}
+  if(boxCands === null && !boxPreloading) preloadBoxCandidates();
+}
+
+function boxNormCode(c){ return String(c || '').toUpperCase().replace(/[\s\-_]/g, ''); }
+function boxNormNo(n){ const m = String(n == null ? '' : n).match(/\d+/); return m ? String(Number(m[0])) : ''; }
+function boxMD(d){ const m = String(d || '').match(/(\d{4})\D(\d{1,2})\D(\d{1,2})/); return m ? `${Number(m[2])}/${Number(m[3])}` : String(d || ''); }
+function boxLabel(c){ return `${c.factory || '?'} ${c.boxNo}번`; }
+
+let boxPreloading = false;
+function boxDocKeyNow(){ return (currentDocumentKey || '') + '|' + items.map(it => it.code).join(','); }
+function resetBoxOutbound(){
+  boxOutboundList = []; boxPendingResolve = []; boxModeNo = ''; boxModeFactory = '';
+  // 같은 전표를 초기화한 거면 받아둔 박스 목록은 그대로 쓰고, 다른 전표면 비운다
+  if(boxCandsFor !== boxDocKeyNow()){ boxCands = null; boxCandsFor = ''; }
+  closeBoxBar(true);
+  try{ setBoxChip('', ''); }catch(e){}
+}
+function setBoxChip(kind, text){
+  const el = document.getElementById('boxCandChip');
+  if(!el) return;
+  el.className = kind || '';
+  el.textContent = text || '';
+}
+async function preloadBoxCandidates(){
+  if(!gasWebhookUrl || !items.length) return;
+  const forKey = boxDocKeyNow();
+  boxCandsFor = forKey; boxCands = null; boxPreloading = true;
+  try{ return await preloadBoxCandidatesInner(forKey); } finally { if(boxCandsFor === forKey) boxPreloading = false; }
+}
+async function preloadBoxCandidatesInner(forKey){
+  const codes = Array.from(new Set(items.map(it => boxNormCode(it.code)))).join(',');
+  for(let attempt = 1; attempt <= 3; attempt++){
+    try{
+      const resp = await fetchWithTimeout(gasWebhookUrl + '?action=getBoxCandidates&codes=' + encodeURIComponent(codes), {}, 30000);
+      const res = await resp.json();
+      if(boxCandsFor !== forKey) return; // 그새 다른 전표로 넘어감
+      if(!res || !res.ok) throw new Error((res && res.error) || '응답 오류');
+      boxCands = res.list || [];
+      if(boxCands.length) setBoxChip('ok', `✓ 박스 목록 준비됨 · 이 전표 품번으로 들어온 박스 ${boxCands.length}개`);
+      else setBoxChip('', '');
+      const pend = boxPendingResolve.splice(0);
+      pend.forEach(en => resolveBoxEntry(en));
+      return;
+    }catch(e){
+      if(boxCandsFor !== forKey) return;
+      if(attempt === 3){
+        if(boxPendingResolve.length) setBoxChip('err', '⚠️ 박스 목록을 못 받았어요 — 대기 중인 박스는 "미확인"으로 남겨요');
+        boxPendingResolve.splice(0).forEach(en => confirmBoxEntry(en, null, '미확인'));
+        return;
+      }
+      await new Promise(r => setTimeout(r, 2000 * attempt));
+    }
+  }
+}
+
+function openBoxBar(){
+  if(!items.length){ showBanner('err', '전표를 먼저 불러와주세요', '', '박스출고는 전표를 연 다음에 할 수 있어요', '📄'); return; }
+  const bar = document.getElementById('boxOutBar');
+  bar.classList.add('show');
+  const inp = document.getElementById('boxNoInput');
+  inp.value = boxModeNo || '';
+  document.getElementById('boxOutBarMsg').textContent = '박스 QR을 찍거나 숫자를 입력하고 Enter';
+  setTimeout(() => { inp.focus(); inp.select(); }, 30);
+}
+function closeBoxBar(clearNo){
+  const bar = document.getElementById('boxOutBar');
+  if(bar) bar.classList.remove('show');
+  if(clearNo) boxModeNo = '';
+  updateBoxOutBtn();
+}
+function updateBoxOutBtn(){
+  const b = document.getElementById('boxOutBtn');
+  if(!b) return;
+  b.textContent = boxModeNo ? `📦 박스 ${boxModeFactory ? boxModeFactory + ' ' : ''}${boxModeNo}번 → 박스 바코드를 찍어주세요` : '📦 박스출고';
+}
+function setBoxNoFromInput(){
+  const inp = document.getElementById('boxNoInput');
+  const firstLine = String(inp.value || '').split(/[\r\n\t]/)[0];
+  const p = parseBoxNoScan(firstLine) || (boxNormNo(firstLine) ? { no: boxNormNo(firstLine), factory: '' } : null);
+  if(!p){ document.getElementById('boxOutBarMsg').textContent = '⚠️ 박스번호(숫자)를 확인해주세요'; inp.select(); return; }
+  setBoxNoFromScan(p.no, p.factory);
+  try{ focusInput(); }catch(e){}
+}
+document.getElementById('boxOutBtn').addEventListener('click', openBoxBar);
+document.getElementById('boxOutCancelBtn').addEventListener('click', () => { closeBoxBar(true); try{ focusInput(); }catch(e){} });
+(function(){
+  const inp = document.getElementById('boxNoInput');
+  let t = null;
+  inp.addEventListener('keydown', e => {
+    if(e.key === 'Enter'){ e.preventDefault(); clearTimeout(t); t = setTimeout(setBoxNoFromInput, 120); } // 여러 줄 QR이면 첫 줄만
+    else if(e.key === 'Escape'){ e.preventDefault(); closeBoxBar(true); try{ focusInput(); }catch(e2){} }
+  });
+})();
+
+// 박스 바코드가 정상 반영된 직후 호출됨
+function onBoxBarcodeScanned(item, qty){
+  const no = boxModeNo;
+  if(!no){
+    // 박스번호 없이 박스 바코드만 찍은 경우: 예전처럼 그냥 진행 (안내만)
+    if(boxCands && boxCands.some(c => boxNormCode(c.code) === boxNormCode(item.code)))
+      addScreenOnlyLog(item.code, '박스번호를 기록하려면 [📦 박스출고]를 먼저 누르세요', '안내');
+    return;
+  }
+  const fac = boxModeFactory;
+  boxModeNo = ''; boxModeFactory = ''; updateBoxOutBtn();
+  const entry = { code: item.code, name: item.name, spec: item.spec, qty, boxNo: no, factory: fac, mode: '', cand: null };
+  if(boxCands === null){
+    boxPendingResolve.push(entry);
+    if(!boxPreloading) preloadBoxCandidates(); // 붙여넣기 등으로 연 전표는 이때 받아온다
+    showBanner('warn', '⏳ 박스 정보 찾는 중…', `${item.code} · ${qty}개 · ${no}번`, '수량은 이미 반영됐어요 · 찾으면 자동으로 확정해요', '📦');
+    setBoxChip('wait', '⏳ 박스 목록 받는 중…');
+    return;
+  }
+  resolveBoxEntry(entry);
+}
+
+function resolveBoxEntry(entry){
+  const used = new Set(boxOutboundList.filter(b => b.cand).map(b => b.cand.key));
+  const pool = (boxCands || []).filter(c => !used.has(c.key) && boxNormCode(c.code) === boxNormCode(entry.code) && boxNormNo(c.boxNo) === entry.boxNo
+    && (!entry.factory || String(c.factory || '').toUpperCase().replace(/\s/g, '') === entry.factory));
+  const sortOld = (a, b) => String(a.shipDate || a.inDate).localeCompare(String(b.shipDate || b.inDate)) || String(a.inDate).localeCompare(String(b.inDate));
+  const exact = pool.filter(c => Number(c.qty) === Number(entry.qty)).sort(sortOld);
+  if(exact.length === 1){ confirmBoxEntry(entry, exact[0], '자동'); return; }
+  if(exact.length > 1){ openBoxChoice(entry, exact, false); return; }
+  openBoxChoice(entry, pool.sort(sortOld), true); // 0건: 수량만 다른 같은 박스가 있으면 보기로 같이 보여줌
+}
+
+function openBoxChoice(entry, list, notFound){
+  boxChoiceState = { entry, list, notFound };
+  boxChoiceBlocking = true;
+  const head = document.getElementById('boxChoiceHead');
+  head.className = 'bc-head' + (notFound ? ' red' : '');
+  const what = `${entry.code}${entry.spec ? ' (' + entry.spec + ')' : ''} · ${entry.qty}개`;
+  head.innerHTML = notFound
+    ? `⚠️ ${escapeHtml(entry.boxNo)}번 박스가 입고 기록에 없어요<small>${escapeHtml(what)}</small>`
+    : `📦 ${escapeHtml(entry.boxNo)}번 박스가 ${list.length}개 있어요 — 어떤 박스인가요?<small>${escapeHtml(what)}</small>`;
+  document.getElementById('boxChoiceMsg').textContent = notFound
+    ? (list.length ? '박스번호·품번은 같은데 수량이 다른 박스가 있어요. 맞는 게 있으면 고르고, 없으면 0번을 눌러주세요.' : '박스번호나 수량이 맞는지 확인해주세요. 다른 번호면 [취소] 후 다시 찍어주세요.')
+    : '출하일자가 오래된 박스부터 보여줘요.';
+  const opts = list.slice(0, 9).map((c, i) => `
+    <button class="bc-opt" data-i="${i}"><div class="bc-k">${i + 1}</div><div class="bc-m">
+      <b>${escapeHtml(boxLabel(c))}</b>${!notFound && i === 0 && list.length > 1 ? '<span class="bc-tag old" style="display:inline-block">출하 가장 오래됨</span>' : ''}${notFound ? `<span class="bc-tag diff" style="display:inline-block">수량 ${Number(c.qty)}개</span>` : ''}
+      <span>${escapeHtml(boxMD(c.shipDate))} 출하 · ${escapeHtml(boxMD(c.inDate))} 입고 · ${Number(c.qty)}개</span></div></button>`).join('');
+  const zero = notFound
+    ? `<button class="bc-opt" data-i="-1"><div class="bc-k">0</div><div class="bc-m"><b>그래도 출고</b><span>기록에 "기록없음"으로 남겨요 (박스번호 ${escapeHtml(entry.boxNo)})</span></div></button>`
+    : `<button class="bc-opt" data-i="-1"><div class="bc-k">0</div><div class="bc-m"><b>모르겠음</b><span>출고는 그대로 진행 · 기록에 "미확인"으로 남겨요 (시트에서 나중에 수정)</span></div></button>`;
+  const box = document.getElementById('boxChoiceList');
+  box.innerHTML = opts + zero;
+  box.querySelectorAll('.bc-opt').forEach(b => b.addEventListener('click', () => pickBoxChoice(Number(b.dataset.i))));
+  document.getElementById('boxChoiceKeys').textContent = `숫자키 ${list.length ? '1~' + Math.min(9, list.length) + ' · ' : ''}0 또는 클릭`;
+  document.getElementById('boxChoiceOverlay').classList.add('show');
+  try{ playErrSound(); }catch(e){}
+  try{ speakKorean(notFound ? '입고 기록에 없는 박스예요' : '박스를 골라주세요'); }catch(e){}
+}
+function closeBoxChoice(){
+  document.getElementById('boxChoiceOverlay').classList.remove('show');
+  ['scanInput', 'tabletScanInput'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+  boxChoiceBlocking = false; boxChoiceState = null;
+  try{ focusInput(); }catch(e){}
+}
+function pickBoxChoice(i){
+  const st = boxChoiceState;
+  if(!st) return;
+  if(i === -1){ confirmBoxEntry(st.entry, null, st.notFound ? '기록없음' : '미확인'); closeBoxChoice(); return; }
+  const c = st.list[i];
+  if(!c) return;
+  confirmBoxEntry(st.entry, c, '선택');
+  closeBoxChoice();
+}
+document.getElementById('boxChoiceCancelBtn').addEventListener('click', () => {
+  const st = boxChoiceState;
+  if(st) undoBoxScan(st.entry);
+  closeBoxChoice();
+});
+// 숫자키 선택. 스캐너는 글자를 아주 빠르게 연달아 보내므로(바코드 속 숫자), 혼자 눌린 숫자만 선택으로 인정한다
+let boxKeyLastAt = 0, boxKeyBurstUntil = 0, boxDigitTimer = null;
+document.addEventListener('keydown', e => {
+  if(!boxChoiceBlocking) return;
+  const now = Date.now();
+  const fast = now - boxKeyLastAt < 60;
+  boxKeyLastAt = now;
+  if(fast){ boxKeyBurstUntil = now + 300; clearTimeout(boxDigitTimer); boxDigitTimer = null; }
+  e.preventDefault(); e.stopPropagation();
+  if(e.key === 'Escape'){ document.getElementById('boxChoiceCancelBtn').click(); return; }
+  if(!/^[0-9]$/.test(e.key) || now < boxKeyBurstUntil) return;
+  const n = Number(e.key);
+  clearTimeout(boxDigitTimer);
+  boxDigitTimer = setTimeout(() => {
+    boxDigitTimer = null;
+    if(Date.now() < boxKeyBurstUntil || !boxChoiceBlocking) return; // 그 사이 스캐너 입력이 이어졌으면 무시
+    pickBoxChoice(n === 0 ? -1 : n - 1);
+  }, 150);
+}, true);
+
+function confirmBoxEntry(entry, cand, mode){
+  entry.mode = mode; entry.cand = cand || null;
+  boxOutboundList.push(entry);
+  const info = cand ? `📦${cand.factory} ${cand.boxNo}번 ${boxMD(cand.shipDate)}출하` : `📦${entry.boxNo}번 ${mode}`;
+  // 스캔로그(서버 저장용)의 그 박스 스캔 줄에 박스 정보를 붙인다
+  for(let i = scanLogBuffer.length - 1; i >= 0; i--){
+    const e = scanLogBuffer[i];
+    if(e.box && !e.boxInfo && e.code === String(entry.code).toUpperCase()){ e.boxInfo = info; break; }
+  }
+  addScreenOnlyLog(`${entry.code} [박스 ${entry.qty}]`, info, mode === '미확인' || mode === '기록없음' ? '' : '박스');
+  if(cand){
+    showBanner('pick', `📦 박스 확정 · ${boxLabel(cand)}`, `${entry.code} · ${entry.qty}개`, `${boxMD(cand.shipDate)} 출하 · ${boxMD(cand.inDate)} 입고${mode === '자동' ? '' : ' · 직접 선택'}`, '📦');
+  } else {
+    showBanner('warn', `📦 ${entry.boxNo}번 · ${mode}`, `${entry.code} · ${entry.qty}개`, '출고는 반영됐어요 · 박스 정보는 시트에서 나중에 확인', '📦');
+  }
+}
+
+// [취소]: 방금 찍은 박스 스캔을 되돌린다
+function undoBoxScan(entry){
+  const item = codeIndex[String(entry.code).toUpperCase()] || items.find(it => it.code === entry.code);
+  if(item){
+    item.scannedQty = Math.max(0, item.scannedQty - entry.qty);
+    okCount = Math.max(0, okCount - entry.qty);
+  }
+  for(let i = boxScanEvents.length - 1; i >= 0; i--){
+    if(boxScanEvents[i].code === entry.code && Number(boxScanEvents[i].qty) === Number(entry.qty)){ boxScanEvents.splice(i, 1); break; }
+  }
+  try{ if(printedBoxEventCount > boxScanEvents.length) printedBoxEventCount = boxScanEvents.length; }catch(e){}
+  for(let i = scanLogBuffer.length - 1; i >= 0; i--){
+    const e = scanLogBuffer[i];
+    if(e.box && e.code === String(entry.code).toUpperCase() && Number(e.qty) === Number(entry.qty)){ scanLogBuffer.splice(i, 1); break; }
+  }
+  try{ renderTable(); }catch(e){}
+  try{ updateProgress(); }catch(e){}
+  try{ updateMiniStats(); }catch(e){}
+  addScreenOnlyLog(`${entry.code} [박스 ${entry.qty}]`, '박스 스캔 취소 (반영 안 함)');
+  showBanner('warn', '박스 스캔을 취소했어요', `${entry.code} · ${entry.qty}개`, '박스번호를 확인하고 다시 찍어주세요 (라벨이 이미 나왔으면 그 라벨은 버려주세요)', '↩️');
+}
+
+function buildBoxOutboundPayload(){
+  boxPendingResolve.splice(0).forEach(en => { en.mode = '미확인'; boxOutboundList.push(en); });
+  return boxOutboundList.map(b => ({
+    code: b.code, item: (b.name || '') + (b.spec ? ' (' + b.spec + ')' : ''), qty: b.qty, mode: b.mode,
+    boxNo: b.cand ? b.cand.boxNo : b.boxNo, factory: b.cand ? b.cand.factory : '', shipDate: b.cand ? b.cand.shipDate : '',
+    inDate: b.cand ? b.cand.inDate : '', key: b.cand ? b.cand.key : '',
+  }));
+}
 document.getElementById('shortListCloseBtn').addEventListener('click', closeShortList);
 document.getElementById('shortListPrintBtn').addEventListener('click', printShortList);
 document.getElementById('shortListCopyBtn').addEventListener('click', copyShortList);
@@ -3544,6 +3888,7 @@ async function processDocumentLookup(raw){
     }
     try{ checkExclusiveOnLoad(data.company, data.key || raw); }catch(e){ console.warn('완전분배 확인 실패(무시):', e); }
     try{ checkRepairOnLoad(data.key || raw, data.company); }catch(e){ console.warn('수선품 확인 실패(무시):', e); }
+    try{ preloadBoxCandidates(); }catch(e){ console.warn('박스 목록 받기 실패(무시):', e); }
 
     if(fromCache){
       // 캐시로 찾은 경우엔 서버가 피킹카운터를 못 건드렸으니, 여기서 별도로(백그라운드로) 반영 요청을 보낸다.
@@ -3619,6 +3964,7 @@ async function autoCaptureAndSave(companyName, stamp, meta){
         scanCount: (meta && meta.scanCount) || 0,
         rapidCount: (meta && meta.rapidCount) || 0,
         repairUse: repairUse,
+        boxOutbound: buildBoxOutboundPayload(),
       })
     });
     console.log('구글시트 업로드 완료');
@@ -4501,6 +4847,7 @@ function doReset(){
   scanSequence = [];
   resetScanLogBuffer();
   boxScanEvents = [];
+  try{ resetBoxOutbound(); }catch(e){}
   inspectionStartTime = new Date();
   errLogEntries = [];
   errorSkuDetails = [];
