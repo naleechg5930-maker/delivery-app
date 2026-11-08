@@ -2214,9 +2214,82 @@ scanInput.addEventListener('keydown', (e)=>{
 //  예) "NTA8000A117\n40"            → NTA8000A117 40개 (한 품목)
 //      "NTA8000A117 20\nNTA8000A118 20" → 두 품목을 각각 20개씩
 const PRODUCT_CODE_PATTERN = /[A-Z]{2,4}[A-Z0-9]{3,5}[A-Z0-9]{2}\d{2}/;
+
+// ===== 11/08: 합본 QR = 여러 품목이 들어 있는 "박스 하나" =====
+// QR 내용: 첫 줄 "HB", 다음 줄부터 "품목코드11자리 수량" (예: NTA8000A111 10)
+// - 전부 이 전표에 있고 남은 수량 안이면: 한꺼번에 반영 + 박스 1개(라벨 1장, 포장명세에 품목 여러 줄)
+// - 하나라도 전표에 없거나 남은 수량보다 많으면: 박스 통째로 반영하지 않음 (박스를 뜯어 낱개로 찍어야 함)
+function parseCombinedLine(line){
+  let t = String(line || '').toUpperCase().replace(/[\s\-_]/g, '');
+  if(!t) return null;
+  const m = t.match(/^([A-Z0-9]{11})(?:[X×*:]?)(\d{1,5})?$/);
+  if(!m) return { bad: line };
+  return { code: m[1], qty: m[2] ? parseInt(m[2], 10) : 1 };
+}
+function processCombinedBox(lines){
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('ko-KR', { hour12:false });
+  if(!items.length){ showBanner('err', '전표를 먼저 불러와주세요', '합본 QR', '', '📄'); playErrSound(); return; }
+  // 같은 품목이 여러 줄이면 합친다
+  const want = new Map(), bad = [];
+  lines.forEach(l => {
+    const p = parseCombinedLine(l);
+    if(!p) return;
+    if(p.bad){ bad.push(p.bad); return; }
+    const r = resolveScannedCode(stripOrderCodeSuffix(p.code));
+    const code = codeIndex[r.resolved] ? r.resolved : p.code;
+    want.set(code, (want.get(code) || 0) + p.qty);
+  });
+  const problems = [];
+  if(bad.length) problems.push(`읽을 수 없는 줄: ${bad.slice(0, 2).join(', ')}`);
+  const plan = [];
+  want.forEach((qty, code) => {
+    const item = codeIndex[code];
+    if(!item){ problems.push(`${code} — 이 전표에 없는 품목`); return; }
+    const remaining = item.orderQty - item.scannedQty;
+    if(qty > remaining) problems.push(`${code} ${item.spec || ''} — ${qty}개 > 남은 ${Math.max(0, remaining)}개`);
+    plan.push({ item, qty });
+  });
+  const totalQty = Array.from(want.values()).reduce((a, b) => a + b, 0);
+  if(!want.size){ showBanner('err', '합본 QR 인식 오류', 'HB', 'QR 안에서 품목을 찾지 못했어요 — 반영 안 함', '⚠️'); playErrSound(); return; }
+  if(problems.length){
+    showBanner('warn', `합본 박스 반영 안 함 (${want.size}품목 ${totalQty}개)`, '합본 QR', problems.slice(0, 3).join(' · ') + (problems.length > 3 ? ` 외 ${problems.length - 3}건` : '') + ' — 박스를 열어 낱개로 찍어주세요', '✋');
+    addScreenOnlyLog(`합본 QR ${want.size}품목 ${totalQty}개`, '미반영: ' + problems.join(' / '));
+    try{ playErrSound(); }catch(e){}
+    try{ speakKorean('합본 박스 반영 안 함'); }catch(e){}
+    updateMiniStats();
+    return;
+  }
+  // 반영
+  const boxItems = [];
+  plan.forEach(({ item, qty }, i) => {
+    item.scannedQty += qty;
+    okCount += qty;
+    boxItems.push({ code: item.code, name: item.name, spec: item.spec, qty });
+    const done = item.scannedQty >= item.orderQty;
+    addLog(timeStr, `${item.code} [박스/마대 수량 ${qty}]`, true, `합본 ${i + 1}/${plan.length} · ` + (done ? '해당 품번 완료' : `${item.scannedQty}/${item.orderQty}`));
+    updateRow(item);
+  });
+  const first = boxItems[0];
+  boxScanEvents.push({ code: first.code, name: `합본 ${boxItems.length}품목`, spec: '', qty: totalQty, items: boxItems, combo: true });
+  // 박스번호를 찍어둔 상태면(박스출고) 품목마다 같은 박스번호로 찾는다
+  if(typeof boxModeNo !== 'undefined' && boxModeNo){
+    const no = boxModeNo, fac = (typeof boxModeFactory !== 'undefined') ? boxModeFactory : '';
+    plan.forEach(({ item, qty }) => { boxModeNo = no; boxModeFactory = fac; try{ onBoxBarcodeScanned(item, qty); }catch(e){} });
+  }
+  showBanner('ok', `합본 박스 · ${boxItems.length}품목 ${totalQty}개 반영`, '합본 QR', boxItems.map(b => `${b.code} +${b.qty}`).join(' · '), '📦');
+  if(plan.every(({ item }) => item.scannedQty >= item.orderQty)){ playItemCompleteSound(); speakKorean('합본 박스 반영'); } else { playOkSound(); speakKorean('합본 박스 반영'); }
+  maybePrintCompletedBagsImmediately(); // (봉투 완료 안내는 띄우지 않음 — 합본 박스 반영 안내가 가려지지 않게)
+  updateMiniStats();
+  updateProgress();
+  checkAllComplete();
+}
+
 function handleMultiLineScan(lines, singleHandler){
   singleHandler = singleHandler || handleScanRaw;
   lines = lines.map(l => containsHangul(l) ? hangulToEnglish(l) : l);
+  // 11/08: 합본 QR (첫 줄 "HB") — 여러 품목이 든 박스 하나로 처리
+  if(lines.length && /^HB$/i.test(String(lines[0]).trim())){ processCombinedBox(lines.slice(1)); return; }
   // 전표/작업자/배송라벨 QR이 섞여 들어온 경우는 줄마다 원래 방식대로 처리
   if(lines.some(l => /^WK[^0-9]*\d+$/i.test(l) || /^dlv\|/i.test(l) || l.includes('/'))){
     lines.forEach(l => singleHandler(l));
@@ -4624,7 +4697,7 @@ function maybePrintCompletedBagsImmediately(){
   let html = '';
 
   for(let i = printedBoxEventCount; i < boxScanEvents.length; i++){
-    html += buildPackingListPageHTML(i + 1, '즉시', [boxScanEvents[i]]);
+    html += buildPackingListPageHTML(i + 1, '즉시', boxScanEvents[i].items || [boxScanEvents[i]]);
   }
   printedBoxEventCount = boxScanEvents.length;
 
@@ -4912,7 +4985,7 @@ function computeLabelJobData(){
     bagSizes = result.bagSizes;
     bagContentLists = result.bagContentLists;
   }
-  boxScanEvents.forEach(box => bagContentLists.push([{ code:box.code, name:box.name, spec:box.spec, qty:box.qty }]));
+  boxScanEvents.forEach(box => bagContentLists.push(box.items ? box.items.map(b => ({ code:b.code, name:b.name, spec:b.spec, qty:b.qty })) : [{ code:box.code, name:box.name, spec:box.spec, qty:box.qty }]));
   return { bagSizes, boxCount: boxScanEvents.length, bagContentLists };
 }
 
@@ -4975,7 +5048,7 @@ function printCompletionLabelInner(companyName, zoneValue, container){
       const num = bagSizes.length + idx + 1;
       html += buildLabelPageHTML(companyName, zoneValue, buildBagLabelText(total, num), false, qrPayload, total); // 박스는 별표 안 붙임
       if(wantsPackingList && idx >= printedBoxEventCount){
-        html += buildPackingListPageHTML(num, total, [box]);
+        html += buildPackingListPageHTML(num, total, box.items || [box]);
       }
     });
   }
@@ -5009,7 +5082,7 @@ function checkAllComplete(){
         } else if(boxScanEvents.length > 0){
           bagCount = boxScanEvents.length;
         }
-        boxScanEvents.forEach(box => bagContentLists.push([{ code:box.code, name:box.name, spec:box.spec, qty:box.qty }]));
+        boxScanEvents.forEach(box => bagContentLists.push(box.items ? box.items.map(b => ({ code:b.code, name:b.name, spec:b.spec, qty:b.qty })) : [{ code:box.code, name:box.name, spec:box.spec, qty:box.qty }]));
       }catch(err){
         console.warn('봉투수 계산 중 오류(라벨 인쇄는 계속 진행됨):', err);
       }
