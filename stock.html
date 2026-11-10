@@ -218,6 +218,19 @@ async function postJson(body){
   const res = await fetch(gasUrl, { method:'POST', body: JSON.stringify(body) });
   return res.json();
 }
+// 11/10: 통신이 끊겨 "Failed to fetch"가 나면 잠깐 쉬었다가 다시 보낸다 (최대 3번).
+// 입고 등록은 서버가 이미 들어간 줄을 자동으로 빼고 넣으므로, 다시 보내도 중복되지 않는다.
+async function postJsonRetry(body, onRetry){
+  let lastErr = null;
+  for(let i = 1; i <= 3; i++){
+    try{ return await postJson(body); }
+    catch(err){
+      lastErr = err;
+      if(i < 3){ if(onRetry) onRetry(i); await new Promise(r => setTimeout(r, 2500 * i)); }
+    }
+  }
+  throw lastErr;
+}
 
 async function loadStock(force){
   $('metaText').textContent = '불러오는 중...';
@@ -648,16 +661,22 @@ $('inUploadBtn').addEventListener('click', async () => {
   const btn = $('inUploadBtn'); btn.disabled = true; btn.textContent = '등록 중...';
   let added = 0, addedQty = 0, skipped = 0; const fails = [];
   try{
-    for(const key of Object.keys(pendingIn.groups)){
+    const keys = Object.keys(pendingIn.groups);
+    for(let gi = 0; gi < keys.length; gi++){
+      const key = keys[gi];
       const items = pendingIn.groups[key];
-      const res = await postJson({ type: 'addStockMovement', kind: '입고', docKey: key, date: businessToday(), source: key.replace(/^입고\s*/, ''), items: items.map(it => ({ code: it.code, qty: it.qty, name: it.name, spec: it.spec, box: it.box, lineKey: it.lineKey })) });
+      btn.textContent = `등록 중... (${gi + 1}/${keys.length})`;
+      let res;
+      try{
+        res = await postJsonRetry({ type: 'addStockMovement', kind: '입고', docKey: key, date: businessToday(), source: key.replace(/^입고\s*/, ''), items: items.map(it => ({ code: it.code, qty: it.qty, name: it.name, spec: it.spec, box: it.box, lineKey: it.lineKey })) }, n => { btn.textContent = `통신 재시도 ${n}/2... (${gi + 1}/${keys.length})`; });
+      }catch(netErr){ fails.push(`${key}: 통신 실패(${netErr.message})`); continue; }
       if(!res.ok){ fails.push(`${key}: ${res.error}`); continue; }
       if(res.duplicate){ skipped += items.length; continue; }
       added += res.lines; addedQty += res.total; skipped += res.skipped || 0;
     }
     let msg = `등록 완료: 새로 ${fmt(added)}줄 · +${fmt(addedQty)}개`;
     if(skipped) msg += `\n이미 들어가 있던 ${fmt(skipped)}줄은 빼고 넣었어요.`;
-    if(fails.length) msg += `\n실패: ${fails.join(' / ')}`;
+    if(fails.length) msg += `\n실패: ${fails.join(' / ')}\n→ [입고 등록]을 한 번 더 누르면 실패한 것만 다시 들어가요 (이미 들어간 줄은 자동으로 빠져요)`;
     setStatus('inStatus', fails.length ? 'err' : 'ok', msg);
     if(!fails.length){ $('inText').value = ''; pendingIn = null; }
     loadStock(true); loadBatches();

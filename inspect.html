@@ -3042,7 +3042,11 @@ function resolveBoxEntry(entry){
   const exact = pool.filter(c => Number(c.qty) === Number(entry.qty)).sort(sortOld);
   if(exact.length === 1){ confirmBoxEntry(entry, exact[0], '자동'); return; }
   if(exact.length > 1){ openBoxChoice(entry, exact, false); return; }
-  openBoxChoice(entry, pool.sort(sortOld), true); // 0건: 수량만 다른 같은 박스가 있으면 보기로 같이 보여줌
+  // 11/10: 입고 기록에 없으면 되묻지 않고 바로 "기록없음"으로 남긴다 (출고는 그대로 반영됨)
+  //        수량만 다른 같은 번호 박스가 있으면 기록 메모에 참고로 남김
+  const near = pool.sort(sortOld);
+  entry.nearNote = near.length ? `같은 번호·품번 박스 있음(수량 ${near.map(c => Number(c.qty)).join('/')}개)` : '';
+  confirmBoxEntry(entry, null, '기록없음');
 }
 
 function openBoxChoice(entry, list, notFound){
@@ -3125,7 +3129,7 @@ function confirmBoxEntry(entry, cand, mode){
   if(cand){
     showBanner('pick', `📦 박스 확정 · ${boxLabel(cand)}`, `${entry.code} · ${entry.qty}개`, `${boxMD(cand.shipDate)} 출하 · ${boxMD(cand.inDate)} 입고${mode === '자동' ? '' : ' · 직접 선택'}`, '📦');
   } else {
-    showBanner('warn', `📦 ${entry.boxNo}번 · ${mode}`, `${entry.code} · ${entry.qty}개`, '출고는 반영됐어요 · 박스 정보는 시트에서 나중에 확인', '📦');
+    showBanner('warn', `📦 ${entry.boxNo}번 · ${mode === '기록없음' ? '입고 기록 없음 — 그대로 기록했어요' : mode}`, `${entry.code} · ${entry.qty}개`, '출고는 반영됐어요 · 박스출고기록 탭에 노란 줄로 남아요' + (entry.nearNote ? ' · ' + entry.nearNote : ''), '📦');
   }
 }
 
@@ -3156,7 +3160,7 @@ function buildBoxOutboundPayload(){
   return boxOutboundList.map(b => ({
     code: b.code, item: (b.name || '') + (b.spec ? ' (' + b.spec + ')' : ''), qty: b.qty, mode: b.mode,
     boxNo: b.cand ? b.cand.boxNo : b.boxNo, factory: b.cand ? b.cand.factory : '', shipDate: b.cand ? b.cand.shipDate : '',
-    inDate: b.cand ? b.cand.inDate : '', key: b.cand ? b.cand.key : '',
+    inDate: b.cand ? b.cand.inDate : '', key: b.cand ? b.cand.key : '', memo: b.nearNote || '',
   }));
 }
 document.getElementById('shortListCloseBtn').addEventListener('click', closeShortList);
