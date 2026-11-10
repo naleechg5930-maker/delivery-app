@@ -320,7 +320,7 @@ function showItem(code, quiet){
   html += `<div class="line out"><span>− 피킹완료<span class="sm">이미 선반에서 가져간 수량 (검수완료 포함)</span></span><span class="v">${k ? '−' + fmt(k) : '0'}</span></div>
     ${repairLine(code)}
     <button type="button" class="livebtn" id="liveBtn"><span class="lt"><span>실재고 움직임 보기</span><span>▸</span></span>
-      <span class="ls">피킹 전 ${fmt(nPre)}${nIng ? ' · 피킹 중 ' + fmt(nIng) : ''} · 피킹완료 ${fmt(nPicked)} · 검수완료 ${fmt(nDone)}</span></button>`;
+      <span class="ls">피킹 전 ${fmt(nPre)}${nIng ? ' · 피킹 중 ' + fmt(nIng) : ''} · 피킹완료 ${fmt(nPicked)} · 검수완료 ${fmt(nDone)}${(() => { const m = moveSummary(it); return m.mv.length ? ` · 반품·이동 ${m.total > 0 ? '+' : ''}${fmt(m.total)}${m.todayQty ? ` (금일 ${m.todayQty > 0 ? '+' : ''}${fmt(m.todayQty)})` : ''}` : ''; })()}</span></button>`;
   if(!stock.items[code]) html += `<div class="note">재고현황(${esc(md(stock.baseDate))} 마감)에 없는 품목코드예요.</div>`;
   const stem = code.slice(0, -1);
   const sibs = Object.keys(stock.items).filter(x => x.length === code.length && x.slice(0, -1) === stem).sort();
@@ -337,6 +337,22 @@ function showItem(code, quiet){
   if(!quiet) $('codeInput').value = code;
 }
 
+// 11/10: 기타이동(반품 등) 내역 — [날짜, 출처, 수량, 등록시각]. 마감 기준일 이후 등록분만 (그 전 것은 마감재고에 이미 들어있음)
+function moveSummary(it){
+  const mv = it.mv || [], today = businessToday();
+  const todayQty = mv.filter(x => x[0] === today).reduce((a, x) => a + (Number(x[2]) || 0), 0);
+  const total = mv.reduce((a, x) => a + (Number(x[2]) || 0), 0);
+  return { mv, todayQty, total, today };
+}
+function moveLabel(src){
+  const s = String(src || '');
+  const m = s.match(/\((.*?)→(.*)\)\s*$/);
+  const from = m ? m[1].replace(/\(\d+\)/g, '').trim() : '';
+  const to = m ? m[2].replace(/\(\d+\)/g, '').trim() : '';
+  const slip = (s.match(/\d{4}\/\d{1,2}\/\d{1,2}\s*-\s*\d+/) || [''])[0].replace(/\s+/g, '');
+  const kind = /반품/.test(s) ? '반품' : '기타이동';
+  return { from, to, slip, kind };
+}
 // 실재고 움직임 배너 (아래에서 올라오는 창)
 function openLiveSheet(code){
   const it = stock.items[code] || {};
@@ -352,8 +368,27 @@ function openLiveSheet(code){
   ).join(' · ');
   rows.push(['#2563EB', '피킹완료', '검수대에 있음' + (pickedDesc ? ' · ' + pickedDesc : ''), sumQty(st.picked) + sumQty(st.insp)]);
   rows.push(['#15803D', '검수완료', `출고${st.doneSlips ? ' · 전표 ' + st.doneSlips + '건' : ''}`, st.done || 0]);
+  // 11/10: 반품·기타이동 (창고이동전표로 본사창고에 들어오거나 나간 것)
+  const ms = moveSummary(it);
+  let moveHtml = '';
+  if(ms.mv.length){
+    const sign = n => (n > 0 ? '+' : n < 0 ? '−' : '') + fmt(Math.abs(n));
+    const anyReturn = ms.mv.some(x => moveLabel(x[1]).kind === '반품');
+    const title = anyReturn ? '반품 · 기타이동' : '기타이동';
+    const list = ms.mv.slice().sort((a, b) => String(b[0]).localeCompare(String(a[0])) || String(b[3]).localeCompare(String(a[3]))).map(x => {
+      const L = moveLabel(x[1]);
+      const isToday = x[0] === ms.today;
+      return `<div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-top:1px dashed #E2E8F0;font-size:13px">
+        <span>${isToday ? '<b style="color:#15803D">금일</b>' : esc(md(x[0]))} · <span class="tag ${L.kind}" style="font-size:11px">${L.kind}</span> ${esc(L.from || '')}${L.from ? ' → ' : ''}${esc(L.to || '')}${L.slip ? `<span style="color:#94A3B8"> · ${esc(L.slip)}</span>` : ''}</span>
+        <b style="white-space:nowrap">${sign(Number(x[2]) || 0)}</b></div>`;
+    }).join('');
+    moveHtml = `<div class="st" style="display:block"><div style="display:flex;align-items:center;gap:10px"><span class="dot" style="background:#0D9488"></span>
+      <span class="t" style="flex:1">${title}<small>금일 ${sign(ms.todayQty)}개 · ${esc(md(stock.baseDate))} 마감 이후 ${sign(ms.total)}개 (${ms.mv.length}건)</small></span><span class="q">${sign(ms.total)}</span></div>
+      <div style="margin:6px 0 0 20px">${list}</div></div>`;
+  }
   $('sheetBody').innerHTML = `<h3>실재고 움직임 · ${esc(code)}</h3><div class="sub">${esc(md(stock.baseDate))} 마감 이후 판매현황 전표 기준</div>` +
-    rows.map(r => `<div class="st"><span class="dot" style="background:${r[0]}"></span><span class="t">${r[1]}<small>${r[2]}</small></span><span class="q">${fmt(r[3])}</span></div>`).join('');
+    rows.map(r => `<div class="st"><span class="dot" style="background:${r[0]}"></span><span class="t">${r[1]}<small>${r[2]}</small></span><span class="q">${fmt(r[3])}</span></div>`).join('') +
+    (moveHtml || `<div class="st"><span class="dot" style="background:#CBD5E1"></span><span class="t">반품 · 기타이동<small>${esc(md(stock.baseDate))} 마감 이후 들어온 반품이 없어요</small></span><span class="q">0</span></div>`);
   $('sheetWrap').classList.remove('hidden');
 }
 function closeLiveSheet(){ $('sheetWrap').classList.add('hidden'); }
