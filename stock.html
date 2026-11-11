@@ -296,6 +296,24 @@ function boxSummaryHtml(inb){
       `<b>${fmt(b.q)}개</b></div>`).join('') + `</div>`;
 }
 
+// 11/11: 입고 최근 7일 — 마감 이후 입고(+계산에 들어감)는 펼쳐서, 그 전 입고(마감재고에 이미 포함)는 날짜별로 접어서
+function boxCount(list){ const s = new Set(list.map(x => String(x[1] || '').trim())); return s.size; }
+function inboundHtml(it, i){
+  const byDate = {};
+  (it.inb || []).forEach(x => { const d = x[3] || ''; (byDate[d] = byDate[d] || { cur: true, list: [] }).list.push(x); });
+  (it.inh || []).forEach(x => { const d = x[3] || ''; (byDate[d] = byDate[d] || { cur: false, list: [] }).list.push(x); });
+  const dates = Object.keys(byDate).sort().reverse(); // 최근 날짜가 위
+  const weekQty = dates.reduce((a, d) => a + byDate[d].list.reduce((s, x) => s + (Number(x[2]) || 0), 0), 0);
+  if(!dates.length) return `<div class="line" style="color:#6b7280"><span>입고<span class="sm">최근 7일</span></span><span class="v" style="font-size:14px;color:#6b7280">없음</span></div>`;
+  return `<div class="line inb" style="display:block"><div style="display:flex;justify-content:space-between;align-items:baseline"><span>+ 입고<span class="sm" style="color:var(--in)">최근 7일 ${dates.length}일 · ${fmt(weekQty)}개</span></span><span class="v">${i ? '+' + fmt(i) : '0'}</span></div>` +
+    dates.map(d => {
+      const g = byDate[d], q = g.list.reduce((s, x) => s + (Number(x[2]) || 0), 0), nb = boxCount(g.list);
+      const title = `${d ? esc(md(d)) : ''} 입고 · ${nb}박스 ${fmt(q)}개`;
+      if(g.cur) return `<div style="margin-top:8px;font-size:13px;font-weight:800;color:var(--in)">${title}</div>${boxSummaryHtml(g.list)}`;
+      return `<details style="margin-top:8px"><summary style="font-size:13px;font-weight:800;color:#475569;cursor:pointer">${title} <span style="font-weight:600;color:#94a3b8">· 마감재고에 포함</span></summary>${boxSummaryHtml(g.list)}</details>`;
+    }).join('') + `</div>`;
+}
+
 function sumQty(list){ return (list || []).reduce((a, x) => a + (Number(x[1]) || 0), 0); }
 function showItem(code, quiet){
   const it = stock.items[code] || {};
@@ -309,14 +327,7 @@ function showItem(code, quiet){
     <div class="name">${esc(it.n || '')}${it.s ? ' / ' + esc(it.s) : ''}</div>
     <div class="big"><span class="lab">지금 있어야 할 수량<span style="display:block;font-size:12px;color:#c9cdf0;font-weight:500">선반 기준</span></span><span class="num">${fmt(expected)}</span></div>
     <div class="line"><span>전날 마감재고<span class="sm">${esc(md(stock.baseDate))} 마감</span></span><span class="v">${fmt(b + r)}</span></div>`; // 10/25: 기타이동은 따로 줄을 만들지 않고 마감재고에 합쳐서 보여준다
-  if(i){
-    // 10/25: 입고는 날짜별로 묶어서 "10/25 입고" + 공장·CTN 번호
-    const byDate = {};
-    (it.inb || []).forEach(x => { const d = x[3] || ''; (byDate[d] = byDate[d] || []).push(x); });
-    const dates = Object.keys(byDate).sort();
-    html += `<div class="line inb" style="display:block"><div style="display:flex;justify-content:space-between;align-items:baseline"><span>+ 입고</span><span class="v">+${fmt(i)}</span></div>` +
-      dates.map(d => `<div style="margin-top:8px;font-size:13px;font-weight:800;color:var(--in)">${d ? esc(md(d)) + ' 입고' : '입고'}</div>${boxSummaryHtml(byDate[d])}`).join('') + `</div>`;
-  }
+  html += inboundHtml(it, i);
   html += `<div class="line out"><span>− 피킹완료<span class="sm">이미 선반에서 가져간 수량 (검수완료 포함)</span></span><span class="v">${k ? '−' + fmt(k) : '0'}</span></div>
     ${repairLine(code)}
     <button type="button" class="livebtn" id="liveBtn"><span class="lt"><span>실재고 움직임 보기</span><span>▸</span></span>
