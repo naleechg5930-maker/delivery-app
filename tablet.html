@@ -3183,7 +3183,7 @@ function parseBoxNoScan(raw){
   let t = String(raw || '').trim();
   try{ if(containsHangul(t)) t = hangulToEnglish(t); }catch(e){}
   t = t.toUpperCase();
-  let m = t.match(/^#?(\d{1,5})$/);
+  let m = t.match(/^#?0*(\d{1,5})$/); // 11/11: 앞에 0이 붙은 박스번호(000268)도 박스번호로
   if(m && Number(m[1]) > 0) return { no: String(Number(m[1])), factory: '' };
   m = t.match(/^([A-Z]{1,4})[\s\-_#]?(\d{1,5})$/);
   if(m && m[1] !== 'WK' && !codeIndex[t] && Number(m[2]) > 0) return { no: String(Number(m[2])), factory: m[1] };
@@ -3406,7 +3406,7 @@ function confirmBoxEntry(entry, cand, mode){
     const e = scanLogBuffer[i];
     if(e.box && !e.boxInfo && e.code === String(entry.code).toUpperCase()){ e.boxInfo = info; break; }
   }
-  addScreenOnlyLog(`${entry.code} [박스 ${entry.qty}]`, info, mode === '미확인' || mode === '기록없음' ? '' : '박스');
+  addScreenOnlyLog(`${entry.code} [박스 ${entry.qty}]`, info + (mode === '미확인' || mode === '기록없음' ? ' · 출고는 반영됨' : ''), mode === '미확인' || mode === '기록없음' ? mode : '박스'); // 11/11: 빨간 '확인필요' 대신 기록없음/미확인으로
   if(cand){
     showBanner('pick', `📦 박스 확정 · ${boxLabel(cand)}`, `${entry.code} · ${entry.qty}개`, `${boxMD(cand.shipDate)} 출하 · ${boxMD(cand.inDate)} 입고${mode === '자동' ? '' : ' · 직접 선택'}`, '📦');
   } else {
