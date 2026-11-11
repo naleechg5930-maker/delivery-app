@@ -6458,7 +6458,11 @@ const videoRec = (function(){
       if(el && /^(textarea|select)$/i.test(el.tagName)) return false;
       if(el && el.tagName === 'INPUT' && !/scanInput/i.test(el.id) && String(el.value || '').trim()) return false; // 뭔가 입력 중
       if(typeof items === 'undefined' || !items.length) return true;               // 전표 없음 (패킹완료 후 비운 화면 등)
-      return items.every(it => it.scannedQty >= it.orderQty);                       // 검수완료된 화면
+      // 11/11: 켤 때 깔리는 "기본 주문서"(36품목, 아무것도 안 찍음)를 검수 중으로 잘못 봐서 영영 안 바뀌던 문제 수정
+      if(items.some(it => it.scannedQty > 0 && it.scannedQty < it.orderQty)) return false; // 찍다 만 전표 → 기다림
+      if(items.every(it => it.scannedQty >= it.orderQty)) return true;                    // 검수완료된 화면
+      if(typeof currentDocumentKey === 'undefined' || !currentDocumentKey) return true;   // 기본 주문서 (전표 안 불러옴)
+      return Date.now() - lastActivity >= 10 * 60 * 1000;                                 // 전표만 불러놓고 하나도 안 찍음 → 10분 조용하면
     }catch(e){ return false; }
   }
   function tryReload(){
