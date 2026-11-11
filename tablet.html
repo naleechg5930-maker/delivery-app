@@ -1397,8 +1397,13 @@ setInterval(updateRestButtonLabel, 1000); // 쉬는 중이면 버튼 위 시간 
 let currentOrderTag = ''; // '' (단가 있음, 표시 없음) | 'S/P' (단가 없음, 샘플 표시)
 let currentRoundTag = ''; // 11/01: 에이블리(오더) 비고의 "1차"·"2차" → 라벨 업체명 뒤·포장명세 머리글에 붙임
 // 판매현황 비고에서 숫자+차만 읽는다 (예: "1차 오전" → "1차")
+function destFromNote(note){ const t = String(note || ''); return t.indexOf('물류센터') !== -1 ? '물류센터' : (t.indexOf('사무실') !== -1 ? '사무실' : ''); }
 function roundFromNote(note){ const m = String(note || '').match(/(\d+)\s*차/); return m ? m[1] + '차' : ''; }
 function isAblyOrderCompany(name){ return normalizeCompanyKey(String(name || '').replace(/\s*\(도착보장\)\s*$/, '')) === normalizeCompanyKey('에이블리(오더)'); }
+// 11/11: 비고의 "물류센터"·"사무실"을 라벨 업체명 뒤·포장명세 머리글에 붙이는 업체 (예: 복플레이스(물류센터))
+const DEST_TAG_COMPANIES = ['복플레이스'];
+function isDestTagCompany(name){ const k = normalizeCompanyKey(String(name || '').replace(/\s*\(도착보장\)\s*$/, '')); return DEST_TAG_COMPANIES.some(c => k.indexOf(normalizeCompanyKey(c)) !== -1); }
+function roundTagSuffix(name, tag){ if(!tag) return ''; if(isAblyOrderCompany(name)) return tag; if(isDestTagCompany(name) && /^(물류센터|사무실)$/.test(tag)) return '(' + tag + ')'; return ''; }
 let currentDocumentKey = ''; // 전표번호 (QR 조회로 불러온 경우만 값이 있음, 그 외엔 빈 값)
 let currentWorker = ''; // 작업자 QR을 찍으면 채워짐 (전표 찍고 그다음에 찍는 방식)
 // 10/21: 피킹 완료(2번째 전표 스캔) = 바로 검수 시작. 검수자는 피킹한 사람으로 자동 지정하고,
@@ -4095,7 +4100,7 @@ function findInSalesCache(raw){
   if(!key) return null;
 
   const matched = [];
-  let companyName = '', hasPrice = false, arrivalGuaranteed = false, round = '';
+  let companyName = '', hasPrice = false, arrivalGuaranteed = false, round = '', dest = '';
   salesCache.forEach(row => {
     if(key.candidates.indexOf(row.key) === -1) return;
     const qty = parseFloat(String(row.qty).replace(/,/g, '')) || 0;
@@ -4105,11 +4110,12 @@ function findInSalesCache(raw){
     if(price > 0) hasPrice = true;
     if(row.note && row.note.indexOf('도착보장') !== -1) arrivalGuaranteed = true;
     if(!round) round = roundFromNote(row.note);
+    if(!dest) dest = destFromNote(row.note); // 11/11 복플레이스 물류센터·사무실
     matched.push({ code: row.code, name: row.name, spec: row.spec, qty });
   });
 
   if(matched.length === 0) return null;
-  return { ok:true, company: companyName, hasPrice, key: key.displayKey, rows: matched, arrivalGuaranteed, round };
+  return { ok:true, company: companyName, hasPrice, key: key.displayKey, rows: matched, arrivalGuaranteed, round, dest };
 }
 
 async function processDocumentLookup(raw){
@@ -4248,8 +4254,9 @@ async function processDocumentLookup(raw){
       `<b>전표 조회로 불러온 주문서</b> · <b>전표:</b> ${data.key || raw} · <b>품목수:</b> ${list.length}개`;
     currentOrderTag = data.hasPrice ? '' : 'S/P';
     updateOrderTagBadge();
-    currentRoundTag = (isAblyOrderCompany(data.company) && data.round) ? data.round : ''; // 에이블리(오더)만
-    if(currentRoundTag){ try{ addScreenOnlyLog('에이블리(오더) ' + currentRoundTag, `라벨에 "에이블리(오더)${currentRoundTag}"로 인쇄돼요`, '🏷️'); }catch(e){} }
+    currentRoundTag = (isAblyOrderCompany(data.company) && data.round) ? data.round
+      : ((isDestTagCompany(data.company) && data.dest) ? data.dest : ''); // 에이블리(오더) 1차·2차 / 11/11 복플레이스 물류센터·사무실
+    if(currentRoundTag){ try{ const lbl = data.company + roundTagSuffix(data.company, currentRoundTag); addScreenOnlyLog(lbl, `비고 "${currentRoundTag}" → 라벨에 "${lbl}"로 인쇄돼요`, '🏷️'); }catch(e){} }
     showBanner('ok', '전표 조회 완료', data.key || raw, `${data.company || ''} · 품목 ${list.length}개 불러옴`, '✅');
     addLog(new Date().toLocaleTimeString('ko-KR', {hour12:false}), data.key || raw, true, `전표 조회 → ${list.length}품목 불러옴`);
     playOkSound();
@@ -4858,7 +4865,7 @@ function labelQrSrc(payload){
 
 // docKeyForLabel: 송장에 찍을 전표번호 (안 넘기면 지금 화면의 전표). 인쇄대기열·재출력은 그 건의 전표번호를 넘긴다.
 function buildLabelPageHTML(companyName, zoneValue, bagLabelText, isLast, deliveryQrPayload, totalBags, docKeyForLabel){
-  const baseName = (companyName || '업체명 미입력') + (currentRoundTag && isAblyOrderCompany(companyName) ? currentRoundTag : '');
+  const baseName = (companyName || '업체명 미입력') + roundTagSuffix(companyName, currentRoundTag);
   const name = currentOrderTag ? `${baseName} ${currentOrderTag}` : baseName;
   const fontSize = fitVendorFontSize(name);
   const { x, y } = getLabelOffsets();
@@ -4898,7 +4905,7 @@ function buildPackingListPageHTML(bagNum, total, contentList){
   `).join('');
   return `
     <div class="label-content packing-list-page">
-      <div class="pl-header">${currentRoundTag ? escapeHtml(currentRoundTag) + ' · ' : ''}${total}-${bagNum} 포장명세</div>
+      <div class="pl-header">${currentRoundTag && !/^(물류센터|사무실)$/.test(currentRoundTag) ? escapeHtml(currentRoundTag) + ' · ' : ''}${total}-${bagNum} 포장명세</div>
       <table class="pl-table" style="font-size:${fontSize};">
         <thead><tr><th>품목명</th><th>규격</th><th>수량</th></tr></thead>
         <tbody>${rows}</tbody>
