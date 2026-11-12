@@ -90,6 +90,13 @@
   .badge.wait{ background:var(--panel2); color:var(--sub); }
   .badge.done{ background:var(--ok-dim); color:#065F2C; }
   .badge.over{ background:var(--err-dim); color:#7F1D1D; }
+  /* 11/12 입고 판정 */
+  .badge.v-qty, .badge.v-wrong, .badge.v-swap, .badge.v-seen{ white-space:nowrap; display:inline-block; }
+  .badge.v-qty{ background:#FFEDD5; color:#9A3412; }
+  .badge.v-wrong{ background:#FEE2E2; color:#991B1B; }
+  .badge.v-swap{ background:#EDE9FE; color:#5B21B6; }
+  .badge.v-seen{ background:#E0F2FE; color:#075985; }
+  .fac-chip{ border:1px solid var(--line, #cbd5e1); background:#fff; color:#161D65; border-radius:999px; padding:4px 12px; font-weight:800; cursor:pointer; margin-right:6px; }
 
   .overlay{ display:none; position:fixed; inset:0; background:rgba(10,14,30,0.55); align-items:center; justify-content:center; z-index:50; }
   .overlay.show{ display:flex; }
@@ -246,6 +253,56 @@ let packingListData = []; // [{factory, boxNumber, code, name, size, qty, matche
 let awaitingItemScanFor = null; // 박스번호 스캔 후, 실제 품목 스캔을 기다리는 후보 배열 (null이면 대기중 아님)
 let currentBoxNumber = null;
 let lockedFactory = null; // 여러 공장 후보 중 하나로 확정되면 저장 (같은 박스의 남은 사이즈들도 이 공장 것만 확인)
+
+/* ===== 11/12 입고 판정 (클릭 없이 찍기만 해도 자동으로 붙음, 시트저장 때 계산해서 같이 저장) =====
+   정상            : 이 박스 후보에 있고 수량도 맞음
+   수량 이상        : 이 박스 후보에 있는데 수량이 다름 → 찍힌 수량으로 받아둠
+   박스 의심        : 이 박스 후보엔 없는데 패킹리스트의 다른 박스에 있는 품번
+   오입고 의심      : 패킹리스트 어디에도 없는 품번
+   바코드 훼손 의심 : 박스번호(+공장)는 찍었는데 품목 바코드를 못 찍음
+   미스캔           : 박스번호부터 안 찍힘 (훼손 또는 미도착) — 번호만 찍고 공장을 몰랐으면 "번호는 찍힘" 메모 */
+let inboundExtras = [];          // 후보에 없는 품번 스캔 [{time, factory, boxNumber, code, qty, verdict, memo}]
+const boxSeenFactory = {};       // "공장|박스번호" → true (박스번호를 찍었고 공장도 정해짐)
+const boxSeenNoFactory = {};     // 박스번호 → true (박스번호는 찍었는데 공장을 끝까지 몰랐음)
+function markBoxSeen(){
+  if(!currentBoxNumber) return;
+  if(lockedFactory){ boxSeenFactory[lockedFactory + '|' + currentBoxNumber] = true; }
+  else { boxSeenNoFactory[currentBoxNumber] = true; }
+}
+function computeInboundVerdicts(){
+  packingListData.forEach(p => {
+    if(p.matched){ p.finalVerdict = p.verdict || ''; p.finalMemo = p.memo || ''; return; }
+    const moved = inboundExtras.find(x => x.otherKey === p.factory + '|' + p.boxNumber + '|' + p.code.toUpperCase());
+    if(moved){ p.finalVerdict = '박스 의심'; p.finalMemo = `${moved.factory ? moved.factory + ' ' : ''}${moved.boxNumber}번 박스에서 이 품목이 찍힘`; return; }
+    if(boxSeenFactory[p.factory + '|' + p.boxNumber]){ p.finalVerdict = '바코드 훼손 의심'; p.finalMemo = '박스번호는 찍었는데 품목 바코드를 못 찍음'; }
+    else if(boxSeenNoFactory[p.boxNumber]){ p.finalVerdict = '미스캔'; p.finalMemo = '번호는 찍힘 (공장 미확인)'; }
+    else { p.finalVerdict = '미스캔'; p.finalMemo = '훼손 또는 미도착'; }
+  });
+}
+function verdictBadge(v){
+  if(!v) return '';
+  const cls = v === '수량 이상' ? 'v-qty' : v === '박스 의심' ? 'v-swap' : v === '바코드 훼손 의심' ? 'v-seen' : 'v-wrong';
+  return `<span class="badge ${cls}">${escapeHtml(v)}</span>`;
+}
+// 박스번호에 공장 글자가 붙어 있으면 (YL-268, YL268) 그 공장으로 좁힌다
+function factoryMatchesHint(factory, hint){
+  if(!hint) return true;
+  const f = String(factory || '').toUpperCase().replace(/\s/g, '');
+  return f === hint || f.indexOf(hint) === 0;
+}
+function pickFactory(f){
+  if(!awaitingItemScanFor) return;
+  const narrowed = awaitingItemScanFor.filter(c => c.factory === f);
+  if(!narrowed.length) return;
+  lockedFactory = f;
+  awaitingItemScanFor = narrowed;
+  delete boxSeenNoFactory[currentBoxNumber];
+  markBoxSeen();
+  document.getElementById('boxCandidateArea').style.display = 'none';
+  const sizeList = narrowed.map(c => `${c.name}/${c.size}(${c.qty}개)`).join(', ');
+  showBanner('idle', `${currentBoxNumber}번 박스 · ${f}`, `${sizeList} — 바코드를 스캔해주세요`, '📦');
+  focusInput();
+}
 
 const scanInput = document.getElementById('scanInput');
 const logList = document.getElementById('logList');
@@ -856,14 +913,21 @@ document.getElementById('saveStatusToSheetBtn').addEventListener('click', async 
       method:'POST',
       body: JSON.stringify({
         type:'updateInboundStatus',
-        records: packingListData.map(p => ({
+        records: (computeInboundVerdicts(), packingListData.map(p => ({
           factory: p.factory, boxNumber: p.boxNumber, code: p.code, matched: !!p.matched,
-        })),
+          name: p.name, size: p.size, qty: p.qty, scanQty: p.matched ? (p.scanQty || p.qty) : 0,
+          verdict: p.finalVerdict || '', memo: p.finalMemo || '',
+        }))),
+        extras: inboundExtras,
       }),
     });
     const data = await resp.json();
     if(data.ok){
-      alert(`시트 저장 완료: ${data.updatedCount}건 업데이트, 그 중 ${data.stillWaitingCount}건 아직 대기중(빨간줄 표시)`);
+      const vc = {};
+      packingListData.forEach(p => { if(p.finalVerdict) vc[p.finalVerdict] = (vc[p.finalVerdict] || 0) + 1; });
+      inboundExtras.forEach(x => { vc[x.verdict] = (vc[x.verdict] || 0) + 1; });
+      const vtxt = Object.keys(vc).map(k => `${k} ${vc[k]}`).join(' · ');
+      alert(`시트 저장 완료: ${data.updatedCount}건 업데이트, 그 중 ${data.stillWaitingCount}건 아직 대기중(빨간줄 표시)` + (vtxt ? `\n\n판정: ${vtxt}\n(루나앤솔입고 "입고판정" 탭에서 확인)` : ''));
     } else {
       alert('시트 저장 실패: ' + (data.error || '알 수 없는 오류'));
     }
@@ -1047,14 +1111,16 @@ function renderBoxItemsTable(){
   const rowOf = p => {
     const none = !p.matched && !groupDone[`${p.factory}|${p.code}|${p.size}`];
     const rowStyle = none ? ' style="background:#FEE2E2; color:#991B1B; font-weight:700;"' : '';
-    const badge = p.matched ? '<span class="badge done">완료</span>' : '<span class="badge wait">대기</span>';
+    const badge = (p.matched ? '<span class="badge done">완료</span>' : '<span class="badge wait">대기</span>') + (p.verdict ? ' ' + verdictBadge(p.verdict) : '');
     return `<tr${rowStyle}><td>${escapeHtml(p.code)}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.size)}</td><td>${escapeHtml(p.factory)}</td><td>${escapeHtml(p.boxNumber)}번 (${p.qty}개)</td><td>${badge}</td></tr>`;
   };
   const waiting = packingListData.filter(p => !p.matched);
   const done = packingListData.filter(p => p.matched).sort((x, y) => (y.matchedAt || 0) - (x.matchedAt || 0)); // 방금 찍은 박스가 맨 위
 
   waitTbody.innerHTML = waiting.map(rowOf).join('');
-  doneTbody.innerHTML = done.map(rowOf).join('');
+  const extraRows = inboundExtras.slice().reverse().map(x =>
+    `<tr style="background:#FEF2F2"><td>${escapeHtml(x.code)}</td><td>${escapeHtml(x.memo)}</td><td></td><td>${escapeHtml(x.factory || '-')}</td><td>${escapeHtml(x.boxNumber)}번 (스캔 ${x.qty}개)</td><td>${verdictBadge(x.verdict)}</td></tr>`).join('');
+  doneTbody.innerHTML = extraRows + done.map(rowOf).join('');
   document.getElementById('waitCount').textContent = waiting.length + '박스';
   document.getElementById('doneTableCount').textContent = done.length + '박스';
 }
@@ -1064,7 +1130,11 @@ function handleBoxNumberScan(boxNumberRaw){
   // 숫자만 뽑아내서 박스번호로 사용한다.
   const digitsOnly = String(boxNumberRaw).replace(/\D/g, '');
   const boxNumber = digitsOnly || String(boxNumberRaw).trim();
-  const candidates = packingListData.filter(p => p.boxNumber === boxNumber && !p.matched);
+  const hintM = String(boxNumberRaw).toUpperCase().match(/^\s*([A-Z]{1,4})[\s\-_#]?\d/);
+  let candidates = packingListData.filter(p => p.boxNumber === boxNumber && !p.matched);
+  if(hintM && candidates.some(c => factoryMatchesHint(c.factory, hintM[1]))){
+    candidates = candidates.filter(c => factoryMatchesHint(c.factory, hintM[1])); // 11/12: YL-268 → YL 공장 268번만
+  }
   const timeStr = new Date().toLocaleTimeString('ko-KR', {hour12:false});
 
   if(candidates.length === 0){
@@ -1088,6 +1158,7 @@ function handleBoxNumberScan(boxNumberRaw){
     const sizeList = candidates.map(c => `${c.name}/${c.size}(${c.qty}개)`).join(', ');
     showBanner('idle', `${boxNumber}번 박스 확인됨 (${lockedFactory})`, `${sizeList} — 바코드를 스캔해주세요 (${candidates.length}개 필요)`, '📦');
     addLog(timeStr, boxNumber, true, `${lockedFactory} 확정, 사이즈 ${candidates.length}개 스캔 대기`);
+    markBoxSeen();
     playOkSound();
     speakKorean(`${boxNumber}번 박스`);
   } else {
@@ -1095,8 +1166,11 @@ function handleBoxNumberScan(boxNumberRaw){
     showBanner('idle', `${boxNumber}번 박스 — 공장 후보 ${factories.length}곳`, '실제 품목을 스캔하면 자동으로 공장이 구분됩니다', '📦');
     const area = document.getElementById('boxCandidateArea');
     area.style.display = 'flex';
-    area.innerHTML = '<label>후보</label><span class="status-span">' +
-      candidates.map(c => `${escapeHtml(c.factory)}(${escapeHtml(c.name)}/${escapeHtml(c.size)})`).join(', ') + '</span>';
+    // 11/12: 공장 버튼은 눌러도 되고 안 눌러도 됨 — 바코드를 찍으면 자동으로 공장이 정해짐
+    area.innerHTML = '<label>공장 (선택)</label>' + factories.map(f => `<button class="fac-chip" type="button" data-fac="${escapeHtml(f)}">${escapeHtml(f)}</button>`).join('') +
+      '<span class="status-span">바코드를 찍으면 자동으로 정해져요</span>';
+    area.querySelectorAll('.fac-chip').forEach(b => b.addEventListener('click', () => pickFactory(b.getAttribute('data-fac'))));
+    markBoxSeen();
     addLog(timeStr, boxNumber, true, `${factories.length}개 공장에 같은 번호 존재 - 품목 스캔으로 구분 예정`);
     playOkSound();
     speakKorean(`${boxNumber}번 박스`);
@@ -1126,28 +1200,43 @@ function handleItemScanForBox(rawCode){
     const matchedCandidate = pool.find(c => c.code.toUpperCase() === part.code && !c.matched);
 
     if(!matchedCandidate){
-      failedParts.push(`${part.code}(${part.qty}개) 불일치`);
-      addLog(timeStr, part.code, false, `${currentBoxNumber}번 박스 후보들과 일치하지 않음`);
+      // 11/12: 이 박스 후보에 없음 → 다른 박스에 있으면 "박스 의심", 어디에도 없으면 "오입고 의심" (자동 기록, 클릭 필요 없음)
+      const elsewhere = packingListData.find(c => c.code.toUpperCase() === part.code && !(c.boxNumber === currentBoxNumber && (!lockedFactory || c.factory === lockedFactory)));
+      const verdict = elsewhere ? '박스 의심' : '오입고 의심';
+      const memo = elsewhere ? `${elsewhere.factory} ${elsewhere.boxNumber}번 박스 품목` : '패킹리스트에 없는 품번';
+      if(!inboundExtras.some(x => x.boxNumber === currentBoxNumber && x.code === part.code && x.factory === (lockedFactory || ''))){
+        const hhmm = new Date().toTimeString().slice(0, 8);
+        inboundExtras.push({ time: hhmm, factory: lockedFactory || '', boxNumber: currentBoxNumber, code: part.code, qty: part.qty, verdict, memo,
+                             otherKey: elsewhere ? elsewhere.factory + '|' + elsewhere.boxNumber + '|' + elsewhere.code.toUpperCase() : '' });
+      }
+      failedParts.push(`${part.code}(${part.qty}개) ${verdict}${elsewhere ? ' — ' + memo : ''}`);
+      addLog(timeStr, part.code, false, `${currentBoxNumber}번 박스 · ${verdict} (${memo})`);
       errCount++;
       return;
     }
     if(part.qty !== matchedCandidate.qty){
-      failedParts.push(`${matchedCandidate.name}/${matchedCandidate.size} 수량불일치(예상${matchedCandidate.qty}·실제${part.qty})`);
-      addLog(timeStr, part.code, false, `수량 불일치 (예상 ${matchedCandidate.qty}, 실제 ${part.qty})`);
-      errCount++;
-      return;
+      // 11/12: 수량이 달라도 찍힌 수량으로 받고 "수량 이상" 표시
+      matchedCandidate.verdict = '수량 이상';
+      matchedCandidate.memo = `패킹 ${matchedCandidate.qty}개 · 스캔 ${part.qty}개 (${part.qty > matchedCandidate.qty ? '+' : ''}${part.qty - matchedCandidate.qty})`;
+      matchedCandidate.scanQty = part.qty;
+      failedParts.push(`${matchedCandidate.name}/${matchedCandidate.size} 수량 이상 (패킹 ${matchedCandidate.qty} · 스캔 ${part.qty})`);
+      addLog(timeStr, part.code, false, `수량 이상 (패킹 ${matchedCandidate.qty}, 스캔 ${part.qty}) — 찍힌 수량으로 받음`);
+    } else {
+      matchedCandidate.scanQty = part.qty;
     }
 
     matchedCandidate.matched = true;
     matchedCandidate.matchedAt = Date.now(); // 10/29: 완료 표에서 방금 찍은 박스를 맨 위로
     okCount += part.qty;
-    matchedNames.push(`${matchedCandidate.name}/${matchedCandidate.size}`);
+    if(!matchedCandidate.verdict) matchedNames.push(`${matchedCandidate.name}/${matchedCandidate.size}`);
     addLog(timeStr, part.code, true, `${matchedCandidate.factory} ${currentBoxNumber}번 박스 - ${matchedCandidate.size} 확인됨`);
 
     // 이 스캔으로 공장이 처음 확정된 거면(합본 후보가 여러 공장이었던 경우) 잠가둔다
     if(!lockedFactory){
       lockedFactory = matchedCandidate.factory;
       document.getElementById('boxCandidateArea').style.display = 'none';
+      delete boxSeenNoFactory[currentBoxNumber];
+      markBoxSeen();
     }
   });
 
@@ -1167,7 +1256,12 @@ function handleItemScanForBox(rawCode){
   ) : [];
 
   if(failedParts.length > 0){
-    showBanner('err', '일부 불일치', failedParts.join(' / '), '⚠️');
+    // 11/12: 판정은 자동으로 기록됨 — 화면만 알려주고 계속 찍으면 됨
+    showBanner('err', '확인 필요 (자동 기록됨)', failedParts.join(' / ') + (stillRemaining.length ? ` · 이 박스 ${stillRemaining.length}개 더 남음` : ''), '⚠️');
+    if(stillRemaining.length) awaitingItemScanFor = stillRemaining;
+    else if(lockedFactory && !packingListData.some(p => p.factory === lockedFactory && p.boxNumber === currentBoxNumber && !p.matched)){
+      awaitingItemScanFor = null; currentBoxNumber = null; lockedFactory = null;
+    }
   } else if(stillRemaining.length > 0){
     // 아직 이 박스에 스캔해야 할 사이즈가 더 있음 - 박스번호 다시 안 찍고 바로 이어서 스캔
     awaitingItemScanFor = stillRemaining;
