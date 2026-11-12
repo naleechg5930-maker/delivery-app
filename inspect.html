@@ -1514,6 +1514,7 @@ function loadItems(rawList){
   errorSkuDetails = [];
   currentOrderTag = '';
   currentRoundTag = '';
+  try{ setQtyCard(1, 'new'); }catch(e){} // 11/11: 새 전표 → 낱장으로
   currentDocumentKey = '';
   updateOrderTagBadge();
   resetLiveBagState();
@@ -1817,6 +1818,47 @@ function containsHangul(str){
   return /[\u3131-\u318E\uAC00-\uD7A3]/.test(str);
 }
 
+
+// ===== 11/11: 1개·5개·10개 QR 카드 =====
+// 카드를 한 번 찍으면 그다음 상품은 전부 그 개수씩 들어간다. 1개 카드 = 낱장으로 복귀.
+// 검수완료되거나 다른 전표를 불러오면 자동으로 낱장으로 돌아간다. 박스/마대 바코드(품목+수량)는 지금처럼 박스 수량이 우선.
+const QTY_CARD_QR = { 'LUNA-QTY1': 1, 'LUNA-QTY5': 5, 'LUNA-QTY10': 10 };
+let qrBundleQty = 1;
+function parseQtyCardQr(raw){
+  let t = String(raw || '').trim();
+  try{ if(containsHangul(t)) t = hangulToEnglish(t); }catch(e){}
+  return QTY_CARD_QR[t.toUpperCase().replace(/\s+/g, '')] || 0;
+}
+function updateQtyCardBadge(){
+  let el = document.getElementById('qtyCardBadge');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'qtyCardBadge';
+    el.style.cssText = 'display:none; position:fixed; left:12px; bottom:12px; z-index:9998; background:#EA580C; color:#fff; border-radius:14px; padding:10px 16px; font-size:20px; font-weight:900; box-shadow:0 6px 18px rgba(0,0,0,.3); pointer-events:none;';
+    document.body.appendChild(el);
+  }
+  if(qrBundleQty > 1){
+    el.innerHTML = `📦 지금 ${qrBundleQty}개씩 <span style="font-size:13px; font-weight:700; opacity:.9">· 낱장은 1개 카드</span>`;
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
+function setQtyCard(n, why){
+  const before = qrBundleQty;
+  qrBundleQty = (n === 5 || n === 10) ? n : 1;
+  updateQtyCardBadge();
+  if(why === 'card'){
+    const t = qrBundleQty > 1 ? `${qrBundleQty}개씩` : '낱장(1개)';
+    showBanner('pick', `📦 지금부터 ${t}`, `${qrBundleQty}개 카드`, qrBundleQty > 1 ? `상품을 찍을 때마다 ${qrBundleQty}개씩 들어가요 — 낱장으로 돌아가려면 1개 카드` : '상품을 찍을 때마다 1개씩 들어가요', '📦');
+    addScreenOnlyLog(`${qrBundleQty}개 카드`, qrBundleQty > 1 ? `지금부터 ${qrBundleQty}개씩` : '낱장으로', '📦');
+    try{ playOkSound(); }catch(e){}
+    try{ speakKorean(qrBundleQty > 1 ? `${qrBundleQty}개씩` : '낱장'); }catch(e){}
+  } else if(before > 1 && qrBundleQty === 1){
+    try{ addScreenOnlyLog('묶음 카드', why === 'done' ? '검수완료 → 낱장으로 돌아감' : '새 전표 → 낱장으로 돌아감', '📦'); }catch(e){}
+  }
+}
+
 // 마우스 없이 바코드/QR로 방금 스캔한 상품에 수량을 추가할 수 있는 액션 코드
 const QTY_ACTION_CODES = { 'PLUS4': 4, 'PLUS5': 5, 'PLUS9': 9, 'PLUS10': 10 };
 
@@ -2076,8 +2118,11 @@ function handleScanRaw(raw){
 
     // 한/영키가 한글로 되어있어서 엉뚱하게 한글로 찍혔으면, 영문으로 자동 변환해서 처리한다
     if(containsHangul(raw)) raw = hangulToEnglish(raw);
+    const cardQty = parseQtyCardQr(raw);
     const actionAmt = QTY_ACTION_CODES[raw.toUpperCase()];
-    if(actionAmt){
+    if(cardQty){
+      if(!blockedByMispick(raw)) setQtyCard(cardQty, 'card'); // 11/11 1·5·10개 카드
+    } else if(actionAmt){
       adjustLastScanned(actionAmt);
     } else if(raw.includes('/')){
       // 품번 바코드에는 '/'가 없으므로, '/'가 있으면 전표 QR로 간주해 판매현황 조회로 처리
@@ -2183,10 +2228,11 @@ function processScan(rawCode){
   // 묶음처리 모드가 켜져있고, 이미 박스/마대 수량이 붙어서 온 스캔이 아니면(중복 적용 방지),
   // 묶음수량표에서 이 품목의 묶음 개수를 찾아서 그만큼 한 번에 처리한다.
   let bundleApplied = false;
-  if(bundleModeActive && bulkQty === 1){
-    bulkQty = bundleFixedQty || findBundleQty(code); // 10/21: 직접 고른 묶음 개수(5/10) 사용
+  const cardQ = qrBundleQty > 1 ? qrBundleQty : 0; // 11/11 1·5·10개 카드
+  if((bundleModeActive || cardQ) && bulkQty === 1){
+    bulkQty = cardQ || bundleFixedQty || findBundleQty(code); // 10/21: 직접 고른 묶음 개수(5/10) 사용
     bundleApplied = true;
-    if(!document.getElementById('bundleContinuousToggle').checked){
+    if(!cardQ && !document.getElementById('bundleContinuousToggle').checked){
       bundleModeActive = false;
       updateBundleModeUI();
     }
@@ -4848,6 +4894,7 @@ function checkAllComplete(){
   if(items.length === 0) return;
   const allDone = items.every(it => it.scannedQty >= it.orderQty);
   if(allDone){
+    try{ setQtyCard(1, 'done'); }catch(e){} // 11/11: 검수완료 → 낱장으로
     setTimeout(()=>{
       const company = (document.getElementById('companyNameInput').value || '').trim() || '업체명 미입력';
       const now = new Date();
