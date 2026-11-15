@@ -871,6 +871,9 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     <div style="display:flex; gap:10px; margin-bottom:14px;">
       <button id="refreshQueueBtn">🔄 새로고침</button>
       <button id="printAllQueueBtn" style="background:var(--ok); color:#04150a;">📥 전체 인쇄</button>
+      <label style="display:flex; align-items:center; gap:6px; margin-left:auto; font-size:13px; font-weight:800; cursor:pointer;">
+        <input type="checkbox" id="autoPrintQueueToggle"> ⚡ 이 컴퓨터에서 자동 인쇄 (20초마다)
+      </label>
     </div>
     <div id="printQueueList" style="max-height:50vh; overflow-y:auto; display:flex; flex-direction:column; gap:8px;">
       <div style="color:var(--sub); font-size:13px;">불러오는 중...</div>
@@ -1251,6 +1254,15 @@ async function refreshPickingStates(){
 }
 setTimeout(refreshPickingStates, 5000);
 setInterval(refreshPickingStates, 120000); // 10/15: 1분 → 2분 (서버 혼잡 완화)
+// 11/15: 분배(다건 일괄 피킹) 묶음에 들어간 전표 — 다른 검수 화면에서 찍으면 막는다
+let sortLockMap = {};
+let sortReplaying = false; // 분배 화면이 칸 완료 전표를 검수기록으로 넘기는 중이면 잠금 무시
+async function refreshSortLocks(){
+  if(!gasWebhookUrl) return;
+  try{ const r = await fetch(gasWebhookUrl + '?action=getSortLocks'); const d = await r.json(); if(d && d.ok && d.map) sortLockMap = d.map; }catch(e){}
+}
+setTimeout(refreshSortLocks, 6000);
+setInterval(refreshSortLocks, 60000);
 function salesQtyFromCache(raw){
   try{
     const d = findInSalesCache(raw);
@@ -2140,6 +2152,7 @@ const PRODUCT_CODE_LEN = 11; // 기본 품목코드 자릿수 (예: NTA8000A117)
 
 function processScan(rawCode){
   if(blockedByMispick(rawCode)) return;
+  if(/^SB\|/i.test(String(rawCode || '').trim())){ showBanner('warn', '분배 묶음 QR이에요', rawCode, '분배 화면에서 찍어주세요 (검수 화면에서는 반영 안 함)', '📦'); try{ playErrSound(); }catch(e){} return; } // 11/15
   { const bx = items.length ? parseBoxNoScan(rawCode) : null; if(bx){ setBoxNoFromScan(bx.no, bx.factory); return; } } // 11/05 박스번호 스캔
   // 10/27: 열린 전표가 없으면(패킹완료로 비운 뒤 등) 상품 스캔은 받지 않는다 — 오피킹·녹화 없이 안내만
   if(!items.length && !/^DLV\|/i.test(String(rawCode || ''))){
@@ -3858,6 +3871,14 @@ async function processDocumentLookup(raw){
   }
   // 이미 검수완료된 전표면 불러오지 않는다 (지금 하던 작업도 그대로 유지됨)
   const scannedDocKey = docKeyFromScan(raw);
+  if(scannedDocKey && !sortReplaying && sortLockMap[scannedDocKey]){
+    const lk = sortLockMap[scannedDocKey];
+    showBanner('err', '분배 중인 전표예요', raw, `${lk.id} 묶음 ${lk.slot}번 칸 · ${lk.worker} — 분배 화면에서 처리돼요`, '📦');
+    try{ addScreenOnlyLog(raw, `분배 묶음 ${lk.id} (${lk.worker})에 들어간 전표라 불러오지 않음`, '📦'); }catch(e){}
+    try{ playErrSound(); speakKorean('분배 중인 전표예요'); }catch(e){}
+    focusInput();
+    return;
+  }
   if(scannedDocKey && processedDocMap[scannedDocKey] && processedOverrideKey !== scannedDocKey){
     if(blockProcessedDoc(raw, scannedDocKey, processedDocMap[scannedDocKey])) return;
   }
@@ -5106,6 +5127,40 @@ function printQueuedItem(item, btnEl){
   return queuedPrintChain;
 }
 let queuedPrintChain = Promise.resolve();
+
+// 11/15: 라벨프린터 노트북에서 켜두면 대기열에 들어온 라벨을 20초마다 자동으로 뽑는다 (분배 화면 등 프린터 없는 PC용)
+// 크롬을 --kiosk-printing 으로 실행해야 인쇄창 없이 바로 나온다. 검수 중(찍다 만 전표)일 때는 끝날 때까지 기다린다.
+let autoPrintQueueOn = false, autoPrintBusy = false;
+const autoPrintedIds = {};
+(async function(){ try{ autoPrintQueueOn = !!(await idbGet('autoPrintQueue')); }catch(e){} const el = document.getElementById('autoPrintQueueToggle'); if(el) el.checked = autoPrintQueueOn; updateAutoPrintBadge(); })();
+document.getElementById('autoPrintQueueToggle').addEventListener('change', function(){
+  autoPrintQueueOn = this.checked;
+  idbSet('autoPrintQueue', this.checked).catch(()=>{});
+  updateAutoPrintBadge();
+  if(this.checked) autoPrintTick();
+});
+function updateAutoPrintBadge(){
+  const b = document.getElementById('printQueueBtn');
+  if(b) b.textContent = autoPrintQueueOn ? '🖨️ 인쇄 대기열 (자동)' : '🖨️ 인쇄 대기열';
+}
+async function autoPrintTick(){
+  if(!autoPrintQueueOn || autoPrintBusy || !gasWebhookUrl) return;
+  try{ if(typeof isInspectionInProgress === 'function' && isInspectionInProgress()) return; }catch(e){}
+  autoPrintBusy = true;
+  try{
+    const resp = await fetch(gasWebhookUrl + '?action=pendingPrints');
+    const data = await resp.json();
+    const list = (data && data.ok && data.pending) ? data.pending.filter(it => !autoPrintedIds[it.id]) : [];
+    for(const item of list){
+      autoPrintedIds[item.id] = true;
+      try{ addScreenOnlyLog(item.company || '', '인쇄 대기열 자동 인쇄', '🖨️'); }catch(e){}
+      await printQueuedItem(item);
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }catch(e){ console.warn('대기열 자동 인쇄 확인 실패:', e); }
+  finally{ autoPrintBusy = false; }
+}
+setInterval(autoPrintTick, 20000);
 
 async function printAllQueued(){
   if(currentPendingQueue.length === 0) return;
@@ -6435,6 +6490,597 @@ const videoRec = (function(){
 })();
 </script>
 
+<!-- ===================== 11/15 분배 (다건 전표 일괄 피킹) =====================
+     inspect.html?mode=sort 로 열면 이 화면이 뜬다. 검수프로그램 엔진(전표 조회·봉투 계산·라벨·검수기록)을 그대로 쓰고,
+     칸이 다 차면 그 전표를 엔진에 넘겨 평소 검수완료와 똑같이 기록 + 라벨은 인쇄 대기열로 보낸다. -->
+<style>
+#sortApp{ position:fixed; inset:0; z-index:100000; background:#eef0f7; color:#111827; font-family:'Pretendard','Noto Sans KR','Malgun Gothic',sans-serif; display:none; flex-direction:column; }
+#sortApp *{ box-sizing:border-box; }
+#sortApp .s-top{ background:#161D65; color:#fff; padding:10px 18px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+#sortApp .s-top h1{ font-size:20px; margin:0; font-weight:900; }
+#sortApp .s-tab{ background:rgba(255,255,255,.14); color:#fff; border:0; border-radius:999px; padding:6px 14px; font-weight:800; font-size:14px; cursor:pointer; }
+#sortApp .s-tab.on{ background:#F59E0B; color:#111; }
+#sortApp .s-top .sp{ flex:1; }
+#sortApp .s-top select{ border-radius:8px; border:0; padding:6px 8px; font-weight:800; font-size:14px; }
+#sortApp .s-link{ color:#c7d2fe; font-size:13px; cursor:pointer; text-decoration:underline; background:none; border:0; }
+#sortApp .s-body{ flex:1; overflow:auto; padding:14px 18px; }
+#sortApp .s-card{ background:#fff; border-radius:14px; padding:14px 16px; box-shadow:0 1px 4px rgba(0,0,0,.08); margin-bottom:14px; }
+#sortApp .s-row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+#sortApp input[type=text], #sortApp select.f{ border:1px solid #cbd5e1; border-radius:8px; padding:8px 10px; font-size:14px; background:#fff; }
+#sortApp .btn{ border:0; border-radius:10px; padding:9px 14px; font-weight:900; font-size:14px; cursor:pointer; }
+#sortApp .btn:disabled{ opacity:.45; cursor:default; }
+#sortApp .b-navy{ background:#161D65; color:#fff; } #sortApp .b-green{ background:#16A34A; color:#fff; }
+#sortApp .b-line{ background:#fff; color:#161D65; border:2px solid #161D65; } #sortApp .b-red{ background:#fff; color:#DC2626; border:2px solid #DC2626; }
+#sortApp table{ width:100%; border-collapse:collapse; font-size:14px; }
+#sortApp th{ background:#161D65; color:#fff; text-align:left; padding:7px 8px; position:sticky; top:0; }
+#sortApp td{ padding:7px 8px; border-bottom:1px solid #e5e7eb; }
+#sortApp tr.sel td{ background:#EFF6FF; } #sortApp tr.lock td{ color:#94a3b8; background:#F8FAFC; } #sortApp tr.ex td{ color:#B45309; background:#FFFBEB; }
+#sortApp tr.cand{ cursor:pointer; }
+#sortApp .slotn{ display:inline-block; min-width:24px; text-align:center; background:#2563EB; color:#fff; border-radius:6px; padding:0 6px; font-weight:900; }
+#sortApp .muted{ color:#64748b; font-size:13px; }
+#sortApp .s-scan{ width:100%; font-size:20px !important; padding:12px 14px !important; border:3px solid #F59E0B !important; border-radius:12px !important; }
+#sortApp .s-big{ border-radius:16px; padding:10px; text-align:center; color:#fff; background:#2563EB; min-height:150px; display:flex; flex-direction:column; justify-content:center; }
+#sortApp .s-big.err{ background:#DC2626; } #sortApp .s-big.done{ background:#16A34A; } #sortApp .s-big.idle{ background:#334155; }
+#sortApp .s-big .n{ font-size:96px; font-weight:900; line-height:1; } #sortApp .s-big .t{ font-size:20px; font-weight:900; } #sortApp .s-big .d{ font-size:14px; opacity:.92; margin-top:4px; }
+#sortApp .cells{ display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-top:12px; }
+#sortApp .cell{ border:2px solid #cbd5e1; border-radius:12px; padding:9px; background:#fff; min-height:96px; }
+#sortApp .cell .no{ font-size:30px; font-weight:900; color:#161D65; line-height:1; }
+#sortApp .cell .co{ font-weight:900; font-size:14px; margin-top:2px; } #sortApp .cell .k{ font-size:11.5px; color:#64748b; }
+#sortApp .cell .bar{ height:7px; background:#e5e7eb; border-radius:4px; margin-top:6px; overflow:hidden; } #sortApp .cell .bar i{ display:block; height:100%; background:#2563EB; }
+#sortApp .cell .q{ font-size:12.5px; font-weight:800; margin-top:4px; }
+#sortApp .cell.cur{ border-color:#2563EB; background:#EFF6FF; } #sortApp .cell.full{ border-color:#16A34A; background:#ECFDF5; } #sortApp .cell.full .bar i{ background:#16A34A; }
+#sortApp .cell.fail{ border-color:#DC2626; background:#FEF2F2; } #sortApp .cell.empty{ border-style:dashed; opacity:.45; }
+#sortApp .log div{ font-size:13px; padding:3px 0; border-bottom:1px dashed #e5e7eb; } #sortApp .log .bad{ color:#DC2626; font-weight:800; }
+#sortApp .stage{ display:inline-block; border-radius:999px; padding:3px 12px; font-weight:900; font-size:13px; background:#E0E7FF; color:#3730A3; }
+#sortApp .bcard{ border:2px solid #cbd5e1; border-radius:12px; padding:10px 12px; cursor:pointer; background:#fff; }
+#sortApp .bcard:hover{ border-color:#2563EB; }
+@media (max-width:900px){ #sortApp .cells{ grid-template-columns:repeat(3,1fr); } }
+</style>
+<div id="sortApp">
+  <div class="s-top">
+    <h1>📦 분배</h1>
+    <button class="s-tab on" data-view="pick" id="sortTabPick">① 전표 고르기</button>
+    <button class="s-tab" data-view="run" id="sortTabRun">② 묶음 진행</button>
+    <span class="sp"></span>
+    <span style="font-size:13px; font-weight:800;">피킹 작업자</span>
+    <select id="sortWorker"></select>
+    <button class="s-link" id="sortToInspect" title="검수 화면으로">검수 화면으로 ↗</button>
+  </div>
+  <div class="s-body">
+    <input type="text" id="sortScan" class="s-scan" placeholder="여기에 찍으세요 — 전표 QR(고르기) · 묶음 QR(피킹 시작/완료) · 상품 바코드(분배)" autocomplete="off">
+    <div style="height:12px"></div>
+
+    <!-- ① 전표 고르기 -->
+    <div id="sortViewPick">
+      <div class="s-card">
+        <div class="s-row" style="margin-bottom:10px;">
+          <select class="f" id="sortZone"><option value="">구역: 전체</option></select>
+          <input type="text" id="sortSearch" placeholder="업체·전표번호 검색" style="flex:1; min-width:160px;">
+          <button class="btn b-line" id="sortRecommend">💡 같은 구역끼리 추천</button>
+          <button class="btn b-line" id="sortRefresh">🔄 새로고침</button>
+        </div>
+        <div class="muted" id="sortPickInfo" style="margin-bottom:8px;">불러오는 중…</div>
+        <div style="max-height:56vh; overflow:auto;">
+          <table><thead><tr><th style="width:30px"></th><th style="width:44px">칸</th><th>전표번호</th><th>업체</th><th>구역</th><th>품목</th><th>수량</th><th>비고</th></tr></thead>
+          <tbody id="sortCandBody"></tbody></table>
+        </div>
+        <div class="s-row" style="margin-top:12px; justify-content:space-between;">
+          <span id="sortSelInfo" style="font-weight:900;">선택 0장 · 0개 / 최대 6칸</span>
+          <span class="s-row"><button class="btn b-line" id="sortClearSel">선택 해제</button>
+          <button class="btn b-green" id="sortCreate" disabled>칸 배정 + 피킹지 출력 ▶</button></span>
+        </div>
+      </div>
+      <div class="s-card" id="sortActiveBox" style="display:none;">
+        <div style="font-weight:900; margin-bottom:8px;">진행 중인 묶음 (누르면 이어서)</div>
+        <div class="s-row" id="sortActiveList"></div>
+      </div>
+    </div>
+
+    <!-- ② 묶음 진행 -->
+    <div id="sortViewRun" style="display:none;">
+      <div class="s-card">
+        <div class="s-row" style="justify-content:space-between;">
+          <div class="s-row"><b style="font-size:18px;" id="sortBatchTitle">묶음 없음</b> <span class="stage" id="sortStage">-</span> <span class="muted" id="sortBatchMeta"></span></div>
+          <div class="s-row"><button class="btn b-line" id="sortReprint">🖨 피킹지 다시 출력</button><button class="btn b-red" id="sortCancel">묶음 취소</button></div>
+        </div>
+        <div style="height:10px"></div>
+        <div class="s-big idle" id="sortBig"><div class="n" id="sortBigN">–</div><div class="t" id="sortBigT">묶음을 고르거나 묶음 QR을 찍어주세요</div><div class="d" id="sortBigD"></div></div>
+        <div class="cells" id="sortCells"></div>
+      </div>
+      <div class="s-card"><div style="font-weight:900; margin-bottom:6px;">기록</div><div class="log" id="sortLog"></div></div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  const SORT_MODE = /(^|[?&])mode=sort(&|$)/.test(location.search) || /sort\.html$/i.test(location.pathname);
+  if(!SORT_MODE) return;
+  const $ = id => document.getElementById(id);
+  const app = $('sortApp'), scan = $('sortScan');
+  app.style.display = 'flex';
+  document.title = '분배 · 다건 전표 일괄 피킹';
+
+  const MIN_QTY = 10, MAX_QTY = 100, BOX_QTY = 40, MAX_SLOTS = 6;
+  const EXCLUDE_NOTES = ['개인구매', '미출고전표', '샘플결제'];
+  let view = 'pick', candidates = [], selected = [], batches = [], active = null, st = null, locOrder = null;
+  let replayQueue = Promise.resolve(), saveTimer = null;
+
+  /* ---------- 소리 (검수 엔진 소리와 따로: 엔진이 기록하는 동안 꺼도 분배 안내는 들리게) ---------- */
+  let sCtx = null;
+  function sortBeep(kind){
+    try{
+      sCtx = sCtx || new (window.AudioContext || window.webkitAudioContext)();
+      const t0 = sCtx.currentTime, o = sCtx.createOscillator(), g = sCtx.createGain();
+      o.type = kind === 'err' ? 'sawtooth' : 'sine';
+      o.frequency.setValueAtTime(kind === 'err' ? 260 : 1200, t0);
+      if(kind === 'err') o.frequency.linearRampToValueAtTime(700, t0 + 0.25);
+      g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(kind === 'err' ? 0.8 : 0.3, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + (kind === 'err' ? 0.5 : 0.12));
+      o.connect(g); g.connect(sCtx.destination); o.start(t0); o.stop(t0 + 0.55);
+    }catch(e){}
+  }
+  function say(text){
+    try{
+      window.speechSynthesis.cancel(); // 빨리 찍으면 앞 안내는 끊고 마지막 번호만
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'ko-KR'; u.rate = 1.2; u.volume = 1;
+      try{ const v = pickKoreanFemaleVoice(); if(v) u.voice = v; }catch(e){}
+      window.speechSynthesis.speak(u);
+    }catch(e){}
+  }
+
+  /* ---------- 스캐너 입력은 항상 분배 입력칸으로 (검수 엔진 입력칸으로 새지 않게) ---------- */
+  const isTypingField = el => el && (el.id === 'sortSearch');
+  window.addEventListener('keydown', e => {
+    if(app.style.display === 'none') return;
+    const el = document.activeElement;
+    if(el === scan || isTypingField(el) || (el && el.tagName === 'SELECT')) return;
+    if(e.key.length === 1 || e.key === 'Enter'){ scan.focus(); }
+    e.stopImmediatePropagation();
+  }, true);
+  try{ scanInput.addEventListener('focus', () => { if(!sortReplaying) setTimeout(() => scan.focus(), 0); }); }catch(e){}
+  const _focusInput = focusInput;
+  focusInput = function(){ if(sortReplaying) return; const el = document.activeElement; if(isTypingField(el) || (el && el.tagName === 'SELECT')) return; scan.focus(); };
+  document.addEventListener('click', e => { if(app.contains(e.target) && !isTypingField(e.target) && e.target.tagName !== 'SELECT' && e.target.tagName !== 'INPUT') setTimeout(() => scan.focus(), 0); });
+  setTimeout(() => scan.focus(), 300);
+
+  /* ---------- 작업자 ---------- */
+  const wsel = $('sortWorker');
+  Object.keys(WORKER_CODE_MAP).forEach(k => { const o = document.createElement('option'); o.value = WORKER_CODE_MAP[k]; o.textContent = WORKER_CODE_MAP[k]; wsel.appendChild(o); });
+  try{ wsel.value = localStorage.getItem('sortWorker') || '이시안'; }catch(e){ wsel.value = '이시안'; }
+  if(!wsel.value) wsel.selectedIndex = 0;
+  wsel.addEventListener('change', () => { try{ localStorage.setItem('sortWorker', wsel.value); }catch(e){} scan.focus(); });
+
+  function setView(v){
+    view = v;
+    $('sortViewPick').style.display = v === 'pick' ? '' : 'none';
+    $('sortViewRun').style.display = v === 'run' ? '' : 'none';
+    $('sortTabPick').classList.toggle('on', v === 'pick'); $('sortTabRun').classList.toggle('on', v === 'run');
+    scan.focus();
+  }
+  $('sortTabPick').onclick = () => { setView('pick'); renderCandidates(); loadBatches(); };
+  $('sortTabRun').onclick = () => setView('run');
+  $('sortToInspect').onclick = () => { if(confirm('분배 화면을 닫고 검수 화면으로 갈까요?')) location.href = location.pathname; };
+
+  async function post(body, timeoutMs){
+    if(!gasWebhookUrl) throw new Error('구글시트 연동 주소가 없어요 (검수 화면 → 연결에서 먼저 연동)');
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), timeoutMs || 20000);
+    try{ const r = await fetch(gasWebhookUrl, { method:'POST', body: JSON.stringify(body), signal: ctl.signal }); return await r.json(); }
+    finally{ clearTimeout(t); }
+  }
+
+  /* ---------- ① 대상 전표 목록 (판매현황 저장본에서 바로 계산) ---------- */
+  function exclusiveProblem(company, items){
+    try{
+      const ck = normalizeCompanyKey(String(company || '').replace(/\s*\(도착보장\)\s*$/, ''));
+      return items.some(it => { const list = exclusiveEntriesFor(it.code); if(!list || !list.length) return false; const mine = list.find(e => e.key === ck); return !mine || it.qty > mine.qty; });
+    }catch(e){ return false; }
+  }
+  function buildCandidates(){
+    const groups = {};
+    const today = new Date();
+    const minYmd = (() => { const d = new Date(today); d.setDate(d.getDate() - 3); return d.toISOString().slice(0,10).replace(/-/g,''); })();
+    (salesCache || []).forEach(r => {
+      const canon = canonicalDocKeyJS(r.key); if(!canon) return;
+      const qty = parseFloat(String(r.qty).replace(/,/g, '')) || 0;
+      if(!r.code || qty <= 0) return;
+      const g = groups[canon] || (groups[canon] = { canon, key: r.key, company: r.company || '', items: {}, bad: false });
+      const note = String(r.note || '');
+      if(EXCLUDE_NOTES.some(k => note.indexOf(k) !== -1) || String(r.company || '').indexOf('개인구매') !== -1) g.bad = true;
+      const c = stripOrderCodeSuffix(String(r.code)).toUpperCase();
+      const it = g.items[c] || (g.items[c] = { code: c, name: r.name || '', spec: r.spec || '', qty: 0 });
+      it.qty += qty;
+    });
+    const out = [];
+    Object.values(groups).forEach(g => {
+      if(g.bad) return;
+      if(canonDate(g.canon) < minYmd) return;
+      if(processedDocMap[g.canon]) return;
+      const ps = pickingStateCache[g.canon];
+      const items = Object.values(g.items);
+      const total = items.reduce((a, b) => a + b.qty, 0);
+      if(total < MIN_QTY || total > MAX_QTY) return;
+      const lock = sortLockMap[g.canon];
+      if(ps && !lock) return; // 이미 일반 피킹 시작
+      const big = items.filter(i => i.qty >= BOX_QTY);
+      let ex = '';
+      if(big.length) ex = `${big[0].code} ${big[0].qty}개 → 박스 출고라 제외`;
+      else if(exclusiveProblem(g.company, items)) ex = '완전분배 확인 필요 → 검수 화면에서';
+      let zone = ''; try{ zone = guessZoneForCompany(g.company) || ''; }catch(e){}
+      out.push({ canon: g.canon, key: g.key, company: g.company, zone, items, total, sku: items.length, lock, ex });
+    });
+    out.sort((a, b) => (a.zone || 'ZZ').localeCompare(b.zone || 'ZZ') || a.canon.localeCompare(b.canon, undefined, { numeric:true }));
+    candidates = out;
+    selected = selected.filter(c => out.some(o => o.canon === c && !o.lock && !o.ex));
+  }
+  function canonDate(canon){ const m = canon.match(/(\d{4})\/(\d{2})\/(\d{2})/); return m ? m[1] + m[2] + m[3] : ''; }
+  function renderCandidates(){
+    buildCandidates();
+    const zsel = $('sortZone'), zv = zsel.value;
+    const zones = [...new Set(candidates.map(c => c.zone).filter(Boolean))].sort();
+    zsel.innerHTML = '<option value="">구역: 전체</option>' + zones.map(z => `<option value="${escapeHtml(z)}">${escapeHtml(z)}구역</option>`).join('');
+    zsel.value = zones.indexOf(zv) !== -1 ? zv : '';
+    const q = $('sortSearch').value.trim().toLowerCase();
+    const list = candidates.filter(c => (!zsel.value || c.zone === zsel.value) && (!q || (c.company + ' ' + c.key).toLowerCase().indexOf(q) !== -1));
+    const ok = candidates.filter(c => !c.lock && !c.ex).length;
+    $('sortPickInfo').textContent = salesCache ? `분배 대상 ${ok}장 (10~100개 · 한 품목 40개 이상 제외) · 판매현황 ${salesCacheFetchedAt ? new Date(salesCacheFetchedAt).toLocaleTimeString('ko-KR',{hour12:false}) : ''} 기준` : '판매현황을 받는 중…';
+    $('sortCandBody').innerHTML = list.map(c => {
+      const si = selected.indexOf(c.canon);
+      if(c.lock) return `<tr class="lock"><td>🔒</td><td></td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${escapeHtml(c.zone)}</td><td>${c.sku}</td><td>${c.total}</td><td>${escapeHtml(c.lock.worker)} · ${escapeHtml(c.lock.id)}</td></tr>`;
+      if(c.ex) return `<tr class="ex"><td>✋</td><td></td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${escapeHtml(c.zone)}</td><td>${c.sku}</td><td>${c.total}</td><td>${escapeHtml(c.ex)}</td></tr>`;
+      return `<tr class="cand ${si !== -1 ? 'sel' : ''}" data-canon="${escapeHtml(c.canon)}"><td><input type="checkbox" ${si !== -1 ? 'checked' : ''} tabindex="-1"></td><td>${si !== -1 ? `<span class="slotn">${si + 1}</span>` : ''}</td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${escapeHtml(c.zone)}</td><td>${c.sku}</td><td>${c.total}</td><td></td></tr>`;
+    }).join('') || '<tr><td colspan="8" class="muted" style="padding:16px">지금 분배할 수 있는 전표가 없어요</td></tr>';
+    $('sortCandBody').querySelectorAll('tr.cand').forEach(tr => tr.onclick = () => toggleSel(tr.getAttribute('data-canon')));
+    updateSelInfo();
+  }
+  function toggleSel(canon, fromScan){
+    const c = candidates.find(x => x.canon === canon);
+    if(!c){ if(fromScan){ sortBeep('err'); say('분배 대상이 아니에요'); } return; }
+    if(c.lock || c.ex){ sortBeep('err'); say(c.lock ? '다른 묶음 전표예요' : '분배 제외 전표예요'); return; }
+    const i = selected.indexOf(canon);
+    if(i !== -1){ selected.splice(i, 1); }
+    else{
+      if(selected.length >= MAX_SLOTS){ sortBeep('err'); say('6칸까지예요'); return; }
+      selected.push(canon); if(fromScan) say(`${selected.length}번 ${c.company}`);
+    }
+    renderCandidates();
+  }
+  function updateSelInfo(){
+    const sel = selected.map(k => candidates.find(c => c.canon === k)).filter(Boolean);
+    const sum = sel.reduce((a, c) => a + c.total, 0);
+    $('sortSelInfo').textContent = `선택 ${sel.length}장 · ${sum}개 / 최대 ${MAX_SLOTS}칸`;
+    $('sortCreate').disabled = !sel.length;
+  }
+  $('sortZone').onchange = renderCandidates;
+  $('sortSearch').oninput = renderCandidates;
+  $('sortClearSel').onclick = () => { selected = []; renderCandidates(); };
+  $('sortRecommend').onclick = () => {
+    const ok = candidates.filter(c => !c.lock && !c.ex && (!$('sortZone').value || c.zone === $('sortZone').value));
+    if(!ok.length){ say('추천할 전표가 없어요'); return; }
+    const byZone = {}; ok.forEach(c => (byZone[c.zone || '-'] = byZone[c.zone || '-'] || []).push(c));
+    const best = Object.values(byZone).sort((a, b) => b.length - a.length)[0];
+    // 같은 구역 안에서 품번이 많이 겹치는 순서로
+    const codes = {}; best.forEach(c => c.items.forEach(i => codes[i.code] = (codes[i.code] || 0) + 1));
+    best.sort((a, b) => b.items.reduce((s, i) => s + codes[i.code], 0) / b.items.length - a.items.reduce((s, i) => s + codes[i.code], 0) / a.items.length);
+    selected = best.slice(0, MAX_SLOTS).map(c => c.canon);
+    renderCandidates();
+  };
+  async function refreshAll(){
+    $('sortPickInfo').textContent = '새로 받는 중…';
+    await Promise.all([refreshSalesCache(), refreshProcessedDocs().catch(() => {}), refreshPickingStates().catch(() => {}), refreshSortLocks()]);
+    renderCandidates(); await loadBatches();
+  }
+  $('sortRefresh').onclick = refreshAll;
+
+  /* ---------- 진행 중인 묶음 ---------- */
+  async function loadBatches(){
+    try{
+      const d = await post({ type:'sortListBatches' });
+      if(!d.ok) return;
+      batches = d.batches || [];
+      const box = $('sortActiveBox'), list = $('sortActiveList');
+      box.style.display = batches.length ? '' : 'none';
+      list.innerHTML = batches.map(b => `<div class="bcard" data-id="${escapeHtml(b.id)}"><b>${escapeHtml(b.id)}</b> · ${escapeHtml(b.worker)} · ${escapeHtml(b.status)}<div class="muted">${b.slots.map(s => s.slot + '. ' + escapeHtml(s.company)).join(' · ')}</div></div>`).join('');
+      list.querySelectorAll('.bcard').forEach(el => el.onclick = () => openBatch(batches.find(b => b.id === el.getAttribute('data-id'))));
+    }catch(e){}
+  }
+
+  /* ---------- 묶음 만들기 + 피킹지 ---------- */
+  $('sortCreate').onclick = async () => {
+    const sel = selected.map(k => candidates.find(c => c.canon === k)).filter(Boolean);
+    if(!sel.length) return;
+    const btn = $('sortCreate'); btn.disabled = true; btn.textContent = '만드는 중…';
+    try{
+      const d = await post({ type:'sortCreateBatch', worker: wsel.value, slots: sel.map((c, i) => ({ slot: i + 1, key: c.key, company: c.company, zone: c.zone, qty: c.total, sku: c.sku, items: c.items })) });
+      if(!d.ok){ sortBeep('err'); alert(d.error || '묶음을 만들지 못했어요'); await refreshSortLocks(); renderCandidates(); return; }
+      selected = [];
+      await refreshSortLocks();
+      openBatch(d.batch);
+      printPickSheet(d.batch);
+    }catch(e){ alert('통신 오류: ' + e.message); }
+    finally{ btn.textContent = '칸 배정 + 피킹지 출력 ▶'; updateSelInfo(); }
+  };
+  async function ensureLocOrder(){
+    if(locOrder) return locOrder;
+    try{ const d = await post({ type:'getLocationOrder' }, 10000); locOrder = (d && d.ok && d.entries) ? d.entries : []; }catch(e){ locOrder = []; }
+    return locOrder;
+  }
+  function locOf(code){
+    const up = String(code).toUpperCase();
+    for(const e of (locOrder || [])) if(up.indexOf(e.prefix) === 0) return e;
+    return null;
+  }
+  async function printPickSheet(b){
+    await ensureLocOrder();
+    const agg = {};
+    b.slots.forEach(s => s.items.forEach(it => {
+      const a = agg[it.code] || (agg[it.code] = { code: it.code, name: it.name, spec: it.spec, total: 0, per: [] });
+      a.total += it.qty; a.per.push(s.slot + ':' + it.qty);
+    }));
+    const rows = Object.values(agg).map(a => { const l = locOf(a.code); let rp = 0; try{ const r = (repairStock.items || {})[a.code]; rp = r && r.l > 0 ? r.l : 0; }catch(e){} return Object.assign(a, { zone: l ? l.zone : '', seq: l ? l.seq : 9999, rp }); })
+      .sort((x, y) => x.seq - y.seq || x.code.localeCompare(y.code));
+    const total = rows.reduce((s, r) => s + r.total, 0);
+    let qr = ''; try{ qr = makeLocalQrDataUrl('SB|' + b.id); }catch(e){}
+    const created = new Date(b.created || Date.now()).toLocaleString('ko-KR', { hour12:false });
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>묶음 피킹지 ${b.id}</title><style>
+      @page{ size:A4; margin:12mm; } body{ font-family:'Malgun Gothic','Noto Sans KR',sans-serif; color:#111; margin:0; }
+      .h{ display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #111; padding-bottom:6px; }
+      .h .t{ font-size:24px; font-weight:900; } .h .m{ font-size:12.5px; margin-top:3px; } .qr{ width:30mm; height:30mm; }
+      .slots{ margin:8px 0 10px; font-size:13.5px; } .slots span{ display:inline-block; margin-right:14px; } .slots b{ display:inline-block; border:2px solid #111; border-radius:4px; padding:0 6px; margin-right:4px; }
+      table{ width:100%; border-collapse:collapse; font-size:13px; } th{ background:#e5e7eb; text-align:left; padding:6px; border-bottom:2px solid #111; }
+      td{ padding:7px 6px; border-bottom:1px solid #cbd5e1; } td.n{ font-size:16px; font-weight:900; text-align:center; } td.c{ text-align:center; font-size:16px; }
+      .f{ margin-top:10px; font-size:12px; color:#334155; }
+    </style></head><body>
+      <div class="h"><div><div class="t">묶음 피킹지 ${b.id}</div><div class="m">${created} · 피킹: ${escapeHtml(b.worker)} · ${b.slots.length}전표 · ${total}개 · 피킹 나갈 때 오른쪽 QR을 분배 화면에서 찍기</div></div>${qr ? `<img class="qr" src="${qr}">` : ''}</div>
+      <div class="slots">${b.slots.map(s => `<span><b>${s.slot}</b>${escapeHtml(s.company)} (${escapeHtml(s.key)}) · ${s.qty}개</span>`).join('')}</div>
+      <table><thead><tr><th style="width:12%">위치</th><th style="width:18%">품번</th><th>품목 / 규격</th><th style="width:9%">합계</th><th style="width:22%">칸별</th><th style="width:6%">✓</th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td>${escapeHtml(r.zone || '—')}</td><td>${escapeHtml(r.code)}</td><td>${escapeHtml(r.name)} ${escapeHtml(r.spec)}${r.seq === 9999 ? ' <span style="color:#94a3b8">(진열순서 없음)</span>' : ''}${r.rp ? ` <b style="color:#B45309">🧵 수선품 ${r.rp}개 먼저</b>` : ''}</td><td class="n">${r.total}</td><td>${r.per.join(' · ')}</td><td class="c">☐</td></tr>`).join('')}
+      </tbody></table>
+      <div class="f">진열순서 탭 순서대로 정렬 · 합계만 보고 한 바퀴 피킹 → 분배 자리에서 QR을 다시 찍으면 피킹 완료 → 상품을 하나씩 찍으면 칸 번호를 불러줘요</div>
+    </body></html>`;
+    const w = window.open('', '_blank', 'width=900,height=1000');
+    if(!w){ alert('팝업이 막혀서 피킹지를 못 열었어요. 주소창 오른쪽에서 팝업 허용 후 [피킹지 다시 출력]을 눌러주세요.'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+    const go = () => { try{ w.focus(); w.print(); }catch(e){} };
+    const img = w.document.querySelector('img');
+    if(img && !img.complete){ img.onload = go; setTimeout(go, 1500); } else setTimeout(go, 300);
+  }
+  $('sortReprint').onclick = () => { if(active) printPickSheet(active); };
+
+  /* ---------- ② 묶음 진행 ---------- */
+  function emptyState(b){
+    const need = {};
+    b.slots.forEach(s => { need[s.slot] = {}; s.items.forEach(it => { need[s.slot][it.code] = (need[s.slot][it.code] || 0) + Number(it.qty || 0); }); });
+    const p = b.progress || {};
+    return { need, counts: p.counts || {}, seq: p.seq || {}, ts: p.ts || {}, ms: p.ms || {}, recorded: p.recorded || {}, failed: p.failed || {}, lastScanAt: p.lastScanAt || 0, log: [] };
+  }
+  function openBatch(b){
+    if(!b) return;
+    active = b; st = emptyState(b);
+    try{ localStorage.setItem('sortActiveId', b.id); }catch(e){}
+    b.slots.forEach(s => { st.counts[s.slot] = st.counts[s.slot] || {}; st.seq[s.slot] = st.seq[s.slot] || []; st.ts[s.slot] = st.ts[s.slot] || []; st.ms[s.slot] = st.ms[s.slot] || 0; });
+    setView('run'); renderRun();
+    // 다 찼는데 아직 기록 안 된 칸이 있으면 다시 넘긴다 (화면을 껐다 켠 경우)
+    b.slots.forEach(s => { if(slotFull(s.slot) && !st.recorded[s.slot]) enqueueReplay(s.slot); });
+  }
+  const slotSum = (obj) => Object.values(obj || {}).reduce((a, b) => a + b, 0);
+  function slotFull(n){ const need = st.need[n] || {}; return Object.keys(need).every(c => (st.counts[n][c] || 0) >= need[c]); }
+  function stageText(){
+    if(!active) return '-';
+    if(active.status === '배정') return '피킹 전 — 나갈 때 묶음 QR';
+    if(active.status === '피킹중') return '피킹 중 — 돌아와서 묶음 QR';
+    if(active.status === '분배중') return '분배 중';
+    return active.status;
+  }
+  function renderRun(lastSlot){
+    if(!active){ $('sortBatchTitle').textContent = '묶음 없음'; $('sortCells').innerHTML = ''; return; }
+    $('sortBatchTitle').textContent = '묶음 ' + active.id;
+    $('sortStage').textContent = stageText();
+    const totNeed = active.slots.reduce((a, s) => a + slotSum(st.need[s.slot]), 0), totHave = active.slots.reduce((a, s) => a + slotSum(st.counts[s.slot]), 0);
+    $('sortBatchMeta').textContent = `${active.worker} · ${active.slots.length}전표 · ${totHave}/${totNeed}개` + (active.perSec ? ` · 피킹 전표당 ${Math.floor(active.perSec / 60)}분 ${active.perSec % 60}초` : '');
+    let html = '';
+    for(let n = 1; n <= MAX_SLOTS; n++){
+      const s = active.slots.find(x => x.slot === n);
+      if(!s){ html += `<div class="cell empty"><div class="no">${n}</div><div class="co">비어있음</div></div>`; continue; }
+      const need = slotSum(st.need[n]), have = slotSum(st.counts[n]);
+      const full = have >= need, rec = st.recorded[n], fail = st.failed[n];
+      const cls = fail ? 'fail' : full ? 'full' : (lastSlot === n ? 'cur' : '');
+      const q = rec ? '✅ 검수완료 · 라벨 대기열' : fail ? `⚠️ 기록 실패 <button class="btn b-red" style="padding:2px 8px;font-size:12px" data-retry="${n}">다시</button>` : full ? '⏳ 기록 중…' : `${have}/${need}`;
+      html += `<div class="cell ${cls}"><div class="no">${n}</div><div class="co">${escapeHtml(s.company)}</div><div class="k">${escapeHtml(s.key)}</div><div class="bar"><i style="width:${need ? Math.round(have / need * 100) : 0}%"></i></div><div class="q">${q}</div>${fail ? `<div class="k" style="color:#DC2626">${escapeHtml(fail)}</div>` : ''}</div>`;
+    }
+    $('sortCells').innerHTML = html;
+    $('sortCells').querySelectorAll('[data-retry]').forEach(b => b.onclick = () => { const n = Number(b.getAttribute('data-retry')); delete st.failed[n]; renderRun(); enqueueReplay(n); });
+    $('sortLog').innerHTML = st.log.slice(0, 40).map(l => `<div class="${l.bad ? 'bad' : ''}">${escapeHtml(l.t)} · ${escapeHtml(l.m)}</div>`).join('');
+  }
+  function big(kind, n, t, d){
+    const el = $('sortBig'); el.className = 's-big ' + kind;
+    $('sortBigN').textContent = n; $('sortBigT').textContent = t || ''; $('sortBigD').textContent = d || '';
+  }
+  function logLine(m, bad){ st && st.log.unshift({ t: new Date().toLocaleTimeString('ko-KR', { hour12:false }), m, bad }); }
+  function scheduleSave(now){
+    clearTimeout(saveTimer);
+    const run = () => { if(!active) return; post({ type:'sortSaveProgress', id: active.id, progress: { counts: st.counts, seq: st.seq, ts: st.ts, ms: st.ms, recorded: st.recorded, failed: st.failed, lastScanAt: st.lastScanAt } })
+      .then(d => { if(d && d.status === '완료' && active){ active.status = '완료'; try{ localStorage.removeItem('sortActiveId'); }catch(e){} renderRun(); refreshSortLocks(); say('묶음 전체 완료'); big('done', '✓', `묶음 ${active.id} 전체 완료`, '다음 묶음은 ① 전표 고르기에서'); } }).catch(() => {}); saveTimer = null; };
+    if(now) run(); else saveTimer = setTimeout(run, 2500);
+  }
+  $('sortCancel').onclick = async () => {
+    if(!active) return;
+    if(!confirm(`묶음 ${active.id}을(를) 취소할까요? 아직 끝나지 않은 전표는 다시 검수 화면이나 다른 묶음에서 처리할 수 있어요.`)) return;
+    try{ const d = await post({ type:'sortCancelBatch', id: active.id }); if(!d.ok){ alert(d.error); return; } }catch(e){ alert('통신 오류: ' + e.message); return; }
+    active = null; st = null; try{ localStorage.removeItem('sortActiveId'); }catch(e){} renderRun(); big('idle', '–', '묶음이 취소됐어요'); await refreshSortLocks(); setView('pick'); renderCandidates(); loadBatches();
+  };
+
+  async function onBatchQr(id){
+    let b = active && active.id === id ? active : null;
+    if(!b){
+      try{ const d = await post({ type:'sortListBatches', id }); b = (d.batches || []).find(x => x.id === id); }catch(e){}
+      if(!b){ sortBeep('err'); say('묶음을 찾을 수 없어요'); return; }
+      openBatch(b);
+      if(b.status === '분배중'){ say('분배 이어서'); big('idle', '–', '분배 이어서 — 상품을 찍어주세요'); return; }
+    }
+    if(b.status === '완료' || b.status === '취소'){ sortBeep('err'); say('끝난 묶음이에요'); return; }
+    if(b.status === '분배중'){ say('이미 피킹 완료'); return; }
+    big('idle', '…', b.status === '배정' ? '피킹 시작 기록 중' : '피킹 완료 기록 중');
+    try{
+      const d = await post({ type:'sortPickScan', id: b.id });
+      if(!d.ok){ sortBeep('err'); big('err', '✕', d.error || '기록 실패'); say('다시 찍어주세요'); return; }
+      Object.assign(active, d.batch); st.lastScanAt = Date.now();
+      if(d.stage === 'already'){ say('이미 피킹 완료'); renderRun(); return; }
+      if(d.stage === 'started'){ say('피킹 시작'); big('idle', '🏃', '피킹 시작 — 다 가져와서 묶음 QR을 다시 찍어주세요'); logLine('피킹 시작'); }
+      else{ say('피킹 완료. 분배 시작'); big('idle', '📦', '피킹 완료 — 이제 상품을 하나씩 찍어주세요', d.unmeasured ? '피킹시간 미측정(16시간 초과)' : `전체 ${Math.round(d.totalSec / 60)}분 · 전표당 ${Math.floor(d.perSec / 60)}분 ${d.perSec % 60}초`); logLine('피킹 완료 → 분배 시작'); }
+      renderRun(); scheduleSave(true);
+    }catch(e){ sortBeep('err'); big('err', '✕', '통신 오류 — 다시 찍어주세요'); say('다시 찍어주세요'); }
+  }
+
+  function onProductScan(raw){
+    if(!active){ sortBeep('err'); say('묶음을 먼저 열어주세요'); return; }
+    if(active.status === '배정' || active.status === '피킹중'){ sortBeep('err'); big('err', '✕', '묶음 QR을 먼저 찍어주세요', active.status === '배정' ? '피킹 시작 전이에요' : '피킹 완료(묶음 QR)를 먼저 찍어주세요'); say('묶음 큐알을 먼저 찍어주세요'); return; }
+    if(active.status !== '분배중'){ sortBeep('err'); say('끝난 묶음이에요'); return; }
+    let t = String(raw || '').trim(); try{ if(containsHangul(t)) t = hangulToEnglish(t); }catch(e){}
+    t = t.toUpperCase().replace(/\s+/g, '');
+    const codes = new Set(); active.slots.forEach(s => Object.keys(st.need[s.slot]).forEach(c => codes.add(c)));
+    let c = codes.has(t) ? t : '';
+    if(!c){ // 검수 화면과 같은 순서: 별칭표(SF 등) → NTA 끝자리 7/8/9 보정 → HP/FA 꼬리표
+      const tries = [];
+      try{ if(aliasIndex[t]) tries.push(aliasIndex[t]); }catch(e){}
+      try{ const sh = digitShiftLastChar(t); if(sh){ tries.push(sh); if(aliasIndex[sh]) tries.push(aliasIndex[sh]); } }catch(e){}
+      try{ tries.push(stripOrderCodeSuffix(t).toUpperCase()); }catch(e){}
+      c = tries.find(x => codes.has(x)) || '';
+    }
+    if(!c && t.length > 11 && codes.has(t.slice(0, 11)) && /^\d+$/.test(t.slice(11))){ sortBeep('err'); big('err', '✕', '낱개로 찍어주세요', `${t} — 박스·묶음 바코드는 안 돼요`); say('낱개로 찍어주세요'); logLine(`${t} ✕ 박스·묶음 바코드`, true); renderRun(); return; }
+    if(!c){ sortBeep('err'); big('err', '✕', '이 묶음에 없는 품번', t); say('없음'); logLine(`${t} ✕ 이 묶음에 없는 품번`, true); renderRun(); return; }
+    const slot = active.slots.map(s => s.slot).sort((a, b) => a - b).find(n => !st.recorded[n] && (st.counts[n][c] || 0) < (st.need[n][c] || 0));
+    if(!slot){ sortBeep('err'); big('err', '✕', '이미 다 찼어요', `${c} — 필요한 수량을 다 찍었어요`); say('다 찼어요'); logLine(`${c} ✕ 필요 수량 다 참`, true); renderRun(); return; }
+    const now = Date.now();
+    const dt = st.lastScanAt ? Math.min(60000, Math.max(0, now - st.lastScanAt)) : 3000;
+    st.lastScanAt = now;
+    st.counts[slot][c] = (st.counts[slot][c] || 0) + 1;
+    st.seq[slot].push(c);
+    st.ts[slot].push(now);
+    st.ms[slot] = (st.ms[slot] || 0) + dt;
+    const s = active.slots.find(x => x.slot === slot);
+    const it = s.items.find(i => i.code === c);
+    logLine(`${c} → ${slot}번 (${s.company})`);
+    if(slotFull(slot)){
+      say(`${slot}번 완료`);
+      big('done', slot, `${slot}번 완료 · ${s.company}`, '검수완료 기록 + 라벨 인쇄 대기열');
+      renderRun(slot);
+      enqueueReplay(slot);
+      scheduleSave(true);
+    } else {
+      say(`${slot}번`);
+      big('', slot, s.company, `${c} ${it ? (it.name + ' ' + it.spec) : ''} · 이 칸 ${st.counts[slot][c]}/${st.need[slot][c]}`);
+      renderRun(slot);
+      scheduleSave(false);
+    }
+  }
+
+  /* ---------- 칸 완료 → 검수 엔진으로 넘겨 평소 검수완료와 똑같이 기록 ---------- */
+  let saveWaiter = null;
+  const _acs = autoCaptureAndSave;
+  autoCaptureAndSave = async function(){
+    if(!sortReplaying || !saveWaiter) return _acs.apply(this, arguments);
+    // 검수기록 저장 요청이 실제로 성공했는지 본다 (원래 함수는 실패해도 조용히 넘어감)
+    const of = window.fetch; let ok = false, why = '';
+    window.fetch = function(url, opt){
+      const pr = of.apply(this, arguments);
+      try{ const bd = opt && typeof opt.body === 'string' ? JSON.parse(opt.body) : null;
+        if(bd && !bd.type && bd.documentKey) pr.then(r => { ok = r.ok; if(!r.ok) why = '서버 응답 ' + r.status; }).catch(e => { why = String((e && e.message) || e); }); }catch(e){}
+      return pr;
+    };
+    try{ await _acs.apply(this, arguments); }
+    finally{ window.fetch = of; if(saveWaiter){ const w = saveWaiter; saveWaiter = null; w(ok ? 'ok' : ('fail:' + (why || '응답 없음'))); } }
+  };
+  function enqueueReplay(n){ replayQueue = replayQueue.then(() => replaySlot(n)).catch(() => {}); }
+  async function replaySlot(n){
+    if(!active || st.recorded[n]) return;
+    const b = active, s = b.slots.find(x => x.slot === n);
+    const canon = canonicalDocKeyJS(s.key);
+    const m = canon.match(/(\d{4})\/(\d{2})\/(\d{2})-(\d+)/);
+    const savedSound = soundOn, npEl = document.getElementById('noPrinterToggle'), savedNp = npEl ? npEl.checked : false;
+    const _mp = maybePrintCompletedBagsImmediately;
+    sortReplaying = true; soundOn = false; if(npEl) npEl.checked = true; // 라벨은 항상 인쇄 대기열로
+    maybePrintCompletedBagsImmediately = function(){}; // 에이블리 포장명세 즉시 인쇄도 대기열 쪽에서 같이 나옴
+    try{
+      if(processedDocMap[canon]) throw new Error('이미 다른 곳에서 검수완료된 전표예요');
+      if(items.length){ loadItems([]); currentDocumentKey = ''; }
+      pickingStateCache[canon] = { state:'done', worker: b.worker };
+      try{ documentWorkerMap[normalizeDocKeyForWorkerMap(s.key)] = b.worker; }catch(e){}
+      await processDocumentLookup('SORT/' + m[1] + m[2] + m[3] + '/' + m[4]);
+      if(canonicalDocKeyJS(currentDocumentKey) !== canon || !items.length) throw new Error('전표를 불러오지 못했어요');
+      try{ if(exclusiveBlocking){ document.getElementById('exclusiveOverlay').style.display = 'none'; exclusiveBlocking = false; throw new Error('완전분배 확인이 필요한 전표예요 → 검수 화면에서 처리'); } }catch(e){ if(e.message.indexOf('완전분배') !== -1) throw e; }
+      // 판매현황이 바뀌었는지 확인 (찍은 수량과 주문 수량이 다르면 넘기지 않음)
+      const need = {}; items.forEach(it => need[it.code] = (need[it.code] || 0) + it.orderQty);
+      const have = st.counts[n] || {};
+      const diff = Object.keys(Object.assign({}, need, have)).filter(c => (need[c] || 0) !== (have[c] || 0));
+      if(diff.length) throw new Error('판매현황 수량이 바뀌었어요: ' + diff.slice(0, 3).join(', ') + ' → 검수 화면에서 확인');
+      currentWorker = b.worker; deferredInspectStart = null;
+      try{ document.getElementById('workerBlockOverlay').style.display = 'none'; }catch(e){}
+      inspectionStartTime = new Date(Date.now() - Math.max(1000, st.ms[n] || 0)); // 검수시간 = 이 칸에 넣느라 찍은 시간 합
+      const saved = new Promise(res => { saveWaiter = res; setTimeout(() => res('timeout'), 25000); });
+      (st.seq[n] || []).forEach(code => processScan(code));
+      // 스캔로그에는 실제로 찍은 시각을 넣는다 (한꺼번에 넘겨서 '연속 스캔'으로 잘못 잡히지 않게)
+      try{
+        const ts = st.ts[n] || []; let j = 0, prev = null; scanLogRapidCount = 0;
+        scanLogBuffer.forEach(e => { if(e.button || e.skip) return; if(j < ts.length) e.t = ts[j++];
+          e.rapid = !!prev && prev.code === e.code && (e.t - prev.t) < RAPID_SCAN_MS; if(e.rapid) scanLogRapidCount++; prev = e; });
+      }catch(e){}
+      if(!items.every(it => it.scannedQty >= it.orderQty)) throw new Error('검수 화면에서 수량이 다 차지 않았어요');
+      const r = await saved;
+      if(r === 'timeout') throw new Error('검수기록 저장 확인이 늦어요 — 검수기록 시트를 확인해주세요');
+      if(r !== 'ok'){ try{ if(processedDocMap[canon] && processedDocMap[canon].local) delete processedDocMap[canon]; }catch(e){} throw new Error('검수기록 저장 실패(' + r.slice(5) + ') — [다시]를 누르면 다시 저장 (라벨이 이미 나왔으면 하나는 버려주세요)'); }
+      st.recorded[n] = true; delete st.failed[n];
+      try{ processedDocMap[canon] = processedDocMap[canon] || { local:true }; }catch(e){}
+      logLine(`${n}번 ${s.company} → 검수완료 기록 · 라벨 인쇄 대기열`);
+    }catch(err){
+      st.failed[n] = err.message || String(err);
+      logLine(`${n}번 ${s.company} 기록 실패: ${st.failed[n]}`, true);
+      sortBeep('err'); say(`${n}번 기록 실패`);
+    }finally{
+      saveWaiter = null; soundOn = savedSound; if(npEl) npEl.checked = savedNp; maybePrintCompletedBagsImmediately = _mp; sortReplaying = false;
+      renderRun(); scheduleSave(true); setTimeout(() => scan.focus(), 50);
+    }
+  }
+
+  /* ---------- 스캔 입력 ---------- */
+  scan.addEventListener('keydown', e => {
+    if(e.key === 'Tab'){ e.preventDefault(); scan.value += '\t'; return; } // 바코드 중간 탭 문자 (검수 화면과 같은 처리)
+    if(e.key !== 'Enter') return;
+    e.preventDefault(); e.stopPropagation();
+    let raw = scan.value.trim(); scan.value = '';
+    if(raw.indexOf('\t') !== -1){
+      const parts = raw.split('\t').map(x => x.trim()).filter(Boolean);
+      const codes = new Set(); if(active && st) active.slots.forEach(s2 => Object.keys(st.need[s2.slot]).forEach(c => codes.add(c)));
+      raw = parts.find(x => x.indexOf('/') !== -1 || /^SB\|/i.test(x) || /^WK[^0-9]*\d+$/i.test(x) || codes.has(x.toUpperCase())) || parts.find(x => /^[A-Z]{2,4}\d/i.test(x)) || parts[0] || '';
+    }
+    if(!raw) return;
+    let t = raw; try{ if(containsHangul(t)) t = hangulToEnglish(t); }catch(e2){}
+    const wk = t.match(/^WK[^0-9]*(\d+)$/i);
+    if(wk){ const name = WORKER_CODE_MAP[wk[1]]; if(name){ wsel.value = name; try{ localStorage.setItem('sortWorker', name); }catch(e3){} say(name); } return; }
+    const sb = t.match(/^SB\|(.+)$/i);
+    if(sb){ onBatchQr(sb[1].trim().toUpperCase()); return; }
+    if(t.indexOf('/') !== -1){
+      if(view !== 'pick'){ sortBeep('err'); say('전표는 고르기 화면에서'); return; }
+      const k = docKeyFromScan(t); toggleSel(k, true); return;
+    }
+    if(view !== 'run') setView('run');
+    onProductScan(t);
+  });
+
+  /* ---------- 시작 ---------- */
+  (async function boot(){
+    for(let i = 0; i < 40 && !gasWebhookUrl; i++) await new Promise(r => setTimeout(r, 250));
+    if(!gasWebhookUrl){ $('sortPickInfo').textContent = '구글시트 연동 주소가 없어요 — [검수 화면으로]에서 먼저 연결해주세요'; return; }
+    await refreshAll();
+    ensureLocOrder();
+    // 새로고침(자동 업데이트 포함) 뒤에도 하던 묶음을 바로 이어서
+    try{ const id = localStorage.getItem('sortActiveId'); const b = id && batches.find(x => x.id === id); if(b) openBatch(b); else if(id) localStorage.removeItem('sortActiveId'); }catch(e){}
+  })();
+  setInterval(() => { if(view === 'pick' && document.activeElement !== $('sortSearch')) { refreshSortLocks().then(renderCandidates); } }, 60000);
+  window.__sortBusy = () => sortReplaying || !!saveTimer || (st && active && active.slots.some(s => slotFull(s.slot) && !st.recorded[s.slot] && !st.failed[s.slot]));
+  window.__sort = { get active(){ return active; }, get st(){ return st; }, renderCandidates, toggleSel, onProductScan, onBatchQr, replaySlot, printPickSheet, get candidates(){ return candidates; } };
+})();
+</script>
 <!-- 11/05: GitHub에 새 버전이 올라오면 쉬고 있을 때 자동으로 새로고침 -->
 <div id="appUpdateBar" style="display:none; position:fixed; left:50%; top:6px; transform:translateX(-50%); z-index:9999; background:#0EA5E9; color:#fff; border-radius:999px; padding:7px 14px; font-size:13px; font-weight:800; box-shadow:0 4px 14px rgba(0,0,0,.25); align-items:center; gap:10px;">
   <span id="appUpdateMsg">🔄 새 버전이 있어요 — 이 전표 끝나면 자동으로 바뀌어요</span>
@@ -6499,6 +7145,7 @@ const videoRec = (function(){
     try{
       if(Date.now() - lastActivity < QUIET_MS) return false;
       if(anyOverlayOpen()) return false;
+      if(typeof window.__sortBusy === 'function' && window.__sortBusy()) return false; // 11/15 분배: 칸 기록 중·진행 저장 대기 중
       if(typeof videoRec !== 'undefined' && videoRec.isRecording && videoRec.isRecording()) return false;
       if(typeof videoRec !== 'undefined' && videoRec.isUploading && videoRec.isUploading()) return false; // 영상 올리는 중
       const el = document.activeElement;
