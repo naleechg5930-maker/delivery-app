@@ -459,6 +459,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--sub); cursor:pointer; margin-left:8px;">
       <input type="checkbox" id="noPrinterToggle"> 이 컴퓨터엔 프린터 없음(대기열로 보내기)
     </label>
+    <button id="goSortBtn" style="margin-left:8px; background:#161D65; color:#fff; border-color:#161D65; font-weight:800;" title="10~100개 전표를 묶어서 한 번에 피킹 → 칸에 나눠 담기 (분배 = 검수)">🧺 분배</button>
     <button id="moreMenuBtn" style="margin-left:8px;">☰ 더보기</button>
     <button id="pasteOpenBtn">📋 화면에서 붙여넣기</button>
     <button id="resetBtn">↺ 검수 초기화</button>
@@ -5302,6 +5303,10 @@ function printReprintLabels(companyName, zoneValue, totalBags, spTag, documentKe
   setTimeout(()=>{ waitForImagesThenPrint(container, 3000); }, 100);
 }
 
+document.getElementById('goSortBtn').addEventListener('click', ()=>{ // 11/15 분배 화면으로
+  if(isInspectionInProgress() && !confirm('검수 중인 전표가 있어요. 분배 화면으로 넘어가면 지금 화면은 닫혀요. 넘어갈까요?')) return;
+  location.href = location.pathname + '?mode=sort';
+});
 document.getElementById('printQueueBtn').addEventListener('click', ()=>{
   document.getElementById('printQueueOverlay').classList.add('show');
   loadPrintQueue();
@@ -6533,6 +6538,8 @@ const videoRec = (function(){
 #sortApp .log div{ font-size:13px; padding:3px 0; border-bottom:1px dashed #e5e7eb; } #sortApp .log .bad{ color:#DC2626; font-weight:800; }
 #sortApp .stage{ display:inline-block; border-radius:999px; padding:3px 12px; font-weight:900; font-size:13px; background:#E0E7FF; color:#3730A3; }
 #sortApp .bcard{ border:2px solid #cbd5e1; border-radius:12px; padding:10px 12px; cursor:pointer; background:#fff; }
+#sortApp .cell[data-slot]{ cursor:pointer; } #sortApp .cell.pick{ outline:4px solid #F59E0B; }
+#sortApp #sortLeftBody td.n{ font-size:18px; font-weight:900; color:#DC2626; }
 #sortApp .bcard:hover{ border-color:#2563EB; }
 @media (max-width:900px){ #sortApp .cells{ grid-template-columns:repeat(3,1fr); } }
 </style>
@@ -6544,7 +6551,17 @@ const videoRec = (function(){
     <span class="sp"></span>
     <span style="font-size:13px; font-weight:800;">피킹 작업자</span>
     <select id="sortWorker"></select>
+    <button class="s-tab" id="sortSoundBtn">🔊 소리</button>
     <button class="s-link" id="sortToInspect" title="검수 화면으로">검수 화면으로 ↗</button>
+  </div>
+  <div id="sortSoundPanel" style="display:none; position:absolute; right:18px; top:58px; z-index:5; width:min(470px, calc(100vw - 32px)); background:#fff; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.25); padding:14px 16px;">
+    <div class="s-row" style="justify-content:space-between; margin-bottom:8px;"><b style="font-size:16px;">🔊 분배 소리</b><button class="btn b-line" id="sortSoundClose" style="padding:4px 10px;">닫기</button></div>
+    <label style="display:block; margin:4px 0; font-weight:800;"><input type="checkbox" id="sndTone"> 번호마다 다른 알림음 (하나=솔 · 둘=도 · 셋=미 …)</label>
+    <label style="display:block; margin:4px 0; font-weight:800;"><input type="checkbox" id="sndPitch"> 번호마다 목소리 높낮이 다르게 (하나 가장 높게 → 여섯 가장 낮게)</label>
+    <div class="s-row" style="margin:8px 0;"><b>크기</b><input type="range" id="sndBoost" min="1" max="5" step="0.5" style="flex:1;"><span id="sndBoostV" style="font-weight:900; width:42px;"></span></div>
+    <div class="muted" style="margin-bottom:8px;">알림음·녹음 소리만 커져요. 컴퓨터 목소리는 윈도우 볼륨이 최대라서, 더 크게 하려면 아래에서 직접 녹음하세요 (녹음한 번호는 녹음 소리로 나와요).</div>
+    <table><tbody id="sndRows"></tbody></table>
+    <div class="s-row" style="margin-top:10px;"><button class="btn b-navy" id="sndTest">▶ 하나~여섯 들어보기</button><span class="muted" id="sndMsg"></span></div>
   </div>
   <div class="s-body">
     <input type="text" id="sortScan" class="s-scan" placeholder="여기에 찍으세요 — 전표 QR(고르기) · 묶음 QR(피킹 시작/완료) · 상품 바코드(분배)" autocomplete="off">
@@ -6587,6 +6604,14 @@ const videoRec = (function(){
         <div class="s-big idle" id="sortBig"><div class="n" id="sortBigN">–</div><div class="t" id="sortBigT">묶음을 고르거나 묶음 QR을 찍어주세요</div><div class="d" id="sortBigD"></div></div>
         <div class="cells" id="sortCells"></div>
       </div>
+      <div class="s-card" id="sortLeftCard">
+        <div class="s-row" style="justify-content:space-between;">
+          <div class="s-row"><b style="font-size:16px;" id="sortLeftTitle">📋 아직 안 찍은 상품</b><span class="muted" id="sortLeftFilter"></span></div>
+          <button class="btn b-line" id="sortLeftPrint">🖨 남은 것만 출력</button>
+        </div>
+        <div class="muted" style="margin:4px 0 6px;">위 칸을 누르면 그 칸에 남은 것만 보여요 (다시 누르면 전체)</div>
+        <div style="max-height:42vh; overflow:auto;"><table><thead><tr><th style="width:11%">위치</th><th style="width:18%">품번</th><th>품목 / 규격</th><th style="width:8%">남음</th><th style="width:26%">칸별 남은 수량</th></tr></thead><tbody id="sortLeftBody"></tbody></table></div>
+      </div>
       <div class="s-card"><div style="font-weight:900; margin-bottom:6px;">기록</div><div class="log" id="sortLog"></div></div>
     </div>
   </div>
@@ -6605,29 +6630,144 @@ const videoRec = (function(){
   let view = 'pick', candidates = [], selected = [], batches = [], active = null, st = null, locOrder = null;
   let replayQueue = Promise.resolve(), saveTimer = null;
 
-  /* ---------- 소리 (검수 엔진 소리와 따로: 엔진이 기록하는 동안 꺼도 분배 안내는 들리게) ---------- */
-  let sCtx = null;
+  /* ---------- 소리 (검수 엔진 소리와 따로: 엔진이 기록하는 동안 꺼도 분배 안내는 들리게) ----------
+     11/15: 번호는 "하나·둘·셋·넷·다섯·여섯" (컴퓨터가 "1번"을 "한 번"으로 읽어서 헷갈림)
+            번호마다 다른 알림음(도·미·솔…) + 목소리 높낮이도 칸마다 다르게, 알림음·녹음은 증폭해서 크게
+            🔊 소리 설정에서 번호를 직접 녹음하면 컴퓨터 목소리 대신 녹음을 크게 틀어줌 */
+  const NUM_WORD = ['', '하나', '둘', '셋', '넷', '다섯', '여섯'];
+  const SLOT_PITCH = [1, 2.0, 1.6, 1.25, 0.95, 0.7, 0.45];
+  const SLOT_TONE = [0, 392, 523, 659, 784, 1047, 1319]; // 솔 도 미 솔 높은도 높은미
+  let scfg = { tone: true, pitch: true, boost: 3 };
+  try{ Object.assign(scfg, JSON.parse(localStorage.getItem('sortSoundCfg') || '{}')); }catch(e){}
+  const saveCfg = () => { try{ localStorage.setItem('sortSoundCfg', JSON.stringify(scfg)); }catch(e){} };
+  let sCtx = null, sOut = null, sGain = null;
+  function audioIn(){
+    sCtx = sCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if(!sOut){
+      const comp = sCtx.createDynamicsCompressor();
+      comp.threshold.value = -26; comp.knee.value = 4; comp.ratio.value = 14; comp.attack.value = 0.001; comp.release.value = 0.12;
+      sGain = sCtx.createGain(); comp.connect(sGain); sGain.connect(sCtx.destination); sOut = comp;
+    }
+    sGain.gain.value = Number(scfg.boost) || 3; // 압축한 뒤 키워서 작은 스피커에서도 크게
+    if(sCtx.state === 'suspended') sCtx.resume().catch(() => {});
+    return sOut;
+  }
+  function toneAt(freq, t0, dur, type, vol){
+    const o = sCtx.createOscillator(), g = sCtx.createGain();
+    o.type = type || 'square'; o.frequency.setValueAtTime(freq, t0);
+    g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(vol || 0.9, t0 + 0.01);
+    g.gain.setValueAtTime(vol || 0.9, t0 + dur - 0.03); g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(audioIn()); o.start(t0); o.stop(t0 + dur + 0.02);
+  }
   function sortBeep(kind){
     try{
-      sCtx = sCtx || new (window.AudioContext || window.webkitAudioContext)();
-      const t0 = sCtx.currentTime, o = sCtx.createOscillator(), g = sCtx.createGain();
-      o.type = kind === 'err' ? 'sawtooth' : 'sine';
-      o.frequency.setValueAtTime(kind === 'err' ? 260 : 1200, t0);
-      if(kind === 'err') o.frequency.linearRampToValueAtTime(700, t0 + 0.25);
-      g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(kind === 'err' ? 0.8 : 0.3, t0 + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.001, t0 + (kind === 'err' ? 0.5 : 0.12));
-      o.connect(g); g.connect(sCtx.destination); o.start(t0); o.stop(t0 + 0.55);
+      audioIn(); const t0 = sCtx.currentTime;
+      if(kind === 'err'){ const o = sCtx.createOscillator(), g = sCtx.createGain(); o.type = 'sawtooth'; o.frequency.setValueAtTime(260, t0); o.frequency.linearRampToValueAtTime(700, t0 + 0.25); o.frequency.linearRampToValueAtTime(260, t0 + 0.5);
+        g.gain.setValueAtTime(0.9, t0); g.gain.linearRampToValueAtTime(0.0001, t0 + 0.55); o.connect(g); g.connect(sOut); o.start(t0); o.stop(t0 + 0.6); }
+      else toneAt(1200, t0, 0.1, 'sine', 0.5);
     }catch(e){}
   }
-  function say(text){
+  function slotTone(n, done){
+    try{ audioIn(); const t0 = sCtx.currentTime, f = SLOT_TONE[n] || 880;
+      if(done){ toneAt(f, t0, 0.12); toneAt(f * 2, t0 + 0.13, 0.18); return 0.33; }
+      toneAt(f, t0, 0.15); return 0.17;
+    }catch(e){ return 0; }
+  }
+  function speak(text, pitch){
     try{
       window.speechSynthesis.cancel(); // 빨리 찍으면 앞 안내는 끊고 마지막 번호만
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'ko-KR'; u.rate = 1.2; u.volume = 1;
+      u.lang = 'ko-KR'; u.rate = 1.15; u.volume = 1; u.pitch = pitch || 1;
       try{ const v = pickKoreanFemaleVoice(); if(v) u.voice = v; }catch(e){}
       window.speechSynthesis.speak(u);
     }catch(e){}
   }
+  let annTimer = null, clipSrcs = [];
+  function stopAll(){ clearTimeout(annTimer); clipSrcs.forEach(x => { try{ x.stop(); }catch(e){} }); clipSrcs = []; try{ window.speechSynthesis.cancel(); }catch(e){} }
+  function say(text){ stopAll(); speak(text, 1); }
+  // 칸 번호 안내: 알림음 → (녹음이 있으면 녹음, 없으면 컴퓨터 목소리)
+  function announce(n, done){
+    stopAll();
+    const delay = scfg.tone ? slotTone(n, done) : 0;
+    const clip = clips['n' + n];
+    if(clip){
+      const list = [clip]; let tail = '';
+      if(done){ if(clips.done) list.push(clips.done); else tail = '완료'; }
+      const end = playClips(list, delay);
+      if(tail) annTimer = setTimeout(() => speak(tail, 1), end * 1000);
+      return;
+    }
+    const text = NUM_WORD[n] + (done ? ' 완료' : '');
+    const pitch = scfg.pitch ? SLOT_PITCH[n] : 1;
+    if(delay) annTimer = setTimeout(() => speak(text, pitch), delay * 1000); else speak(text, pitch);
+  }
+  /* 녹음 (이 컴퓨터 브라우저에 저장) */
+  const clips = {};
+  const CLIP_KEYS = ['n1','n2','n3','n4','n5','n6','done'];
+  const CLIP_LABEL = { n1:'하나', n2:'둘', n3:'셋', n4:'넷', n5:'다섯', n6:'여섯', done:'완료' };
+  function vdb(){ return new Promise((res, rej) => { const r = indexedDB.open('sortVoiceDB', 1); r.onupgradeneeded = () => r.result.createObjectStore('clips'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+  async function vget(k){ const d = await vdb(); return new Promise(res => { const q = d.transaction('clips').objectStore('clips').get(k); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); }); }
+  async function vput(k, v){ const d = await vdb(); return new Promise(res => { const tx = d.transaction('clips', 'readwrite'); if(v === null) tx.objectStore('clips').delete(k); else tx.objectStore('clips').put(v, k); tx.oncomplete = () => res(true); tx.onerror = () => res(false); }); }
+  async function decodeClip(blob){
+    audioIn();
+    const buf = await sCtx.decodeAudioData(await blob.arrayBuffer());
+    const d = buf.getChannelData(0); let peak = 0; for(let i = 0; i < d.length; i++){ const a = Math.abs(d[i]); if(a > peak) peak = a; }
+    const th = Math.max(0.02, peak * 0.12), pad = Math.floor(buf.sampleRate * 0.03);
+    let a = 0; while(a < d.length && Math.abs(d[a]) < th) a++;
+    let b = d.length - 1; while(b > a && Math.abs(d[b]) < th) b--;
+    a = Math.max(0, a - pad); b = Math.min(d.length - 1, b + pad * 3);
+    return { buf, off: a / buf.sampleRate, dur: Math.max(0.05, (b - a) / buf.sampleRate), norm: peak > 0.001 ? Math.min(8, 0.95 / peak) : 1 };
+  }
+  function playClips(list, delay){
+    audioIn(); let t = sCtx.currentTime + (delay || 0);
+    list.forEach(c => { const src = sCtx.createBufferSource(), g = sCtx.createGain(); src.buffer = c.buf; g.gain.value = c.norm; src.connect(g); g.connect(sOut); src.start(t, c.off, c.dur); clipSrcs.push(src); t += c.dur + 0.02; });
+    return t - sCtx.currentTime;
+  }
+  async function loadClips(){ for(const k of CLIP_KEYS){ try{ const b = await vget(k); if(b) clips[k] = await decodeClip(b); }catch(e){} } }
+  ['pointerdown','keydown'].forEach(ev => window.addEventListener(ev, () => { try{ audioIn(); }catch(e){} }, { once:true, capture:true })); // 브라우저는 첫 클릭·키 뒤에야 소리를 허락함
+  setTimeout(loadClips, 500);
+
+  /* ---------- 소리 설정 화면 ---------- */
+  (function soundPanel(){
+    const panel = $('sortSoundPanel');
+    $('sortSoundBtn').onclick = () => { panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; renderSnd(); };
+    $('sortSoundClose').onclick = () => { panel.style.display = 'none'; scan.focus(); };
+    $('sndTone').checked = !!scfg.tone; $('sndPitch').checked = !!scfg.pitch; $('sndBoost').value = scfg.boost;
+    const bv = () => $('sndBoostV').textContent = '×' + scfg.boost;
+    bv();
+    $('sndTone').onchange = e => { scfg.tone = e.target.checked; saveCfg(); };
+    $('sndPitch').onchange = e => { scfg.pitch = e.target.checked; saveCfg(); };
+    $('sndBoost').oninput = e => { scfg.boost = Number(e.target.value); saveCfg(); bv(); audioIn(); };
+    $('sndBoost').onchange = () => announce(1, false);
+    $('sndTest').onclick = () => { let i = 1; const go = () => { announce(i, i === 6); if(++i <= 6) setTimeout(go, 1300); }; go(); };
+    let recBusy = false;
+    async function record(k){
+      if(recBusy) return; recBusy = true;
+      const msg = $('sndMsg');
+      try{
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:false, noiseSuppression:true, autoGainControl:true } });
+        const mr = new MediaRecorder(stream); const parts = [];
+        mr.ondataavailable = e => { if(e.data && e.data.size) parts.push(e.data); };
+        const stopped = new Promise(r => mr.onstop = r);
+        mr.start(); msg.textContent = `🔴 지금 "${CLIP_LABEL[k]}" 하고 크게 말하세요`; msg.style.color = '#DC2626';
+        await new Promise(r => setTimeout(r, 1700)); mr.stop(); await stopped; stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(parts, { type: mr.mimeType || 'audio/webm' });
+        const c = await decodeClip(blob);
+        clips[k] = c; await vput(k, blob);
+        msg.style.color = ''; msg.textContent = `"${CLIP_LABEL[k]}" 녹음됐어요`;
+        stopAll(); playClips([c], 0.05);
+      }catch(e){ msg.style.color = '#DC2626'; msg.textContent = '녹음 실패: 마이크 허용을 확인해주세요 (' + (e.message || e) + ')'; }
+      finally{ recBusy = false; renderSnd(); }
+    }
+    function renderSnd(){
+      $('sndRows').innerHTML = CLIP_KEYS.map(k => `<tr><td style="font-weight:900; width:60px;">${CLIP_LABEL[k]}</td><td class="muted">${clips[k] ? '🎤 녹음 사용' : '컴퓨터 목소리'}</td>
+        <td style="text-align:right; white-space:nowrap;"><button class="btn b-line" style="padding:4px 9px;" data-rec="${k}">🎤 녹음</button>
+        <button class="btn b-line" style="padding:4px 9px;" data-play="${k}">▶</button>${clips[k] ? ` <button class="btn b-red" style="padding:4px 9px;" data-del="${k}">지우기</button>` : ''}</td></tr>`).join('');
+      $('sndRows').querySelectorAll('[data-rec]').forEach(b => b.onclick = () => record(b.getAttribute('data-rec')));
+      $('sndRows').querySelectorAll('[data-play]').forEach(b => b.onclick = () => { const k = b.getAttribute('data-play'); if(k === 'done'){ if(clips.done){ stopAll(); playClips([clips.done], 0); } else say('완료'); } else announce(Number(k.slice(1)), false); });
+      $('sndRows').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { const k = b.getAttribute('data-del'); delete clips[k]; await vput(k, null); renderSnd(); });
+    }
+  })();
 
   /* ---------- 스캐너 입력은 항상 분배 입력칸으로 (검수 엔진 입력칸으로 새지 않게) ---------- */
   const isTypingField = el => el && (el.id === 'sortSearch');
@@ -6741,7 +6881,7 @@ const videoRec = (function(){
     if(i !== -1){ selected.splice(i, 1); }
     else{
       if(selected.length >= MAX_SLOTS){ sortBeep('err'); say('6칸까지예요'); return; }
-      selected.push(canon); if(fromScan) say(`${selected.length}번 ${c.company}`);
+      selected.push(canon); if(fromScan) say(`${NUM_WORD[selected.length]} ${c.company}`);
     }
     renderCandidates();
   }
@@ -6810,7 +6950,8 @@ const videoRec = (function(){
     for(const e of (locOrder || [])) if(up.indexOf(e.prefix) === 0) return e;
     return null;
   }
-  async function printPickSheet(b){
+  async function printPickSheet(b, title){
+    title = title || '묶음 피킹지';
     await ensureLocOrder();
     const agg = {};
     b.slots.forEach(s => s.items.forEach(it => {
@@ -6822,7 +6963,7 @@ const videoRec = (function(){
     const total = rows.reduce((s, r) => s + r.total, 0);
     let qr = ''; try{ qr = makeLocalQrDataUrl('SB|' + b.id); }catch(e){}
     const created = new Date(b.created || Date.now()).toLocaleString('ko-KR', { hour12:false });
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>묶음 피킹지 ${b.id}</title><style>
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${title} ${b.id}</title><style>
       @page{ size:A4; margin:12mm; } body{ font-family:'Malgun Gothic','Noto Sans KR',sans-serif; color:#111; margin:0; }
       .h{ display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #111; padding-bottom:6px; }
       .h .t{ font-size:24px; font-weight:900; } .h .m{ font-size:12.5px; margin-top:3px; } .qr{ width:30mm; height:30mm; }
@@ -6831,12 +6972,12 @@ const videoRec = (function(){
       td{ padding:7px 6px; border-bottom:1px solid #cbd5e1; } td.n{ font-size:16px; font-weight:900; text-align:center; } td.c{ text-align:center; font-size:16px; }
       .f{ margin-top:10px; font-size:12px; color:#334155; }
     </style></head><body>
-      <div class="h"><div><div class="t">묶음 피킹지 ${b.id}</div><div class="m">${created} · 피킹: ${escapeHtml(b.worker)} · ${b.slots.length}전표 · ${total}개 · 피킹 나갈 때 오른쪽 QR을 분배 화면에서 찍기</div></div>${qr ? `<img class="qr" src="${qr}">` : ''}</div>
+      <div class="h"><div><div class="t">${title} ${b.id}</div><div class="m">${created} · 피킹: ${escapeHtml(b.worker)} · ${b.slots.length}전표 · ${total}개 · ${title === '묶음 피킹지' ? '피킹 나갈 때 오른쪽 QR을 분배 화면에서 찍기' : '빠진 것만 — 가져와서 그대로 찍으면 돼요 (묶음 QR은 다시 안 찍어도 돼요)'}</div></div>${qr ? `<img class="qr" src="${qr}">` : ''}</div>
       <div class="slots">${b.slots.map(s => `<span><b>${s.slot}</b>${escapeHtml(s.company)} (${escapeHtml(s.key)}) · ${s.qty}개</span>`).join('')}</div>
       <table><thead><tr><th style="width:12%">위치</th><th style="width:18%">품번</th><th>품목 / 규격</th><th style="width:9%">합계</th><th style="width:22%">칸별</th><th style="width:6%">✓</th></tr></thead><tbody>
       ${rows.map(r => `<tr><td>${escapeHtml(r.zone || '—')}</td><td>${escapeHtml(r.code)}</td><td>${escapeHtml(r.name)} ${escapeHtml(r.spec)}${r.seq === 9999 ? ' <span style="color:#94a3b8">(진열순서 없음)</span>' : ''}${r.rp ? ` <b style="color:#B45309">🧵 수선품 ${r.rp}개 먼저</b>` : ''}</td><td class="n">${r.total}</td><td>${r.per.join(' · ')}</td><td class="c">☐</td></tr>`).join('')}
       </tbody></table>
-      <div class="f">진열순서 탭 순서대로 정렬 · 합계만 보고 한 바퀴 피킹 → 분배 자리에서 QR을 다시 찍으면 피킹 완료 → 상품을 하나씩 찍으면 칸 번호를 불러줘요</div>
+      <div class="f">${title === '묶음 피킹지' ? '진열순서 탭 순서대로 정렬 · 합계만 보고 한 바퀴 피킹 → 분배 자리에서 QR을 다시 찍으면 피킹 완료 → 상품을 하나씩 찍으면 칸 번호를 불러줘요' : '진열순서 탭 순서대로 정렬 · 빠진 상품만 가져와서 분배 화면에서 하나씩 찍으면 돼요'}</div>
     </body></html>`;
     const w = window.open('', '_blank', 'width=900,height=1000');
     if(!w){ alert('팝업이 막혀서 피킹지를 못 열었어요. 주소창 오른쪽에서 팝업 허용 후 [피킹지 다시 출력]을 눌러주세요.'); return; }
@@ -6852,14 +6993,16 @@ const videoRec = (function(){
     const need = {};
     b.slots.forEach(s => { need[s.slot] = {}; s.items.forEach(it => { need[s.slot][it.code] = (need[s.slot][it.code] || 0) + Number(it.qty || 0); }); });
     const p = b.progress || {};
-    return { need, counts: p.counts || {}, seq: p.seq || {}, ts: p.ts || {}, ms: p.ms || {}, recorded: p.recorded || {}, failed: p.failed || {}, lastScanAt: p.lastScanAt || 0, log: [] };
+    return { need, counts: p.counts || {}, seq: p.seq || {}, ts: p.ts || {}, ms: p.ms || {}, recorded: p.recorded || {}, failed: p.failed || {}, labeled: p.labeled || {}, lastScanAt: p.lastScanAt || 0, log: [] };
   }
   function openBatch(b){
     if(!b) return;
     active = b; st = emptyState(b);
     try{ localStorage.setItem('sortActiveId', b.id); }catch(e){}
     b.slots.forEach(s => { st.counts[s.slot] = st.counts[s.slot] || {}; st.seq[s.slot] = st.seq[s.slot] || []; st.ts[s.slot] = st.ts[s.slot] || []; st.ms[s.slot] = st.ms[s.slot] || 0; });
+    leftFilter = 0;
     setView('run'); renderRun();
+    ensureLocOrder().then(() => { if(active === b) renderRun(); }); // 남은 상품 목록을 진열순서대로
     // 다 찼는데 아직 기록 안 된 칸이 있으면 다시 넘긴다 (화면을 껐다 켠 경우)
     b.slots.forEach(s => { if(slotFull(s.slot) && !st.recorded[s.slot]) enqueueReplay(s.slot); });
   }
@@ -6885,13 +7028,48 @@ const videoRec = (function(){
       const need = slotSum(st.need[n]), have = slotSum(st.counts[n]);
       const full = have >= need, rec = st.recorded[n], fail = st.failed[n];
       const cls = fail ? 'fail' : full ? 'full' : (lastSlot === n ? 'cur' : '');
-      const q = rec ? '✅ 검수완료 · 라벨 대기열' : fail ? `⚠️ 기록 실패 <button class="btn b-red" style="padding:2px 8px;font-size:12px" data-retry="${n}">다시</button>` : full ? '⏳ 기록 중…' : `${have}/${need}`;
-      html += `<div class="cell ${cls}"><div class="no">${n}</div><div class="co">${escapeHtml(s.company)}</div><div class="k">${escapeHtml(s.key)}</div><div class="bar"><i style="width:${need ? Math.round(have / need * 100) : 0}%"></i></div><div class="q">${q}</div>${fail ? `<div class="k" style="color:#DC2626">${escapeHtml(fail)}</div>` : ''}</div>`;
+      const o = sv[n] && sv[n].bid === active.id ? sv[n] : null;
+      const q = rec ? '✅ 검수완료 · 라벨 대기열' : fail ? `⚠️ 기록 실패 <button class="btn b-red" style="padding:2px 8px;font-size:12px" data-retry="${n}">다시</button>` : full ? ('⏳ ' + ((o && o.note) || '검수기록 저장 중…')) : `${have}/${need}`;
+      html += `<div class="cell ${cls}${leftFilter === n ? ' pick' : ''}" data-slot="${n}"><div class="no">${n}</div><div class="co">${escapeHtml(s.company)}</div><div class="k">${escapeHtml(s.key)}</div><div class="bar"><i style="width:${need ? Math.round(have / need * 100) : 0}%"></i></div><div class="q">${q}</div>${fail ? `<div class="k" style="color:#DC2626">${escapeHtml(fail)}</div>` : ''}</div>`;
     }
     $('sortCells').innerHTML = html;
-    $('sortCells').querySelectorAll('[data-retry]').forEach(b => b.onclick = () => { const n = Number(b.getAttribute('data-retry')); delete st.failed[n]; renderRun(); enqueueReplay(n); });
+    $('sortCells').querySelectorAll('.cell[data-slot]').forEach(el => el.addEventListener('click', ev => { if(ev.target.closest('[data-retry]')) return; const n = Number(el.getAttribute('data-slot')); leftFilter = leftFilter === n ? 0 : n; renderRun(); }));
+    renderLeft();
+    $('sortCells').querySelectorAll('[data-retry]').forEach(b => b.onclick = () => retrySlot(Number(b.getAttribute('data-retry'))));
     $('sortLog').innerHTML = st.log.slice(0, 40).map(l => `<div class="${l.bad ? 'bad' : ''}">${escapeHtml(l.t)} · ${escapeHtml(l.m)}</div>`).join('');
   }
+  /* 11/15: 아직 안 찍은 상품 (빠뜨린 상품 찾기) — 진열순서대로 */
+  let leftFilter = 0;
+  function remainingRows(onlySlot){
+    const agg = {};
+    active.slots.forEach(s => {
+      if(onlySlot && s.slot !== onlySlot) return;
+      if(st.recorded[s.slot]) return;
+      s.items.forEach(it => {
+        const left = (st.need[s.slot][it.code] || 0) - (st.counts[s.slot][it.code] || 0);
+        if(left <= 0) return;
+        const a = agg[it.code] || (agg[it.code] = { code: it.code, name: it.name, spec: it.spec, left: 0, per: [] });
+        if(!a.per.some(p => p.slot === s.slot)){ a.left += left; a.per.push({ slot: s.slot, left }); }
+      });
+    });
+    return Object.values(agg).map(a => { const l = locOf(a.code); return Object.assign(a, { zone: l ? l.zone : '', seq: l ? l.seq : 9999 }); })
+      .sort((x, y) => x.seq - y.seq || x.code.localeCompare(y.code));
+  }
+  function renderLeft(){
+    if(!active || !st) return;
+    const rows = remainingRows(leftFilter);
+    const tot = rows.reduce((a, r) => a + r.left, 0);
+    $('sortLeftTitle').textContent = tot ? `📋 아직 안 찍은 상품 ${tot}개 (${rows.length}품목)` : '📋 아직 안 찍은 상품 없음';
+    $('sortLeftFilter').textContent = leftFilter ? ` · ${leftFilter}번 칸만` : '';
+    $('sortLeftPrint').disabled = !tot;
+    $('sortLeftBody').innerHTML = rows.length ? rows.map(r => `<tr><td>${escapeHtml(r.zone || '—')}</td><td>${escapeHtml(r.code)}</td><td>${escapeHtml(r.name)} ${escapeHtml(r.spec)}</td><td class="n">${r.left}</td><td>${r.per.map(p => `<span class="slotn">${p.slot}</span> ${p.left}개`).join(' &nbsp;')}</td></tr>`).join('')
+      : `<tr><td colspan="5" class="muted" style="padding:14px">${leftFilter ? leftFilter + '번 칸은 다 찍었어요' : '다 찍었어요 👍'}</td></tr>`;
+  }
+  $('sortLeftPrint').onclick = () => {
+    if(!active) return;
+    const slots = active.slots.map(s => { const items = remainingRows(s.slot).map(r => ({ code: r.code, name: r.name, spec: r.spec, qty: r.left })); return Object.assign({}, s, { items, qty: items.reduce((a, i) => a + i.qty, 0) }); }).filter(s => s.items.length);
+    if(slots.length) printPickSheet(Object.assign({}, active, { slots }), '남은 상품 피킹지');
+  };
   function big(kind, n, t, d){
     const el = $('sortBig'); el.className = 's-big ' + kind;
     $('sortBigN').textContent = n; $('sortBigT').textContent = t || ''; $('sortBigD').textContent = d || '';
@@ -6899,7 +7077,7 @@ const videoRec = (function(){
   function logLine(m, bad){ st && st.log.unshift({ t: new Date().toLocaleTimeString('ko-KR', { hour12:false }), m, bad }); }
   function scheduleSave(now){
     clearTimeout(saveTimer);
-    const run = () => { if(!active) return; post({ type:'sortSaveProgress', id: active.id, progress: { counts: st.counts, seq: st.seq, ts: st.ts, ms: st.ms, recorded: st.recorded, failed: st.failed, lastScanAt: st.lastScanAt } })
+    const run = () => { if(!active) return; post({ type:'sortSaveProgress', id: active.id, progress: { counts: st.counts, seq: st.seq, ts: st.ts, ms: st.ms, recorded: st.recorded, failed: st.failed, labeled: st.labeled, lastScanAt: st.lastScanAt } })
       .then(d => { if(d && d.status === '완료' && active){ active.status = '완료'; try{ localStorage.removeItem('sortActiveId'); }catch(e){} renderRun(); refreshSortLocks(); say('묶음 전체 완료'); big('done', '✓', `묶음 ${active.id} 전체 완료`, '다음 묶음은 ① 전표 고르기에서'); } }).catch(() => {}); saveTimer = null; };
     if(now) run(); else saveTimer = setTimeout(run, 2500);
   }
@@ -6962,47 +7140,127 @@ const videoRec = (function(){
     const it = s.items.find(i => i.code === c);
     logLine(`${c} → ${slot}번 (${s.company})`);
     if(slotFull(slot)){
-      say(`${slot}번 완료`);
+      announce(slot, true);
       big('done', slot, `${slot}번 완료 · ${s.company}`, '검수완료 기록 + 라벨 인쇄 대기열');
       renderRun(slot);
       enqueueReplay(slot);
       scheduleSave(true);
     } else {
-      say(`${slot}번`);
+      announce(slot, false);
       big('', slot, s.company, `${c} ${it ? (it.name + ' ' + it.spec) : ''} · 이 칸 ${st.counts[slot][c]}/${st.need[slot][c]}`);
       renderRun(slot);
       scheduleSave(false);
     }
   }
 
-  /* ---------- 칸 완료 → 검수 엔진으로 넘겨 평소 검수완료와 똑같이 기록 ---------- */
-  let saveWaiter = null;
-  const _acs = autoCaptureAndSave;
-  autoCaptureAndSave = async function(){
-    if(!sortReplaying || !saveWaiter) return _acs.apply(this, arguments);
-    // 검수기록 저장 요청이 실제로 성공했는지 본다 (원래 함수는 실패해도 조용히 넘어감)
-    const of = window.fetch; let ok = false, why = '';
-    window.fetch = function(url, opt){
-      const pr = of.apply(this, arguments);
-      try{ const bd = opt && typeof opt.body === 'string' ? JSON.parse(opt.body) : null;
-        if(bd && !bd.type && bd.documentKey) pr.then(r => { ok = r.ok; if(!r.ok) why = '서버 응답 ' + r.status; }).catch(e => { why = String((e && e.message) || e); }); }catch(e){}
-      return pr;
-    };
-    try{ await _acs.apply(this, arguments); }
-    finally{ window.fetch = of; if(saveWaiter){ const w = saveWaiter; saveWaiter = null; w(ok ? 'ok' : ('fail:' + (why || '응답 없음'))); } }
+  /* ---------- 칸 완료 → 검수 엔진으로 넘겨 평소 검수완료와 똑같이 기록 ----------
+     11/15: 검수기록 저장이 늦어도 바로 "실패"로 띄우지 않는다.
+       ① 서버 응답을 끝까지 기다림 (90초 넘으면 "서버가 느려요"만 표시)
+       ② 실패·무응답이면 서버 검수기록에 실제로 들어갔는지 직접 확인 → 들어갔으면 ✅ (두 번 저장 방지)
+       ③ 안 들어갔으면 처음 보낸 내용 그대로 자동으로 다시 보냄 (최대 3번, 라벨은 다시 안 뽑음)
+       ④ 그래도 안 되면 그때만 "기록 실패" + [다시] (다시도 서버 확인 먼저) */
+  const SAVE_SLOW_MS = 90000, SAVE_DEAD_MS = 6.5 * 60 * 1000, SAVE_MAX_TRIES = 3;
+  const sv = {};          // 칸 → { bid, body, inflight, tok, tries, note }
+  let sendWaiter = null;  // 엔진이 검수기록 저장 요청을 보내는 순간을 기다림
+  const _fetch = window.fetch;
+  window.fetch = function(url, opt){
+    const pr = _fetch.apply(window, arguments);
+    try{
+      if(opt && typeof opt.body === 'string' && opt.body.indexOf('documentKey') !== -1){
+        const bd = JSON.parse(opt.body);
+        if(bd && !bd.type && bd.documentKey) onRecordSend(canonicalDocKeyJS(bd.documentKey), opt.body, pr);
+      }
+    }catch(e){}
+    return pr;
   };
+  function slotOfCanon(canon){ if(!active) return null; return active.slots.find(x => canonicalDocKeyJS(x.key) === canon) || null; }
+  function onRecordSend(canon, body, pr){
+    const s = slotOfCanon(canon); if(!s || !st) return;
+    const n = s.slot, bid = active.id;
+    const o = (sv[n] && sv[n].bid === bid) ? sv[n] : (sv[n] = { bid, tries: 0, tok: 0 });
+    const tok = ++o.tok;
+    o.body = body; o.inflight = true; o.tries++; o.note = o.tries > 1 ? `다시 보냄 (${o.tries}번째) — 응답 기다리는 중` : '검수기록 저장 중…';
+    if(sendWaiter && sendWaiter.canon === canon){ const w = sendWaiter; sendWaiter = null; w.res(true); }
+    const slowT = setTimeout(() => { if(o.tok === tok && o.inflight){ o.note = '서버가 느려요 — 저장 응답 기다리는 중 (계속 찍어도 돼요)'; renderRun(); } }, SAVE_SLOW_MS);
+    const deadT = setTimeout(() => { if(o.tok === tok && o.inflight){ o.inflight = false; checkSlot(n, '응답 없음'); } }, SAVE_DEAD_MS);
+    pr.then(r => r.clone().json().catch(() => ({ ok: r.ok })).then(j => { if(!r.ok || (j && j.ok === false)) throw new Error((j && j.error) || ('서버 응답 ' + r.status)); }))
+      .then(() => { clearTimeout(slowT); clearTimeout(deadT); if(o.tok === tok) o.inflight = false; markRecorded(n, bid); })
+      .catch(e => { clearTimeout(slowT); clearTimeout(deadT); if(o.tok !== tok) return; o.inflight = false; checkSlot(n, String((e && e.message) || e).slice(0, 60)); });
+    renderRun();
+  }
+  function markRecorded(n, bid, note){
+    if(!active || active.id !== bid || !st || st.recorded[n]) return;
+    const s = active.slots.find(x => x.slot === n);
+    st.recorded[n] = true; delete st.failed[n];
+    try{ processedDocMap[canonicalDocKeyJS(s.key)] = processedDocMap[canonicalDocKeyJS(s.key)] || { local:true }; }catch(e){}
+    logLine(`${n}번 ${s.company} → 검수기록 저장 완료${note ? ' (' + note + ')' : ''}`);
+    renderRun(); scheduleSave(true);
+  }
+  function failSlot(n, msg){
+    if(!st || st.recorded[n]) return;
+    const s = active.slots.find(x => x.slot === n);
+    st.failed[n] = msg; logLine(`${n}번 ${s.company} 기록 실패: ${msg}`, true);
+    sortBeep('err'); say(`${NUM_WORD[n]} 기록 실패`); renderRun(); scheduleSave(true);
+  }
+  // 서버 검수기록(오늘·어제)에 이 칸 전표가 있나? true / false / null(확인 자체가 안 됨)
+  async function serverHas(n){
+    const s = active && active.slots.find(x => x.slot === n); if(!s) return null;
+    const canon = canonicalDocKeyJS(s.key);
+    for(let i = 0; i < 3; i++){
+      try{
+        const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 30000);
+        const r = await _fetch(gasWebhookUrl + '?action=getProcessedDocKeys&_=' + Date.now(), { signal: ctl.signal }); clearTimeout(t);
+        const d = await r.json(); if(d && d.ok) return !!(d.map && d.map[canon]);
+      }catch(e){}
+      await new Promise(r => setTimeout(r, 5000));
+    }
+    return null;
+  }
+  async function checkSlot(n, why){
+    const o = sv[n]; if(!o || !active || o.bid !== active.id || !st || st.recorded[n] || o.checking) return;
+    o.checking = true; o.note = `저장 확인 중 (${why})`; renderRun();
+    try{
+      const has = await serverHas(n);
+      if(has === true){ markRecorded(n, o.bid, '서버에서 확인'); return; }
+      if(o.inflight) return; // 그새 다른 시도가 진행 중
+      if(has === null){ o.note = '서버 확인이 안 돼요 — 30초 뒤 다시 확인'; renderRun(); setTimeout(() => checkSlot(n, '재확인'), 30000); return; }
+      if(o.tries >= SAVE_MAX_TRIES || !o.body){ failSlot(n, `검수기록 저장 실패 (${why}) — [다시]를 누르면 서버 확인 후 다시 보내요`); return; }
+      o.note = `검수기록에 없어서 다시 보내는 중 (${o.tries + 1}번째)`; renderRun();
+      await new Promise(r => setTimeout(r, 5000 * o.tries));
+      if(st.recorded[n]) return;
+      if(await serverHas(n) === true){ markRecorded(n, o.bid, '서버에서 확인'); return; }
+      window.fetch(gasWebhookUrl, { method:'POST', body: o.body }); // 처음 보낸 내용 그대로 (onRecordSend가 다시 지켜봄)
+    }finally{ o.checking = false; }
+  }
+  function retrySlot(n){
+    if(!st) return;
+    delete st.failed[n];
+    const o = sv[n];
+    if(o && active && o.bid === active.id && o.body){ o.tries = 0; renderRun(); checkSlot(n, '다시'); return; }
+    renderRun(); enqueueReplay(n);
+  }
+
   function enqueueReplay(n){ replayQueue = replayQueue.then(() => replaySlot(n)).catch(() => {}); }
   async function replaySlot(n){
     if(!active || st.recorded[n]) return;
     const b = active, s = b.slots.find(x => x.slot === n);
     const canon = canonicalDocKeyJS(s.key);
     const m = canon.match(/(\d{4})\/(\d{2})\/(\d{2})-(\d+)/);
+    // 전에 한 번 넘긴 적 있는 칸(새로고침·다시)이면 서버에 이미 들어갔는지부터 본다
+    if(st.labeled[n] || (processedDocMap[canon] && !processedDocMap[canon].local)){
+      sv[n] = { bid: b.id, tries: 0, tok: 0, note: '검수기록에 들어갔는지 확인 중' }; renderRun();
+      const has = await serverHas(n);
+      if(has === true){ markRecorded(n, b.id, '서버에서 확인'); return; }
+      if(has === null){ failSlot(n, '서버 확인이 안 돼요 — 인터넷 확인 후 [다시]'); return; }
+    }
     const savedSound = soundOn, npEl = document.getElementById('noPrinterToggle'), savedNp = npEl ? npEl.checked : false;
-    const _mp = maybePrintCompletedBagsImmediately;
+    const _mp = maybePrintCompletedBagsImmediately, _pcl = printCompletionLabel;
+    const skipLabel = !!st.labeled[n];
     sortReplaying = true; soundOn = false; if(npEl) npEl.checked = true; // 라벨은 항상 인쇄 대기열로
     maybePrintCompletedBagsImmediately = function(){}; // 에이블리 포장명세 즉시 인쇄도 대기열 쪽에서 같이 나옴
+    printCompletionLabel = function(){ if(skipLabel) return; st.labeled[n] = true; return _pcl.apply(this, arguments); }; // 다시 넘길 땐 라벨은 또 안 뽑음
     try{
-      if(processedDocMap[canon]) throw new Error('이미 다른 곳에서 검수완료된 전표예요');
+      try{ if(processedDocMap[canon] && processedDocMap[canon].local) delete processedDocMap[canon]; }catch(e){}
       if(items.length){ loadItems([]); currentDocumentKey = ''; }
       pickingStateCache[canon] = { state:'done', worker: b.worker };
       try{ documentWorkerMap[normalizeDocKeyForWorkerMap(s.key)] = b.worker; }catch(e){}
@@ -7017,7 +7275,7 @@ const videoRec = (function(){
       currentWorker = b.worker; deferredInspectStart = null;
       try{ document.getElementById('workerBlockOverlay').style.display = 'none'; }catch(e){}
       inspectionStartTime = new Date(Date.now() - Math.max(1000, st.ms[n] || 0)); // 검수시간 = 이 칸에 넣느라 찍은 시간 합
-      const saved = new Promise(res => { saveWaiter = res; setTimeout(() => res('timeout'), 25000); });
+      const sent = new Promise(res => { sendWaiter = { canon, res }; setTimeout(() => res(false), 15000); });
       (st.seq[n] || []).forEach(code => processScan(code));
       // 스캔로그에는 실제로 찍은 시각을 넣는다 (한꺼번에 넘겨서 '연속 스캔'으로 잘못 잡히지 않게)
       try{
@@ -7026,18 +7284,13 @@ const videoRec = (function(){
           e.rapid = !!prev && prev.code === e.code && (e.t - prev.t) < RAPID_SCAN_MS; if(e.rapid) scanLogRapidCount++; prev = e; });
       }catch(e){}
       if(!items.every(it => it.scannedQty >= it.orderQty)) throw new Error('검수 화면에서 수량이 다 차지 않았어요');
-      const r = await saved;
-      if(r === 'timeout') throw new Error('검수기록 저장 확인이 늦어요 — 검수기록 시트를 확인해주세요');
-      if(r !== 'ok'){ try{ if(processedDocMap[canon] && processedDocMap[canon].local) delete processedDocMap[canon]; }catch(e){} throw new Error('검수기록 저장 실패(' + r.slice(5) + ') — [다시]를 누르면 다시 저장 (라벨이 이미 나왔으면 하나는 버려주세요)'); }
-      st.recorded[n] = true; delete st.failed[n];
-      try{ processedDocMap[canon] = processedDocMap[canon] || { local:true }; }catch(e){}
-      logLine(`${n}번 ${s.company} → 검수완료 기록 · 라벨 인쇄 대기열`);
+      if(!(await sent)) throw new Error('검수기록 저장 요청이 안 나갔어요 — [다시]');
+      logLine(`${n}번 ${s.company} → 검수기록 보냄${skipLabel ? '' : ' · 라벨 인쇄 대기열'}`);
     }catch(err){
-      st.failed[n] = err.message || String(err);
-      logLine(`${n}번 ${s.company} 기록 실패: ${st.failed[n]}`, true);
-      sortBeep('err'); say(`${n}번 기록 실패`);
+      failSlot(n, err.message || String(err));
     }finally{
-      saveWaiter = null; soundOn = savedSound; if(npEl) npEl.checked = savedNp; maybePrintCompletedBagsImmediately = _mp; sortReplaying = false;
+      sendWaiter = null; soundOn = savedSound; if(npEl) npEl.checked = savedNp;
+      maybePrintCompletedBagsImmediately = _mp; printCompletionLabel = _pcl; sortReplaying = false;
       renderRun(); scheduleSave(true); setTimeout(() => scan.focus(), 50);
     }
   }
@@ -7077,7 +7330,7 @@ const videoRec = (function(){
     try{ const id = localStorage.getItem('sortActiveId'); const b = id && batches.find(x => x.id === id); if(b) openBatch(b); else if(id) localStorage.removeItem('sortActiveId'); }catch(e){}
   })();
   setInterval(() => { if(view === 'pick' && document.activeElement !== $('sortSearch')) { refreshSortLocks().then(renderCandidates); } }, 60000);
-  window.__sortBusy = () => sortReplaying || !!saveTimer || (st && active && active.slots.some(s => slotFull(s.slot) && !st.recorded[s.slot] && !st.failed[s.slot]));
+  window.__sortBusy = () => sortReplaying || !!saveTimer || (st && active && active.slots.some(s => slotFull(s.slot) && !st.recorded[s.slot] && !st.failed[s.slot])) || Object.values(sv).some(o => o.inflight || o.checking);
   window.__sort = { get active(){ return active; }, get st(){ return st; }, renderCandidates, toggleSel, onProductScan, onBatchQr, replaySlot, printPickSheet, get candidates(){ return candidates; } };
 })();
 </script>
