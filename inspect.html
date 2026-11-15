@@ -6549,7 +6549,7 @@ const videoRec = (function(){
     <button class="s-tab on" data-view="pick" id="sortTabPick">① 전표 고르기</button>
     <button class="s-tab" data-view="run" id="sortTabRun">② 묶음 진행</button>
     <span class="sp"></span>
-    <span style="font-size:13px; font-weight:800;">피킹 작업자</span>
+    <span style="font-size:13px; font-weight:800;" title="묶음을 만들 때 기본으로 들어가는 이름 — 실제 피킹자는 묶음 QR 다음에 찍는 이름 QR로 정해져요">기본 작업자</span>
     <select id="sortWorker"></select>
     <button class="s-tab" id="sortSoundBtn">🔊 소리</button>
     <button class="s-link" id="sortToInspect" title="검수 화면으로">검수 화면으로 ↗</button>
@@ -7000,7 +7000,7 @@ const videoRec = (function(){
     const need = {};
     b.slots.forEach(s => { need[s.slot] = {}; s.items.forEach(it => { need[s.slot][it.code] = (need[s.slot][it.code] || 0) + Number(it.qty || 0); }); });
     const p = b.progress || {};
-    return { need, counts: p.counts || {}, seq: p.seq || {}, ts: p.ts || {}, ms: p.ms || {}, recorded: p.recorded || {}, failed: p.failed || {}, labeled: p.labeled || {}, lastScanAt: p.lastScanAt || 0, log: [] };
+    return { need, counts: p.counts || {}, seq: p.seq || {}, ts: p.ts || {}, ms: p.ms || {}, recorded: p.recorded || {}, failed: p.failed || {}, labeled: p.labeled || {}, inspector: p.inspector || '', lastScanAt: p.lastScanAt || 0, log: [] };
   }
   function openBatch(b){
     if(!b) return;
@@ -7027,7 +7027,7 @@ const videoRec = (function(){
     $('sortBatchTitle').textContent = '묶음 ' + active.id;
     $('sortStage').textContent = stageText();
     const totNeed = active.slots.reduce((a, s) => a + slotSum(st.need[s.slot]), 0), totHave = active.slots.reduce((a, s) => a + slotSum(st.counts[s.slot]), 0);
-    $('sortBatchMeta').textContent = `${active.worker} · ${active.slots.length}전표 · ${totHave}/${totNeed}개` + (active.perSec ? ` · 피킹 전표당 ${Math.floor(active.perSec / 60)}분 ${active.perSec % 60}초` : '');
+    $('sortBatchMeta').textContent = `피킹 ${active.status === '배정' ? '(QR 찍을 때 정해짐)' : active.worker}${st.inspector && st.inspector !== active.worker ? ' · 검수 ' + st.inspector : ''} · ${active.slots.length}전표 · ${totHave}/${totNeed}개` + (active.perSec ? ` · 피킹 전표당 ${Math.floor(active.perSec / 60)}분 ${active.perSec % 60}초` : '');
     let html = '';
     for(let n = 1; n <= MAX_SLOTS; n++){
       const s = active.slots.find(x => x.slot === n);
@@ -7149,7 +7149,7 @@ const videoRec = (function(){
   function logLine(m, bad){ st && st.log.unshift({ t: new Date().toLocaleTimeString('ko-KR', { hour12:false }), m, bad }); }
   function scheduleSave(now){
     clearTimeout(saveTimer);
-    const run = () => { if(!active) return; post({ type:'sortSaveProgress', id: active.id, progress: { counts: st.counts, seq: st.seq, ts: st.ts, ms: st.ms, recorded: st.recorded, failed: st.failed, labeled: st.labeled, lastScanAt: st.lastScanAt } })
+    const run = () => { if(!active) return; post({ type:'sortSaveProgress', id: active.id, progress: { counts: st.counts, seq: st.seq, ts: st.ts, ms: st.ms, recorded: st.recorded, failed: st.failed, labeled: st.labeled, inspector: st.inspector, lastScanAt: st.lastScanAt } })
       .then(d => { if(d && d.status === '완료' && active){ active.status = '완료'; try{ localStorage.removeItem('sortActiveId'); }catch(e){} renderRun(); refreshSortLocks(); say('묶음 전체 완료'); big('done', '✓', `묶음 ${active.id} 전체 완료`, '다음 묶음은 ① 전표 고르기에서'); } }).catch(() => {}); saveTimer = null; };
     if(now) run(); else saveTimer = setTimeout(run, 2500);
   }
@@ -7170,13 +7170,46 @@ const videoRec = (function(){
     }
     if(b.status === '완료' || b.status === '취소'){ sortBeep('err'); say('끝난 묶음이에요'); return; }
     if(b.status === '분배중'){ say('이미 피킹 완료'); return; }
+    // 11/15: 검수 화면처럼 — 묶음 QR 1번째 = 피킹 시작 → 피킹자 QR(이름 QR)을 찍어야 시작이 기록됨
+    if(b.status === '배정'){ waitPicker(b); return; }
+    await sendPickScan(b, '');
+  }
+  const PICKER_WAIT_MS = 60 * 1000;
+  let pendingPicker = null, pickerTimer = null;
+  function waitPicker(b){
+    pendingPicker = { id: b.id, at: Date.now() };
+    sortBeep('ok'); say('피킹 시작. 작업자 큐알을 찍어주세요');
+    clearInterval(pickerTimer);
+    const tick = () => {
+      if(!pendingPicker){ clearInterval(pickerTimer); return; }
+      const left = Math.ceil((pendingPicker.at + PICKER_WAIT_MS - Date.now()) / 1000);
+      if(left <= 0){ pendingPicker = null; clearInterval(pickerTimer); big('err', '⏱', '피킹자 QR을 안 찍어서 시작 안 됐어요', '묶음 QR부터 다시 찍어주세요'); say('묶음 큐알부터 다시 찍어주세요'); return; }
+      big('idle', '🙋', '피킹자 QR(이름 QR)을 찍어주세요', `묶음 ${b.id} 피킹 시작 · ${left}초 안에 찍기`);
+    };
+    tick(); pickerTimer = setInterval(tick, 1000);
+  }
+  async function onWorkerQr(name){
+    if(pendingPicker && active && pendingPicker.id === active.id && Date.now() - pendingPicker.at <= PICKER_WAIT_MS){
+      pendingPicker = null; clearInterval(pickerTimer);
+      wsel.value = name; try{ localStorage.setItem('sortWorker', name); }catch(e){}
+      await sendPickScan(active, name);
+      return;
+    }
+    if(active && st && active.status === '분배중'){ // 분배(=검수) 중에 찍으면 검수자만 바꿈 (검수 화면에서 본인 QR 찍는 것과 같음)
+      st.inspector = name; scheduleSave(true); renderRun(); say('검수 ' + name); logLine(`검수자 → ${name}`);
+      big('idle', '🙋', `검수자: ${name}`, '이제부터 다 차는 칸은 이 사람 이름으로 검수기록에 남아요');
+      return;
+    }
+    wsel.value = name; try{ localStorage.setItem('sortWorker', name); }catch(e){} say(name);
+  }
+  async function sendPickScan(b, worker){
     big('idle', '…', b.status === '배정' ? '피킹 시작 기록 중' : '피킹 완료 기록 중');
     try{
-      const d = await post({ type:'sortPickScan', id: b.id });
+      const d = await post({ type:'sortPickScan', id: b.id, worker });
       if(!d.ok){ sortBeep('err'); big('err', '✕', d.error || '기록 실패'); say('다시 찍어주세요'); return; }
       Object.assign(active, d.batch); st.lastScanAt = Date.now();
       if(d.stage === 'already'){ say('이미 피킹 완료'); renderRun(); return; }
-      if(d.stage === 'started'){ say('피킹 시작'); big('idle', '🏃', '피킹 시작 — 다 가져와서 묶음 QR을 다시 찍어주세요'); logLine('피킹 시작'); }
+      if(d.stage === 'started'){ say(`${active.worker} 피킹 시작`); big('idle', '🏃', `${active.worker} 피킹 시작 — 다 가져와서 묶음 QR을 다시 찍어주세요`); logLine(`피킹 시작 (${active.worker})`); }
       else{ say('피킹 완료. 분배 시작'); big('idle', '📦', '피킹 완료 — 이제 상품을 하나씩 찍어주세요', d.unmeasured ? '피킹시간 미측정(16시간 초과)' : `전체 ${Math.round(d.totalSec / 60)}분 · 전표당 ${Math.floor(d.perSec / 60)}분 ${d.perSec % 60}초`); logLine('피킹 완료 → 분배 시작'); }
       renderRun(); scheduleSave(true);
     }catch(e){ sortBeep('err'); big('err', '✕', '통신 오류 — 다시 찍어주세요'); say('다시 찍어주세요'); }
@@ -7335,7 +7368,7 @@ const videoRec = (function(){
       try{ if(processedDocMap[canon] && processedDocMap[canon].local) delete processedDocMap[canon]; }catch(e){}
       if(items.length){ loadItems([]); currentDocumentKey = ''; }
       pickingStateCache[canon] = { state:'done', worker: b.worker };
-      try{ documentWorkerMap[normalizeDocKeyForWorkerMap(s.key)] = b.worker; }catch(e){}
+      try{ documentWorkerMap[normalizeDocKeyForWorkerMap(s.key)] = st.inspector || b.worker; }catch(e){}
       await processDocumentLookup('SORT/' + m[1] + m[2] + m[3] + '/' + m[4]);
       if(canonicalDocKeyJS(currentDocumentKey) !== canon || !items.length) throw new Error('전표를 불러오지 못했어요');
       try{ if(exclusiveBlocking){ document.getElementById('exclusiveOverlay').style.display = 'none'; exclusiveBlocking = false; throw new Error('완전분배 확인이 필요한 전표예요 → 검수 화면에서 처리'); } }catch(e){ if(e.message.indexOf('완전분배') !== -1) throw e; }
@@ -7344,7 +7377,7 @@ const videoRec = (function(){
       const have = st.counts[n] || {};
       const diff = Object.keys(Object.assign({}, need, have)).filter(c => (need[c] || 0) !== (have[c] || 0));
       if(diff.length) throw new Error('판매현황 수량이 바뀌었어요: ' + diff.slice(0, 3).join(', ') + ' → 검수 화면에서 확인');
-      currentWorker = b.worker; deferredInspectStart = null;
+      currentWorker = st.inspector || b.worker; deferredInspectStart = null; // 검수자 = 피킹자 (분배 중에 다른 사람 QR을 찍었으면 그 사람)
       try{ document.getElementById('workerBlockOverlay').style.display = 'none'; }catch(e){}
       inspectionStartTime = new Date(Date.now() - Math.max(1000, st.ms[n] || 0)); // 검수시간 = 이 칸에 넣느라 찍은 시간 합
       const sent = new Promise(res => { sendWaiter = { canon, res }; setTimeout(() => res(false), 15000); });
@@ -7381,7 +7414,7 @@ const videoRec = (function(){
     if(!raw) return;
     let t = raw; try{ if(containsHangul(t)) t = hangulToEnglish(t); }catch(e2){}
     const wk = t.match(/^WK[^0-9]*(\d+)$/i);
-    if(wk){ const name = WORKER_CODE_MAP[wk[1]]; if(name){ wsel.value = name; try{ localStorage.setItem('sortWorker', name); }catch(e3){} say(name); } return; }
+    if(wk){ const name = WORKER_CODE_MAP[wk[1]]; if(name) onWorkerQr(name); else { sortBeep('err'); say('등록 안 된 작업자예요'); } return; }
     const sb = t.match(/^SB\|(.+)$/i);
     if(sb){ onBatchQr(sb[1].trim().toUpperCase()); return; }
     if(t.indexOf('/') !== -1){
