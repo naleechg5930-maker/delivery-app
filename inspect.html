@@ -3991,6 +3991,9 @@ async function processDocumentLookup(raw){
     (function verifyNotProcessed(loadedKey){
       const ck = canonicalDocKeyJS(loadedKey) || scannedDocKey;
       if(!ck || processedOverrideKey === ck) return;
+      // 11/16: 분배 화면에서는 이 확인을 하지 않는다 — 분배가 방금 저장한 전표가 "이미 처리된 전표"로 잡혀
+      //        숨은 오피킹 경고가 뜨고(스캔 잠김), 다음 칸 기록이 "수량이 다 차지 않았어요"로 막히던 원인
+      if(window.__sortMode) return;
       refreshProcessedDocs().then(map => {
         const info = map[ck];
         if(!info || info.local) return;
@@ -6597,8 +6600,21 @@ const videoRec = (function(){
     <span class="sp"></span>
     <span style="font-size:13px; font-weight:800;" title="묶음을 만들 때 기본으로 들어가는 이름 — 실제 피킹자는 묶음 QR 다음에 찍는 이름 QR로 정해져요">기본 작업자</span>
     <select id="sortWorker"></select>
+    <button class="s-tab" id="sortLightBtn" title="칸마다 LED 불빛 + 부저 (USB로 연결한 아두이노)">💡 불빛 <span id="sortLightDot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#94a3b8;margin-left:3px;"></span></button>
     <button class="s-tab" id="sortSoundBtn">🔊 소리</button>
     <button class="s-link" id="sortToInspect" title="검수 화면으로">검수 화면으로 ↗</button>
+  </div>
+  <div id="sortLightPanel" style="display:none; position:absolute; right:18px; top:58px; z-index:6; width:min(500px, calc(100vw - 32px)); background:#fff; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.25); padding:14px 16px;">
+    <div class="s-row" style="justify-content:space-between; margin-bottom:8px;"><b style="font-size:16px;">💡 칸 불빛 + 부저</b><button class="btn b-line" id="ptlClose" style="padding:4px 10px;">닫기</button></div>
+    <div class="s-row" style="margin-bottom:8px;"><button class="btn b-navy" id="ptlConnect">🔌 연결</button><button class="btn b-line" id="ptlTest">▶ 1번부터 차례로 켜보기</button><span id="ptlStatus" class="muted">연결 안 됨</span></div>
+    <div class="muted" style="margin-bottom:8px;">아두이노를 USB로 꽂고 [🔌 연결] → 목록에서 "USB-SERIAL CH340"(또는 COM 포트) 선택. 한 번 연결하면 다음부터는 자동으로 붙어요.</div>
+    <table><tbody>
+      <tr><td style="width:150px;font-weight:800;">LED 전체 개수</td><td><input type="text" id="ptlTotal" style="width:90px" inputmode="numeric"> 개 <span class="muted">(띠에 붙은 LED 수)</span></td></tr>
+      <tr><td style="font-weight:800;">칸 수</td><td><input type="text" id="ptlSlots" style="width:90px" inputmode="numeric"> 칸 <span class="muted" id="ptlPer"></span></td></tr>
+      <tr><td style="font-weight:800;">배치</td><td><select class="f" id="ptlLayout"><option value="line">한 줄 (1→12 한 방향)</option><option value="zig">두 줄, 둘째 줄은 반대 방향 (ㄹ자)</option><option value="two">두 줄, 둘째 줄도 같은 방향</option></select></td></tr>
+      <tr><td style="font-weight:800;">밝기</td><td><input type="range" id="ptlBright" min="10" max="120" step="10" style="width:200px;"> <span id="ptlBrightV"></span></td></tr>
+      <tr><td style="font-weight:800;">부저</td><td><label><input type="checkbox" id="ptlBuzz"> 칸 다 차면 삑삑 · 잘못 찍으면 길게</label></td></tr>
+    </tbody></table>
   </div>
   <div id="sortSoundPanel" style="display:none; position:absolute; right:18px; top:58px; z-index:5; width:min(470px, calc(100vw - 32px)); background:#fff; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.25); padding:14px 16px;">
     <div class="s-row" style="justify-content:space-between; margin-bottom:8px;"><b style="font-size:16px;">🔊 분배 소리</b><button class="btn b-line" id="sortSoundClose" style="padding:4px 10px;">닫기</button></div>
@@ -6679,6 +6695,7 @@ const videoRec = (function(){
 (function(){
   const SORT_MODE = /(^|[?&])mode=sort(&|$)/.test(location.search) || /sort\.html$/i.test(location.pathname);
   if(!SORT_MODE) return;
+  window.__sortMode = true;
   const $ = id => document.getElementById(id);
   const app = $('sortApp'), scan = $('sortScan');
   app.style.display = 'flex';
@@ -6719,6 +6736,7 @@ const videoRec = (function(){
     o.connect(g); g.connect(audioIn()); o.start(t0); o.stop(t0 + dur + 0.02);
   }
   function sortBeep(kind){
+    if(kind === 'err'){ try{ ptl.error(); }catch(e){} }
     try{
       audioIn(); const t0 = sCtx.currentTime;
       if(kind === 'err'){ const o = sCtx.createOscillator(), g = sCtx.createGain(); o.type = 'sawtooth'; o.frequency.setValueAtTime(260, t0); o.frequency.linearRampToValueAtTime(700, t0 + 0.25); o.frequency.linearRampToValueAtTime(260, t0 + 0.5);
@@ -6746,6 +6764,7 @@ const videoRec = (function(){
   function say(text){ stopAll(); speak(text, 1); }
   // 칸 번호 안내: 알림음 → (녹음이 있으면 녹음, 없으면 컴퓨터 목소리)
   function announce(n, done){
+    try{ done ? ptl.done(n) : ptl.slot(n); }catch(e){} // 11/16: 칸 불빛
     stopAll();
     const delay = scfg.tone ? slotTone(n, done) : 0;
     const clip = clips['n' + n];
@@ -6785,6 +6804,103 @@ const videoRec = (function(){
   async function loadClips(){ for(const k of CLIP_KEYS){ try{ const b = await vget(k); if(b) clips[k] = await decodeClip(b); }catch(e){} } }
   ['pointerdown','keydown'].forEach(ev => window.addEventListener(ev, () => { try{ audioIn(); }catch(e){} }, { once:true, capture:true })); // 브라우저는 첫 클릭·키 뒤에야 소리를 허락함
   setTimeout(loadClips, 500);
+
+  /* ---------- 11/16: 칸 불빛 + 부저 (풋투라이트) ----------
+     아두이노 나노 + 네오픽셀(WS2812B) 띠 + 능동 부저를 USB로 꽂고, 크롬 Web Serial로 명령을 보낸다.
+     아두이노 쪽 명령(한 줄씩): F 시작 개수 R G B (칠하기) / C (전부 끄기) / S (보여주기) / B 밀리초 (부저) / T 밝기 */
+  const ptl = (function(){
+    const SLOT_COLOR = [null, [255,0,0], [255,110,0], [255,210,0], [120,255,0], [0,255,60], [0,255,200], [0,170,255], [0,60,255], [120,0,255], [220,0,255], [255,0,150], [255,255,255]];
+    let cfg = { total: 120, slots: 12, layout: 'line', bright: 60, buzz: true };
+    try{ Object.assign(cfg, JSON.parse(localStorage.getItem('ptlCfg') || '{}')); }catch(e){}
+    let port = null, writer = null, timers = [];
+    const save = () => { try{ localStorage.setItem('ptlCfg', JSON.stringify(cfg)); }catch(e){} };
+    const status = (txt, ok) => { const el = $('ptlStatus'); if(el){ el.textContent = txt; el.style.color = ok ? '#16A34A' : ''; } const d = $('sortLightDot'); if(d) d.style.background = ok ? '#22C55E' : '#94a3b8'; };
+    async function send(lines){
+      if(!writer) return;
+      try{ await writer.write(new TextEncoder().encode(lines.join('\n') + '\n')); }catch(e){ status('끊어졌어요 — 다시 연결해주세요', false); writer = null; }
+    }
+    function range(n){ // n번 칸 → [시작 LED, 개수]
+      const per = Math.max(1, Math.floor(cfg.total / Math.max(1, cfg.slots)));
+      let i = n - 1;
+      if(cfg.layout === 'zig'){ const half = Math.ceil(cfg.slots / 2); if(i >= half) i = half + (cfg.slots - 1 - i); }
+      return [i * per, per];
+    }
+    const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
+    const later = (ms, fn) => timers.push(setTimeout(fn, ms));
+    function paint(n, rgb){ const [a, c] = range(n); return [`F ${a} ${c} ${rgb[0]} ${rgb[1]} ${rgb[2]}`]; }
+    async function open(p){
+      port = p;
+      await port.open({ baudRate: 115200 });
+      writer = port.writable.getWriter();
+      status('✅ 연결됨', true);
+      await new Promise(r => setTimeout(r, 1800)); // 아두이노는 연결하면 한 번 재시작함
+      await send([`N ${cfg.total}`, `T ${cfg.bright}`, 'C', 'S']);
+    }
+    async function connect(){
+      if(!('serial' in navigator)){ status('이 브라우저는 안 돼요 — 크롬·엣지로 열어주세요', false); return; }
+      try{ const p = await navigator.serial.requestPort(); if(port && writer){ try{ writer.releaseLock(); await port.close(); }catch(e){} } await open(p); }
+      catch(e){ status('연결 취소/실패: ' + (e.message || e), false); }
+    }
+    async function autoConnect(){
+      if(!('serial' in navigator)) return;
+      try{ const ps = await navigator.serial.getPorts(); if(ps.length) await open(ps[0]); }catch(e){ status('자동 연결 실패 — [🔌 연결]을 눌러주세요', false); }
+      navigator.serial.addEventListener('disconnect', () => { writer = null; port = null; status('USB가 빠졌어요', false); });
+      navigator.serial.addEventListener('connect', e => { if(!writer) open(e.target).catch(() => {}); });
+    }
+    return {
+      cfg, connect, autoConnect, save, range,
+      get on(){ return !!writer; },
+      slot(n){ if(!writer) return; clearTimers(); send(['C', ...paint(n, SLOT_COLOR[n] || [255,255,255]), 'S']); },
+      done(n){
+        if(!writer) return; clearTimers();
+        // 부저(B)는 항상 같은 묶음 맨 앞에: LED를 바꾸는 순간(S)엔 아두이노가 잠깐 귀를 닫아서 뒤에 오는 글자를 놓칠 수 있음
+        const bz = cfg.buzz ? ['B 120'] : [];
+        const on = (b) => send([...(b || []), 'C', ...paint(n, [0,255,0]), 'S']), off = () => send(['C', 'S']);
+        on(bz); later(200, off); later(400, () => on(bz)); later(600, off); later(800, () => on());
+      },
+      error(){
+        if(!writer) return; clearTimers();
+        const all = []; for(let n = 1; n <= cfg.slots; n++){ const [a] = range(n); all.push(`F ${a} 1 255 0 0`); }
+        send([...(cfg.buzz ? ['B 600'] : []), 'C', ...all, 'S']); later(250, () => send(['C', 'S'])); later(500, () => send(['C', ...all, 'S'])); later(900, () => send(['C', 'S']));
+      },
+      allDone(){
+        if(!writer) return; clearTimers();
+        const all = []; for(let n = 1; n <= cfg.slots; n++) all.push(...paint(n, [0,255,0]));
+        send([...(cfg.buzz ? ['B 150'] : []), 'C', ...all, 'S']); later(1500, () => send(['C', 'S']));
+        if(cfg.buzz){ later(250, () => send(['B 150'])); later(500, () => send(['B 400'])); }
+      },
+      off(){ clearTimers(); send(['C', 'S']); },
+      setTotal(v){ cfg.total = v; save(); send([`N ${v}`]); },
+      setBright(v){ cfg.bright = v; save(); send([`T ${v}`, 'S']); },
+      async test(){
+        if(!writer){ status('먼저 [🔌 연결]을 눌러주세요', false); return; }
+        clearTimers();
+        for(let n = 1; n <= cfg.slots; n++) later((n - 1) * 500, () => send([...(cfg.buzz && n === 1 ? ['B 100'] : []), 'C', ...paint(n, SLOT_COLOR[n] || [255,255,255]), 'S']));
+        later(cfg.slots * 500, () => send(['C', 'S']));
+      }
+    };
+  })();
+  (function lightPanel(){
+    const panel = $('sortLightPanel');
+    const fill = () => {
+      $('ptlTotal').value = ptl.cfg.total; $('ptlSlots').value = ptl.cfg.slots; $('ptlLayout').value = ptl.cfg.layout;
+      $('ptlBright').value = ptl.cfg.bright; $('ptlBrightV').textContent = ptl.cfg.bright; $('ptlBuzz').checked = !!ptl.cfg.buzz;
+      $('ptlPer').textContent = `· 칸마다 LED ${Math.max(1, Math.floor(ptl.cfg.total / Math.max(1, ptl.cfg.slots)))}개`;
+    };
+    $('sortLightBtn').onclick = () => { panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; try{ $('sortSoundPanel').style.display = 'none'; }catch(e){} fill(); };
+    $('ptlClose').onclick = () => { panel.style.display = 'none'; scan.focus(); };
+    $('ptlConnect').onclick = () => ptl.connect();
+    $('ptlTest').onclick = () => ptl.test();
+    const num = (id, min, max) => { const v = parseInt(String($(id).value).replace(/\D/g, ''), 10); return isNaN(v) ? null : Math.min(max, Math.max(min, v)); };
+    $('ptlTotal').onchange = () => { const v = num('ptlTotal', 1, 300); if(v) ptl.setTotal(v); fill(); };
+    $('ptlSlots').onchange = () => { const v = num('ptlSlots', 1, 12); if(v) ptl.cfg.slots = v; ptl.save(); fill(); };
+    $('ptlLayout').onchange = () => { ptl.cfg.layout = $('ptlLayout').value; ptl.save(); };
+    $('ptlBright').oninput = () => { $('ptlBrightV').textContent = $('ptlBright').value; };
+    $('ptlBright').onchange = () => ptl.setBright(Number($('ptlBright').value));
+    $('ptlBuzz').onchange = () => { ptl.cfg.buzz = $('ptlBuzz').checked; ptl.save(); };
+    fill();
+    ptl.autoConnect();
+  })();
 
   /* ---------- 소리 설정 화면 ---------- */
   (function soundPanel(){
@@ -6829,7 +6945,7 @@ const videoRec = (function(){
   })();
 
   /* ---------- 스캐너 입력은 항상 분배 입력칸으로 (검수 엔진 입력칸으로 새지 않게) ---------- */
-  const isTypingField = el => el && (el.id === 'sortSearch' || el.id === 'sortKakaoText');
+  const isTypingField = el => el && (el.id === 'sortSearch' || el.id === 'sortKakaoText' || el.id === 'ptlTotal' || el.id === 'ptlSlots');
   window.addEventListener('keydown', e => {
     if(app.style.display === 'none') return;
     const el = document.activeElement;
@@ -7399,6 +7515,7 @@ const videoRec = (function(){
     if(!active || !st || st.allDoneShown) return;
     if(!active.slots.every(x => st.recorded[x.slot])) return;
     st.allDoneShown = true;
+    try{ ptl.allDone(); }catch(e){}
     try{ localStorage.removeItem('sortActiveId'); }catch(e){}
     $('sortDoneSub').textContent = `묶음 ${active.id} · ${active.slots.length}전표 모두 끝났어요`;
     $('sortDoneList').innerHTML = active.slots.map(x => `${x.slot}번 ${escapeHtml(x.company)} ✓`).join('<br>');
@@ -7487,6 +7604,11 @@ const videoRec = (function(){
       const have = st.counts[n] || {};
       const diff = Object.keys(Object.assign({}, need, have)).filter(c => (need[c] || 0) !== (have[c] || 0));
       if(diff.length) throw new Error('판매현황 수량이 바뀌었어요: ' + diff.slice(0, 3).join(', ') + ' → 검수 화면에서 확인');
+      // 11/16: 검수 화면 쪽에 숨어서 떠 있는 경고(오피킹·전표 전환·박스 선택)가 있으면 스캔이 전부 막히므로 먼저 닫는다
+      try{ if(mispickBlocking) confirmMispick(); }catch(e){}
+      try{ if(docSwitchBlocking){ docSwitchBlocking = false; const ov = document.getElementById('docSwitchOverlay'); if(ov) ov.style.display = 'none'; if(docSwitchResolve){ const r = docSwitchResolve; docSwitchResolve = null; r(false); } } }catch(e){}
+      try{ if(boxChoiceBlocking){ boxChoiceBlocking = false; boxChoiceState = null; const ov = document.getElementById('boxChoiceOverlay'); if(ov) ov.classList.remove('show'); } }catch(e){}
+      try{ bundleModeActive = false; qrBundleQty = 1; }catch(e){}
       currentWorker = st.inspector || b.worker; deferredInspectStart = null; // 검수자 = 피킹자 (분배 중에 다른 사람 QR을 찍었으면 그 사람)
       try{ document.getElementById('workerBlockOverlay').style.display = 'none'; }catch(e){}
       inspectionStartTime = new Date(Date.now() - Math.max(1000, st.ms[n] || 0)); // 검수시간 = 이 칸에 넣느라 찍은 시간 합
@@ -7498,7 +7620,12 @@ const videoRec = (function(){
         scanLogBuffer.forEach(e => { if(e.button || e.skip) return; if(j < ts.length) e.t = ts[j++];
           e.rapid = !!prev && prev.code === e.code && (e.t - prev.t) < RAPID_SCAN_MS; if(e.rapid) scanLogRapidCount++; prev = e; });
       }catch(e){}
-      if(!items.every(it => it.scannedQty >= it.orderQty)) throw new Error('검수 화면에서 수량이 다 차지 않았어요');
+      if(!items.every(it => it.scannedQty >= it.orderQty)){
+        const short = items.filter(it => it.scannedQty < it.orderQty).map(it => `${it.code} ${it.scannedQty}/${it.orderQty}`);
+        const why = (typeof mispickBlocking !== 'undefined' && mispickBlocking) ? ' · 경고창 잠김' : (exclusiveBlocking ? ' · 완전분배 잠김' : '');
+        try{ if(mispickBlocking) confirmMispick(); }catch(e){}
+        throw new Error('검수 화면에서 수량이 다 차지 않았어요 (' + short.slice(0, 3).join(', ') + why + ')');
+      }
       if(!(await sent)) throw new Error('검수기록 저장 요청이 안 나갔어요 — [다시]');
       logLine(`${n}번 ${s.company} → 검수기록 보냄${skipLabel ? '' : ' · 라벨 인쇄 대기열'}`);
       st.replayTries && delete st.replayTries[n];
