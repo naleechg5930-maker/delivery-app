@@ -2014,10 +2014,38 @@ function processCombinedBox(lines){
   checkAllComplete();
 }
 
+function processBoxComboQr(facRaw, no, rest){
+  const fac = String(facRaw || '').toUpperCase().replace(/\s/g, '');
+  const label = `${fac ? fac + ' ' : ''}${no}번`;
+  if(!items.length){ showBanner('err', '전표를 먼저 불러와주세요', `박스 ${label}`, '박스 QR은 전표를 연 다음에 찍어주세요', '📄'); try{ playErrSound(); }catch(e){} return; }
+  // 이미 출고된 박스(박스목록에 출고 표시)면 막는다 — 같은 공장·번호로 아직 안 나간 박스가 따로 있으면 그쪽으로 진행
+  if(boxCands !== null){
+    const codes = rest.map(l => parseCombinedLine(l)).filter(x => x && !x.bad).map(x => boxNormCode(stripOrderCodeSuffix(x.code)));
+    const sameBox = c => boxNormNo(c.boxNo) === no && codes.indexOf(boxNormCode(c.code)) !== -1
+      && (!fac || String(c.factory || '').toUpperCase().replace(/\s/g, '') === fac);
+    const open = boxCands.filter(sameBox), gone = (boxShipped || []).filter(sameBox);
+    if(!open.length && gone.length){
+      const g = gone[0];
+      showBanner('err', `이미 출고된 박스예요 — ${label}`, '박스 QR', `${g.outAt || ''} ${g.outCompany || ''}${g.outDoc ? ' (' + g.outDoc + ')' : ''}로 이미 나갔어요 · 반영 안 함`, '⛔');
+      addScreenOnlyLog(`박스 ${label}`, '이미 출고된 박스 — 반영 안 함');
+      try{ playErrSound(); }catch(e){}
+      try{ speakKorean('이미 출고된 박스예요'); }catch(e){}
+      return;
+    }
+  } else if(!boxPreloading){ preloadBoxCandidates(); }
+  boxModeNo = no; boxModeFactory = fac;
+  processCombinedBox(rest);
+  if(boxModeNo === no && boxModeFactory === fac){ boxModeNo = ''; boxModeFactory = ''; } // 반영 안 됐으면 박스번호를 남겨두지 않음
+  try{ updateBoxOutBtn(); }catch(e){}
+}
+
 function handleMultiLineScan(lines, singleHandler){
   singleHandler = singleHandler || handleScanRaw;
   lines = lines.map(l => containsHangul(l) ? hangulToEnglish(l) : l);
   // 11/08: 합본 QR (첫 줄 "HB") — 여러 품목이 든 박스 하나로 처리
+  // 11/16: 박스 QR — 첫 줄 "HB|공장|패킹넘버" (바코드 불량 박스에 새로 붙이는 QR): 박스번호 + 내용물 + 박스출고 기록을 한 번에
+  { const hb = lines.length ? String(lines[0]).trim().match(/^HB\|([^|]*)\|#?0*(\d{1,5})(?:\D.*)?$/i) : null;
+    if(hb){ processBoxComboQr(hb[1], String(Number(hb[2])), lines.slice(1)); return; } }
   if(lines.length && /^HB$/i.test(String(lines[0]).trim())){ processCombinedBox(lines.slice(1)); return; }
   // 11/05: 박스 QR — 첫 줄이 박스번호면 박스출고 시작, 나머지 줄은 그 박스 품목으로
   let multiBox = null;
@@ -2955,6 +2983,7 @@ document.getElementById('shortListBtn').addEventListener('click', openShortList)
 //  → 검수완료 때 서버로 보내서 "박스출고기록" 탭에 남기고, 박스목록에 "출고" 표시 (다음부터 후보에서 빠짐)
 let boxCands = null;          // 이 전표 품번으로 들어온, 아직 출고 안 된 박스들 (null = 아직 못 받음)
 let boxCandsFor = '';
+let boxShipped = [];          // 11/16: 같은 품번으로 들어와서 이미 출고된 박스 (박스 QR 중복 출고 막기용)
 let boxModeNo = '';           // 입력해둔 박스번호 (박스 바코드를 찍으면 소모)
 let boxOutboundList = [];     // 이 전표에서 확정한 박스들
 let boxPendingResolve = [];   // 목록을 아직 못 받았을 때 대기 중인 박스
@@ -3016,11 +3045,12 @@ async function preloadBoxCandidatesInner(forKey){
   const codes = Array.from(new Set(items.map(it => boxNormCode(it.code)))).join(',');
   for(let attempt = 1; attempt <= 3; attempt++){
     try{
-      const resp = await fetchWithTimeout(gasWebhookUrl + '?action=getBoxCandidates&codes=' + encodeURIComponent(codes), {}, 30000);
+      const resp = await fetchWithTimeout(gasWebhookUrl + '?action=getBoxCandidates&withShipped=1&codes=' + encodeURIComponent(codes), {}, 30000);
       const res = await resp.json();
       if(boxCandsFor !== forKey) return; // 그새 다른 전표로 넘어감
       if(!res || !res.ok) throw new Error((res && res.error) || '응답 오류');
-      boxCands = res.list || [];
+      boxCands = (res.list || []).filter(c => !c.shipped);
+      boxShipped = (res.list || []).filter(c => c.shipped);
       if(boxCands.length) setBoxChip('ok', `✓ 박스 목록 준비됨 · 이 전표 품번으로 들어온 박스 ${boxCands.length}개`);
       else setBoxChip('', '');
       const pend = boxPendingResolve.splice(0);
@@ -6572,12 +6602,12 @@ const videoRec = (function(){
   </div>
   <div id="sortSoundPanel" style="display:none; position:absolute; right:18px; top:58px; z-index:5; width:min(470px, calc(100vw - 32px)); background:#fff; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.25); padding:14px 16px;">
     <div class="s-row" style="justify-content:space-between; margin-bottom:8px;"><b style="font-size:16px;">🔊 분배 소리</b><button class="btn b-line" id="sortSoundClose" style="padding:4px 10px;">닫기</button></div>
-    <label style="display:block; margin:4px 0; font-weight:800;"><input type="checkbox" id="sndTone"> 번호마다 다른 알림음 (하나=솔 · 둘=도 · 셋=미 …)</label>
-    <label style="display:block; margin:4px 0; font-weight:800;"><input type="checkbox" id="sndPitch"> 번호마다 목소리 높낮이 다르게 (하나 가장 높게 → 여섯 가장 낮게)</label>
+    <label style="display:block; margin:4px 0; font-weight:800;"><input type="checkbox" id="sndTone"> 번호마다 다른 알림음 (하나=도 · 둘=레 · 셋=미 … 번호가 클수록 높게)</label>
+    <label style="display:block; margin:4px 0; font-weight:800;"><input type="checkbox" id="sndPitch"> 번호마다 목소리 높낮이 다르게 (하나 가장 높게 → 열둘 가장 낮게)</label>
     <div class="s-row" style="margin:8px 0;"><b>크기</b><input type="range" id="sndBoost" min="1" max="5" step="0.5" style="flex:1;"><span id="sndBoostV" style="font-weight:900; width:42px;"></span></div>
     <div class="muted" style="margin-bottom:8px;">알림음·녹음 소리만 커져요. 컴퓨터 목소리는 윈도우 볼륨이 최대라서, 더 크게 하려면 아래에서 직접 녹음하세요 (녹음한 번호는 녹음 소리로 나와요).</div>
     <table><tbody id="sndRows"></tbody></table>
-    <div class="s-row" style="margin-top:10px;"><button class="btn b-navy" id="sndTest">▶ 하나~여섯 들어보기</button><span class="muted" id="sndMsg"></span></div>
+    <div class="s-row" style="margin-top:10px;"><button class="btn b-navy" id="sndTest">▶ 하나~열둘 들어보기</button><span class="muted" id="sndMsg"></span></div>
   </div>
   <div class="s-body">
     <input type="text" id="sortScan" class="s-scan" placeholder="여기에 찍으세요 — 전표 QR(고르기) · 묶음 QR(피킹 시작/완료) · 상품 바코드(분배)" autocomplete="off">
@@ -6604,7 +6634,7 @@ const videoRec = (function(){
           <tbody id="sortCandBody"></tbody></table>
         </div>
         <div class="s-row" style="margin-top:12px; justify-content:space-between;">
-          <span id="sortSelInfo" style="font-weight:900;">선택 0장 · 0개 / 최대 6칸</span>
+          <span id="sortSelInfo" style="font-weight:900;">선택 0장 · 0개 / 최대 12칸</span>
           <span class="s-row"><button class="btn b-line" id="sortClearSel">선택 해제</button>
           <button class="btn b-green" id="sortCreate" disabled>칸 배정 + 피킹지 출력 ▶</button></span>
         </div>
@@ -6654,7 +6684,7 @@ const videoRec = (function(){
   app.style.display = 'flex';
   document.title = '분배 · 다건 전표 일괄 피킹';
 
-  const MIN_QTY = 10, MAX_QTY = 100, BOX_QTY = 40, MAX_SLOTS = 6;
+  const MIN_QTY = 10, MAX_QTY = 100, BOX_QTY = 40, MAX_SLOTS = 12; // 11/16: 6칸 → 12칸
   const EXCLUDE_NOTES = ['개인구매', '미출고전표', '샘플결제'];
   let view = 'pick', candidates = [], selected = [], batches = [], active = null, st = null, locOrder = null;
   let replayQueue = Promise.resolve(), saveTimer = null;
@@ -6663,9 +6693,9 @@ const videoRec = (function(){
      11/15: 번호는 "하나·둘·셋·넷·다섯·여섯" (컴퓨터가 "1번"을 "한 번"으로 읽어서 헷갈림)
             번호마다 다른 알림음(도·미·솔…) + 목소리 높낮이도 칸마다 다르게, 알림음·녹음은 증폭해서 크게
             🔊 소리 설정에서 번호를 직접 녹음하면 컴퓨터 목소리 대신 녹음을 크게 틀어줌 */
-  const NUM_WORD = ['', '하나', '둘', '셋', '넷', '다섯', '여섯'];
-  const SLOT_PITCH = [1, 2.0, 1.6, 1.25, 0.95, 0.7, 0.45];
-  const SLOT_TONE = [0, 392, 523, 659, 784, 1047, 1319]; // 솔 도 미 솔 높은도 높은미
+  const NUM_WORD = ['', '하나', '둘', '셋', '넷', '다섯', '여섯', '일곱', '여덟', '아홉', '열', '열하나', '열둘'];
+  const SLOT_PITCH = [1, 2.0, 1.85, 1.7, 1.55, 1.4, 1.25, 1.1, 0.95, 0.8, 0.68, 0.55, 0.42]; // 하나 가장 높게 → 열둘 가장 낮게
+  const SLOT_TONE = [0, 262, 294, 330, 392, 440, 523, 587, 659, 784, 880, 1047, 1175]; // 도 레 미 솔 라 / 높은 도 레 미 솔 라 / 더 높은 도 레
   let scfg = { tone: true, pitch: true, boost: 3 };
   try{ Object.assign(scfg, JSON.parse(localStorage.getItem('sortSoundCfg') || '{}')); }catch(e){}
   const saveCfg = () => { try{ localStorage.setItem('sortSoundCfg', JSON.stringify(scfg)); }catch(e){} };
@@ -6732,8 +6762,8 @@ const videoRec = (function(){
   }
   /* 녹음 (이 컴퓨터 브라우저에 저장) */
   const clips = {};
-  const CLIP_KEYS = ['n1','n2','n3','n4','n5','n6','done'];
-  const CLIP_LABEL = { n1:'하나', n2:'둘', n3:'셋', n4:'넷', n5:'다섯', n6:'여섯', done:'완료' };
+  const CLIP_KEYS = ['n1','n2','n3','n4','n5','n6','n7','n8','n9','n10','n11','n12','done'];
+  const CLIP_LABEL = { n1:'하나', n2:'둘', n3:'셋', n4:'넷', n5:'다섯', n6:'여섯', n7:'일곱', n8:'여덟', n9:'아홉', n10:'열', n11:'열하나', n12:'열둘', done:'완료' };
   function vdb(){ return new Promise((res, rej) => { const r = indexedDB.open('sortVoiceDB', 1); r.onupgradeneeded = () => r.result.createObjectStore('clips'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
   async function vget(k){ const d = await vdb(); return new Promise(res => { const q = d.transaction('clips').objectStore('clips').get(k); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); }); }
   async function vput(k, v){ const d = await vdb(); return new Promise(res => { const tx = d.transaction('clips', 'readwrite'); if(v === null) tx.objectStore('clips').delete(k); else tx.objectStore('clips').put(v, k); tx.oncomplete = () => res(true); tx.onerror = () => res(false); }); }
@@ -6768,7 +6798,7 @@ const videoRec = (function(){
     $('sndPitch').onchange = e => { scfg.pitch = e.target.checked; saveCfg(); };
     $('sndBoost').oninput = e => { scfg.boost = Number(e.target.value); saveCfg(); bv(); audioIn(); };
     $('sndBoost').onchange = () => announce(1, false);
-    $('sndTest').onclick = () => { let i = 1; const go = () => { announce(i, i === 6); if(++i <= 6) setTimeout(go, 1300); }; go(); };
+    $('sndTest').onclick = () => { let i = 1; const go = () => { announce(i, i === MAX_SLOTS); if(++i <= MAX_SLOTS) setTimeout(go, 1300); }; go(); };
     let recBusy = false;
     async function record(k){
       if(recBusy) return; recBusy = true;
@@ -6923,7 +6953,7 @@ const videoRec = (function(){
     const i = selected.indexOf(canon);
     if(i !== -1){ selected.splice(i, 1); }
     else{
-      if(selected.length >= MAX_SLOTS){ sortBeep('err'); say('6칸까지예요'); return; }
+      if(selected.length >= MAX_SLOTS){ sortBeep('err'); say(`${NUM_WORD[MAX_SLOTS]}칸까지예요`); return; }
       selected.push(canon); if(fromScan) say(`${NUM_WORD[selected.length]} ${c.company}`);
     }
     renderCandidates();
@@ -7032,10 +7062,33 @@ const videoRec = (function(){
   $('sortReprint').onclick = () => { if(active) printPickSheet(active); };
 
   /* ---------- ② 묶음 진행 ---------- */
+  /* 11/16: 12칸·큰 묶음도 시트 한 칸(5만 글자)에 들어가게 진행 기록을 줄여서 저장
+     seq(찍은 품번 순서) → 칸 품목 번호, ts(찍은 시각) → 0.1초 단위 간격 */
+  function packProgress(){
+    const seqI = {}, tsD = {}; let t0 = 0;
+    active.slots.forEach(s => { (st.ts[s.slot] || []).forEach(t => { if(t && (!t0 || t < t0)) t0 = t; }); });
+    active.slots.forEach(s => {
+      const codes = s.items.map(i => i.code);
+      seqI[s.slot] = (st.seq[s.slot] || []).map(c => { const i = codes.indexOf(c); return i < 0 ? c : i; }).join(',');
+      let prev = t0; tsD[s.slot] = (st.ts[s.slot] || []).map(t => { const d = Math.max(0, Math.round((t - prev) / 100)); prev = t; return d; }).join(',');
+    });
+    return { v: 2, counts: st.counts, seqI, tsD, t0, ms: st.ms, recorded: st.recorded, failed: st.failed, labeled: st.labeled, inspector: st.inspector, lastScanAt: st.lastScanAt };
+  }
+  function expandProgress(b, p){
+    if(!p || p.v !== 2) return p || {};
+    const out = Object.assign({}, p, { seq: {}, ts: {} });
+    b.slots.forEach(s => {
+      const codes = s.items.map(i => i.code);
+      const sq = String((p.seqI || {})[s.slot] || ''), td = String((p.tsD || {})[s.slot] || '');
+      out.seq[s.slot] = sq ? sq.split(',').map(x => /^\d+$/.test(x) ? codes[Number(x)] : x) : [];
+      let t = Number(p.t0) || 0; out.ts[s.slot] = td ? td.split(',').map(d => (t += Number(d) * 100)) : [];
+    });
+    return out;
+  }
   function emptyState(b){
     const need = {};
     b.slots.forEach(s => { need[s.slot] = {}; s.items.forEach(it => { need[s.slot][it.code] = (need[s.slot][it.code] || 0) + Number(it.qty || 0); }); });
-    const p = b.progress || {};
+    const p = expandProgress(b, b.progress || {});
     return { need, counts: p.counts || {}, seq: p.seq || {}, ts: p.ts || {}, ms: p.ms || {}, recorded: p.recorded || {}, failed: p.failed || {}, labeled: p.labeled || {}, inspector: p.inspector || '', lastScanAt: p.lastScanAt || 0, log: [] };
   }
   function openBatch(b){
@@ -7065,7 +7118,8 @@ const videoRec = (function(){
     const totNeed = active.slots.reduce((a, s) => a + slotSum(st.need[s.slot]), 0), totHave = active.slots.reduce((a, s) => a + slotSum(st.counts[s.slot]), 0);
     $('sortBatchMeta').textContent = `피킹 ${active.status === '배정' ? '(QR 찍을 때 정해짐)' : active.worker}${st.inspector && st.inspector !== active.worker ? ' · 검수 ' + st.inspector : ''} · ${active.slots.length}전표 · ${totHave}/${totNeed}개` + (active.perSec ? ` · 피킹 전표당 ${Math.floor(active.perSec / 60)}분 ${active.perSec % 60}초` : '');
     let html = '';
-    for(let n = 1; n <= MAX_SLOTS; n++){
+    const shown = active.slots.length > 6 ? MAX_SLOTS : 6; // 6장 이하면 6칸, 넘으면 12칸(두 줄)
+    for(let n = 1; n <= shown; n++){
       const s = active.slots.find(x => x.slot === n);
       if(!s){ html += `<div class="cell empty"><div class="no">${n}</div><div class="co">비어있음</div></div>`; continue; }
       const need = slotSum(st.need[n]), have = slotSum(st.counts[n]);
@@ -7185,7 +7239,7 @@ const videoRec = (function(){
   function logLine(m, bad){ st && st.log.unshift({ t: new Date().toLocaleTimeString('ko-KR', { hour12:false }), m, bad }); }
   function scheduleSave(now){
     clearTimeout(saveTimer);
-    const run = () => { if(!active) return; post({ type:'sortSaveProgress', id: active.id, progress: { counts: st.counts, seq: st.seq, ts: st.ts, ms: st.ms, recorded: st.recorded, failed: st.failed, labeled: st.labeled, inspector: st.inspector, lastScanAt: st.lastScanAt } })
+    const run = () => { if(!active) return; post({ type:'sortSaveProgress', id: active.id, progress: packProgress() })
       .then(d => { if(d && d.status === '완료' && active){ active.status = '완료'; renderRun(); refreshSortLocks(); } }).catch(() => {}); saveTimer = null; };
     if(now) run(); else saveTimer = setTimeout(run, 2500);
   }
@@ -7241,7 +7295,7 @@ const videoRec = (function(){
   async function sendPickScan(b, worker){
     big('idle', '…', b.status === '배정' ? '피킹 시작 기록 중' : '피킹 완료 기록 중');
     try{
-      const d = await post({ type:'sortPickScan', id: b.id, worker });
+      const d = await post({ type:'sortPickScan', id: b.id, worker }, 60000); // 12장이면 서버 처리에 시간이 더 걸려서
       if(!d.ok){ sortBeep('err'); big('err', '✕', d.error || '기록 실패'); say('다시 찍어주세요'); return; }
       Object.assign(active, d.batch); st.lastScanAt = Date.now();
       if(d.stage === 'already'){ say('이미 피킹 완료'); renderRun(); return; }
@@ -7466,6 +7520,7 @@ const videoRec = (function(){
   }
 
   /* ---------- 스캔 입력 ---------- */
+  let hbIgnoreUntil = 0;
   scan.addEventListener('keydown', e => {
     if(e.key === 'Tab'){ e.preventDefault(); scan.value += '\t'; return; } // 바코드 중간 탭 문자 (검수 화면과 같은 처리)
     if(e.key !== 'Enter') return;
@@ -7481,6 +7536,8 @@ const videoRec = (function(){
     let t = raw; try{ if(containsHangul(t)) t = hangulToEnglish(t); }catch(e2){}
     const wk = t.match(/^WK[^0-9]*(\d+)$/i);
     if(wk){ const name = WORKER_CODE_MAP[wk[1]]; if(name) onWorkerQr(name); else { sortBeep('err'); say('등록 안 된 작업자예요'); } return; }
+    if(/^HB(\||$)/i.test(t)){ hbIgnoreUntil = Date.now() + 2500; sortBeep('err'); big('err', '✕', '박스 QR은 검수 화면에서', '분배는 낱개로만 찍어요 (박스째 나가는 전표는 검수 화면에서)'); say('박스 큐알은 검수 화면에서'); return; }
+    if(Date.now() < hbIgnoreUntil && /^[A-Z0-9]{11}\s*[X×*:]?\s*\d{1,5}$/i.test(t.trim())) return; // 박스 QR 둘째 줄부터는 조용히 무시
     const sb = t.match(/^SB\|(.+)$/i);
     if(sb){ onBatchQr(sb[1].trim().toUpperCase()); return; }
     if(t.indexOf('/') !== -1){

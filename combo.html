@@ -60,11 +60,12 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
 </style>
 </head>
 <body>
-<header><h1>🔳 합본 QR 만들기</h1><span style="font-size:12px;opacity:.8">한 줄 = 박스 하나 · 검수프로그램에서 한 번 찍으면 여러 품목이 박스 1개로 들어가요</span><a href="hub.html">← 허브</a></header>
+<header><h1>🔳 합본 QR 만들기</h1><span style="font-size:12px;opacity:.8">한 줄 = 박스 하나 · 미스캔 정리 4칸(공장·패킹넘버·품목코드·수량)을 붙이면 박스 QR · 검수프로그램에서 한 번 찍으면 여러 품목이 박스 1개로 들어가요</span><a href="hub.html">← 허브</a></header>
 <main>
   <div class="panel left">
     <div class="lbl">엑셀에서 복사해서 붙여넣기 — 한 줄에 QR 한 장</div>
     <textarea id="input" spellcheck="false" placeholder="NTA8000A11110/NTA8000A11205/NTA8000A11303&#10;앵글B	SFAC001F22210/SFAC001F22310"></textarea>
+    <div class="ex" style="border-color:#0EA5E9;background:#F0F9FF"><b>📦 미스캔 정리 탭 4칸 그대로</b> (공장 · 패킹넘버 · 품목코드 · 수량)<br>&nbsp;&nbsp;YL&nbsp;&nbsp;268&nbsp;&nbsp;NTA8000A111&nbsp;&nbsp;10<br>&nbsp;&nbsp;YL&nbsp;&nbsp;268&nbsp;&nbsp;NTA8000A211&nbsp;&nbsp;10<br>→ 공장+패킹넘버가 같은 줄끼리 <b>박스 QR 한 장</b> (검수에서 한 번 찍으면 박스출고까지)</div>
     <div class="ex">· 품번 11자리 + 수량을 붙여 쓰고 <b>/</b> 로 이어요<br>&nbsp;&nbsp;NTA8000A11110/NTA8000A11205<br>· 띄어 써도 돼요: NTA8000A111 10, NTA8000A112 5<br>· 엑셀 첫 칸에 이름(앵글A 등)이 있으면 라벨 제목으로 써요<br>· 엑셀에서 품목을 칸마다 나눠 써도 돼요 (한 행 = 한 박스)</div>
     <div class="opts">
       <label><input type="checkbox" id="optTitle" checked> 첫 칸 이름을 라벨 제목으로</label>
@@ -111,11 +112,49 @@ function parseItems(text){
 }
 function looksLikeItems(cell){ const p = parseItems(cell); return p.items.length > 0 && !p.bad.length; }
 
+// 11/16: 엑셀·시트에서 긁은 한 줄 → 박스 줄 { fac, no, code, qty }
+//  · 미스캔 정리 탭 4칸 (공장 | 패킹넘버 | 품목코드 | 수량)
+//  · 입고 날짜 탭 줄 그대로 (출하일자 | 공장 | 패킹넘버 | 품목코드 | 품목 | 수량 | …)
+//  칸 위치가 아니라 내용으로 찾는다: 품목코드 칸 → 그 앞 숫자 칸 = 패킹넘버 → 그 앞 글자 칸 = 공장 → 품목코드 뒤 첫 숫자 칸 = 수량
+const HEADER_WORDS = /^(공장|패킹넘버|패킹|박스번호|품목코드|품번|수량|출하일자|입고일자|품목|품명|CBM|실측CBM|오류코드|상세내용|사이즈)$/;
+function cleanCode(v){ return String(v || '').toUpperCase().replace(/\s/g, '').replace(/[-_(]*(HP|FA)\)?$/, '').replace(/[^A-Z0-9]/g, ''); }
+function isCodeCell(v){ const c = cleanCode(v); return c.length >= 9 && /[A-Z]/.test(c) && /\d/.test(c) && /^[A-Z]{2,}/.test(c); }
+function numOf(v){ const m = String(v || '').replace(/,/g, '').trim().match(/^[A-Z#]{0,3}[\s\-]?0*(\d{1,5})\s*(번|개|장|EA|PCS)?$/i); return m ? Number(m[1]) : null; }
+function parseBoxRow(line){
+  const c = line.split('\t').map(x => x.trim());
+  if(c.length < 3) return null;
+  if(c.some(x => HEADER_WORDS.test(x))) return { header: true };
+  const ci = c.findIndex(isCodeCell);
+  if(ci < 1) return null;
+  let ni = -1; for(let i = ci - 1; i >= 0; i--){ if(c[i] === '') continue; if(numOf(c[i]) !== null){ ni = i; } break; }
+  if(ni < 0) return null;
+  let fac = ''; for(let i = ni - 1; i >= 0; i--){ if(c[i] === '') continue; if(!/^\d{2,4}[-./]\d{1,2}([-./]\d{1,2})?$/.test(c[i]) && numOf(c[i]) === null) fac = c[i]; break; }
+  let qty = null; for(let i = ci + 1; i < c.length; i++){ const q = numOf(c[i]); if(q !== null && !/[.]/.test(c[i])){ qty = q; break; } }
+  if(qty === null) return null;
+  return { fac, no: String(numOf(c[ni])), code: cleanCode(c[ci]), qty };
+}
 function parseInput(){
   const useTitle = $('optTitle').checked;
   const rows = [];
+  const boxes = new Map(); // "공장|번호" → 박스 줄
   String($('input').value || '').replace(/\r/g, '').split('\n').forEach((line, idx) => {
     if(!line.trim()) return;
+    const br = parseBoxRow(line);
+    if(br && br.header) return;
+    if(line.split('\t').some(x => HEADER_WORDS.test(x.trim()))) return; // 머리글 줄은 건너뜀
+    if(br){
+      const k = br.fac + '|' + br.no;
+      let r = boxes.get(k);
+      if(!r){
+        const facQr = br.fac.toUpperCase().replace(/\s/g, '');
+        const ascii = /^[A-Z0-9]*$/.test(facQr);
+        r = { line: idx + 1, title: `${br.fac ? br.fac + ' ' : ''}${br.no}번`, box: true, head: `HB|${ascii ? facQr : ''}|${br.no}`, map: new Map(), problems: [],
+              note: !br.fac ? '공장 칸을 못 찾아서 패킹넘버·품번으로만 찾아요' : ascii ? '' : '공장 이름이 영어가 아니라 QR에는 패킹넘버만 넣었어요 (번호·품번으로 찾음)' };
+        boxes.set(k, r); rows.push(r);
+      }
+      r.map.set(br.code, (r.map.get(br.code) || 0) + br.qty);
+      return;
+    }
     let cells = line.split('\t').map(c => c.trim()).filter(c => c !== '');
     let title = '';
     if(useTitle && cells.length > 1 && !looksLikeItems(cells[0])){ title = cells.shift(); }
@@ -136,9 +175,17 @@ function parseInput(){
     if(items.length > 20) problems.push(`품목이 ${items.length}개 — QR이 너무 촘촘해져요 (20개 이하로 나눠주세요)`);
     rows.push({ line: idx + 1, title, items, problems, total: items.reduce((a, b) => a + b.qty, 0) });
   });
+  rows.filter(r => r.box).forEach(r => {
+    r.items = Array.from(r.map, ([code, qty]) => ({ code, qty })); delete r.map;
+    r.total = r.items.reduce((a, b) => a + b.qty, 0);
+    if(r.items.some(it => !it.qty)) r.problems.push('수량 0');
+    const odd = r.items.filter(it => it.code.length !== CODE_LEN);
+    if(odd.length) r.problems.push(`품목코드가 ${CODE_LEN}자리가 아니에요: ${odd.slice(0, 3).map(it => it.code).join(', ')}`);
+    if(r.items.length > 20) r.problems.push(`품목이 ${r.items.length}개 — QR이 너무 촘촘해져요 (20개 이하로 나눠주세요)`);
+  });
   return rows;
 }
-function qrPayload(items){ return 'HB\n' + items.map(it => `${it.code} ${it.qty}`).join('\n'); }
+function qrPayload(items, head){ return (head || 'HB') + '\n' + items.map(it => `${it.code} ${it.qty}`).join('\n'); }
 function qrDataUrl(text, cell){
   const q = qrcode(0, 'M'); q.addData(text); q.make();
   const n = q.getModuleCount(), c = cell || 8, pad = c * 3;
@@ -158,7 +205,7 @@ function render(){
   $('printBtn').textContent = ok.length ? `🖨️ 라벨 ${ok.length * copies}장 출력` : '🖨️ 라벨 출력';
   $('grid').innerHTML = rows.length ? rows.map(r => r.problems.length
     ? `<div class="card bad"><div><div class="t">⚠️ ${esc(r.title || '(제목 없음)')}</div><div class="no">${r.line}번째 줄</div><div class="why">${r.problems.map(esc).join('<br>')}</div></div></div>`
-    : `<div class="card"><img src="${qrDataUrl(qrPayload(r.items), 6)}" alt=""><div><div class="t">${esc(r.title || '(제목 없음)')}<span class="k">${r.items.length}품목 · ${r.total}개</span></div><div class="no">${r.line}번째 줄</div>
+    : `<div class="card"><img src="${qrDataUrl(qrPayload(r.items, r.head), 6)}" alt=""><div><div class="t">${esc(r.title || '(제목 없음)')}<span class="k">${r.box ? '📦 박스 · ' : ''}${r.items.length}품목 · ${r.total}개</span></div><div class="no">${r.line}번째 줄${r.box ? ' · 검수에서 한 번 찍으면 박스출고까지' : ''}</div>${r.note ? `<div class="no" style="color:#B45309">⚠️ ${esc(r.note)}</div>` : ''}
        <div class="l">${r.items.map(it => `${esc(it.code)} ×${it.qty}`).join('<br>')}</div></div></div>`).join('')
     : '<div class="empty">왼쪽에 붙여넣으면 여기 QR이 생겨요</div>';
 }
@@ -181,7 +228,7 @@ function buildPrintHTML(){
     const textH = showText ? lines * fs * 1.35 + 6 : 0;
     const titleH = r.title ? 9 : 0;
     const qrMm = Math.max(30, Math.min(62, 92 - textH - titleH));
-    const img = qrDataUrl(qrPayload(r.items), 10);
+    const img = qrDataUrl(qrPayload(r.items, r.head), 10);
     const list = showText ? `<div class="plist" style="grid-template-columns:repeat(${cols},auto);font-size:${fs}mm;line-height:1.35">${r.items.map(it => `<div>${esc(it.code)} ×${it.qty}</div>`).join('')}</div><div class="ptot">${n}품목 · ${r.total}개</div>` : '';
     const one = `<div class="plabel"><div class="pin" style="transform:translate(${x}mm,${y}mm)">${r.title ? `<div class="ptitle">${esc(r.title)}</div>` : ''}<img class="pqr" src="${img}" style="width:${qrMm}mm;height:${qrMm}mm">${list}</div></div>`;
     for(let i = 0; i < copies; i++) html += one;
