@@ -6551,6 +6551,10 @@ const videoRec = (function(){
 #sortApp .bcard{ border:2px solid #cbd5e1; border-radius:12px; padding:10px 12px; cursor:pointer; background:#fff; }
 #sortApp .cell[data-slot]{ cursor:pointer; } #sortApp .cell.pick{ outline:4px solid #F59E0B; }
 #sortApp #sortLeftBody td.n{ font-size:18px; font-weight:900; color:#DC2626; }
+#sortApp .s-kind{ border:2px solid #161D65; background:#fff; color:#161D65; border-radius:999px; padding:7px 16px; font-weight:900; font-size:14px; cursor:pointer; }
+#sortApp .s-kind b{ display:inline-block; min-width:22px; margin-left:4px; padding:0 6px; border-radius:999px; background:#E0E7FF; color:#161D65; }
+#sortApp .s-kind.on{ background:#161D65; color:#fff; } #sortApp .s-kind.on b{ background:#F59E0B; color:#111; }
+#sortApp .tag-small{ display:inline-block; margin-left:6px; padding:0 7px; border-radius:6px; background:#FEF3C7; color:#92400E; font-size:12px; font-weight:900; }
 #sortApp .bcard:hover{ border-color:#2563EB; }
 @media (max-width:900px){ #sortApp .cells{ grid-template-columns:repeat(3,1fr); } }
 </style>
@@ -6582,6 +6586,12 @@ const videoRec = (function(){
     <!-- ① 전표 고르기 -->
     <div id="sortViewPick">
       <div class="s-card">
+        <div class="s-row" style="margin-bottom:10px;" id="sortKindRow">
+          <button class="s-kind on" data-kind="mid">📦 10~100개 <b id="sortKindMid">0</b></button>
+          <button class="s-kind" data-kind="small">🧺 소량 1~9개 <b id="sortKindSmall">0</b></button>
+          <button class="s-kind" data-kind="all">전체 <b id="sortKindAll">0</b></button>
+          <span class="muted">· 칸에는 섞어서 담아도 돼요 (고른 건 탭을 바꿔도 유지)</span>
+        </div>
         <div class="s-row" style="margin-bottom:10px;">
           <select class="f" id="sortZone"><option value="">구역: 전체</option></select>
           <input type="text" id="sortSearch" placeholder="업체·전표번호 검색" style="flex:1; min-width:160px;">
@@ -6858,7 +6868,7 @@ const videoRec = (function(){
       const ps = pickingStateCache[g.canon];
       const items = Object.values(g.items);
       const total = items.reduce((a, b) => a + b.qty, 0);
-      if(total < MIN_QTY || total > MAX_QTY) return;
+      if(total < 1 || total > MAX_QTY) return; // 11/16: 1~9개 소량도 목록에 (탭으로 구분)
       const lock = sortLockMap[g.canon];
       if(ps && !lock) return; // 이미 일반 피킹 시작
       const big = items.filter(i => i.qty >= BOX_QTY);
@@ -6866,13 +6876,22 @@ const videoRec = (function(){
       if(big.length) ex = `${big[0].code} ${big[0].qty}개 → 박스 출고라 제외`;
       else if(exclusiveProblem(g.company, items)) ex = '완전분배 확인 필요 → 검수 화면에서';
       let zone = ''; try{ zone = guessZoneForCompany(g.company) || ''; }catch(e){}
-      out.push({ canon: g.canon, key: g.key, company: g.company, zone, items, total, sku: items.length, lock, ex });
+      out.push({ canon: g.canon, key: g.key, company: g.company, zone, items, total, sku: items.length, lock, ex, small: total < MIN_QTY });
     });
     out.sort((a, b) => (a.zone || 'ZZ').localeCompare(b.zone || 'ZZ') || a.canon.localeCompare(b.canon, undefined, { numeric:true }));
     candidates = out;
     selected = selected.filter(c => out.some(o => o.canon === c && !o.lock && !o.ex));
   }
   function canonDate(canon){ const m = canon.match(/(\d{4})\/(\d{2})\/(\d{2})/); return m ? m[1] + m[2] + m[3] : ''; }
+  /* 11/16: 10~100개 / 소량 1~9개 / 전체 탭 */
+  let sortKind = 'mid';
+  try{ sortKind = localStorage.getItem('sortKind') || 'mid'; }catch(e){}
+  const kindOk = c => sortKind === 'all' || (sortKind === 'small' ? c.small : !c.small);
+  document.querySelectorAll('#sortKindRow .s-kind').forEach(b => {
+    b.classList.toggle('on', b.getAttribute('data-kind') === sortKind);
+    b.onclick = () => { sortKind = b.getAttribute('data-kind'); try{ localStorage.setItem('sortKind', sortKind); }catch(e){}
+      document.querySelectorAll('#sortKindRow .s-kind').forEach(x => x.classList.toggle('on', x === b)); renderCandidates(); scan.focus(); };
+  });
   function renderCandidates(){
     buildCandidates();
     const zsel = $('sortZone'), zv = zsel.value;
@@ -6880,14 +6899,19 @@ const videoRec = (function(){
     zsel.innerHTML = '<option value="">구역: 전체</option>' + zones.map(z => `<option value="${escapeHtml(z)}">${escapeHtml(z)}구역</option>`).join('');
     zsel.value = zones.indexOf(zv) !== -1 ? zv : '';
     const q = $('sortSearch').value.trim().toLowerCase();
-    const list = candidates.filter(c => (!zsel.value || c.zone === zsel.value) && (!q || (c.company + ' ' + c.key).toLowerCase().indexOf(q) !== -1));
-    const ok = candidates.filter(c => !c.lock && !c.ex).length;
-    $('sortPickInfo').textContent = salesCache ? `분배 대상 ${ok}장 (10~100개 · 한 품목 40개 이상 제외) · 판매현황 ${salesCacheFetchedAt ? new Date(salesCacheFetchedAt).toLocaleTimeString('ko-KR',{hour12:false}) : ''} 기준` : '판매현황을 받는 중…';
+    const list = candidates.filter(c => kindOk(c) && (!zsel.value || c.zone === zsel.value) && (!q || (c.company + ' ' + c.key).toLowerCase().indexOf(q) !== -1));
+    const free = c => !c.lock && !c.ex;
+    $('sortKindMid').textContent = candidates.filter(c => !c.small && free(c)).length;
+    $('sortKindSmall').textContent = candidates.filter(c => c.small && free(c)).length;
+    $('sortKindAll').textContent = candidates.filter(free).length;
+    const ok = candidates.filter(c => kindOk(c) && free(c)).length;
+    const kindTxt = sortKind === 'small' ? '소량 1~9개' : sortKind === 'all' ? '1~100개' : '10~100개 · 한 품목 40개 이상 제외';
+    $('sortPickInfo').textContent = salesCache ? `분배 대상 ${ok}장 (${kindTxt}) · 판매현황 ${salesCacheFetchedAt ? new Date(salesCacheFetchedAt).toLocaleTimeString('ko-KR',{hour12:false}) : ''} 기준` : '판매현황을 받는 중…';
     $('sortCandBody').innerHTML = list.map(c => {
       const si = selected.indexOf(c.canon);
       if(c.lock) return `<tr class="lock"><td>🔒</td><td></td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${escapeHtml(c.zone)}</td><td>${c.sku}</td><td>${c.total}</td><td>${escapeHtml(c.lock.worker)} · ${escapeHtml(c.lock.id)}</td></tr>`;
       if(c.ex) return `<tr class="ex"><td>✋</td><td></td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${escapeHtml(c.zone)}</td><td>${c.sku}</td><td>${c.total}</td><td>${escapeHtml(c.ex)}</td></tr>`;
-      return `<tr class="cand ${si !== -1 ? 'sel' : ''}" data-canon="${escapeHtml(c.canon)}"><td><input type="checkbox" ${si !== -1 ? 'checked' : ''} tabindex="-1"></td><td>${si !== -1 ? `<span class="slotn">${si + 1}</span>` : ''}</td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${escapeHtml(c.zone)}</td><td>${c.sku}</td><td>${c.total}</td><td></td></tr>`;
+      return `<tr class="cand ${si !== -1 ? 'sel' : ''}" data-canon="${escapeHtml(c.canon)}"><td><input type="checkbox" ${si !== -1 ? 'checked' : ''} tabindex="-1"></td><td>${si !== -1 ? `<span class="slotn">${si + 1}</span>` : ''}</td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${escapeHtml(c.zone)}</td><td>${c.sku}</td><td>${c.total}${c.small ? '<span class="tag-small">소량</span>' : ''}</td><td></td></tr>`;
     }).join('') || '<tr><td colspan="8" class="muted" style="padding:16px">지금 분배할 수 있는 전표가 없어요</td></tr>';
     $('sortCandBody').querySelectorAll('tr.cand').forEach(tr => tr.onclick = () => toggleSel(tr.getAttribute('data-canon')));
     updateSelInfo();
@@ -6914,7 +6938,7 @@ const videoRec = (function(){
   $('sortSearch').oninput = renderCandidates;
   $('sortClearSel').onclick = () => { selected = []; renderCandidates(); };
   $('sortRecommend').onclick = () => {
-    const ok = candidates.filter(c => !c.lock && !c.ex && (!$('sortZone').value || c.zone === $('sortZone').value));
+    const ok = candidates.filter(c => !c.lock && !c.ex && kindOk(c) && (!$('sortZone').value || c.zone === $('sortZone').value));
     if(!ok.length){ say('추천할 전표가 없어요'); return; }
     const byZone = {}; ok.forEach(c => (byZone[c.zone || '-'] = byZone[c.zone || '-'] || []).push(c));
     const best = Object.values(byZone).sort((a, b) => b.length - a.length)[0];
