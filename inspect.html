@@ -6666,7 +6666,7 @@ const videoRec = (function(){
       <div class="s-card">
         <div class="s-row" style="justify-content:space-between;">
           <div class="s-row"><b style="font-size:18px;" id="sortBatchTitle">묶음 없음</b> <span class="stage" id="sortStage">-</span> <span class="muted" id="sortBatchMeta"></span></div>
-          <div class="s-row"><button class="btn b-line" id="sortReprint">🖨 피킹지 다시 출력</button><button class="btn b-red" id="sortCancel">묶음 취소</button></div>
+          <div class="s-row"><button class="btn b-line" id="sortVerify" title="✅ 칸이 정말 검수기록에 들어갔는지 서버에서 확인하고, 없으면 다시 기록해요">🔍 기록 확인</button><button class="btn b-line" id="sortReprint">🖨 피킹지 다시 출력</button><button class="btn b-red" id="sortCancel">묶음 취소</button></div>
         </div>
         <div style="height:10px"></div>
         <div class="s-big idle" id="sortBig"><div class="n" id="sortBigN">–</div><div class="t" id="sortBigT">묶음을 고르거나 묶음 QR을 찍어주세요</div><div class="d" id="sortBigD"></div></div>
@@ -7176,6 +7176,7 @@ const videoRec = (function(){
     if(img && !img.complete){ img.onload = go; setTimeout(go, 1500); } else setTimeout(go, 300);
   }
   $('sortReprint').onclick = () => { if(active) printPickSheet(active); };
+  $('sortVerify').onclick = () => verifyAll(true);
 
   /* ---------- ② 묶음 진행 ---------- */
   /* 11/16: 12칸·큰 묶음도 시트 한 칸(5만 글자)에 들어가게 진행 기록을 줄여서 저장
@@ -7214,6 +7215,7 @@ const videoRec = (function(){
     b.slots.forEach(s => { st.counts[s.slot] = st.counts[s.slot] || {}; st.seq[s.slot] = st.seq[s.slot] || []; st.ts[s.slot] = st.ts[s.slot] || []; st.ms[s.slot] = st.ms[s.slot] || 0; });
     leftFilter = 0;
     setView('run'); renderRun();
+    setTimeout(() => { if(active === b) verifyAll(false); }, 1500);
     ensureLocOrder().then(() => { if(active === b) renderRun(); }); // 남은 상품 목록을 진열순서대로
     // 다 찼는데 아직 기록 안 된 칸이 있으면 다시 넘긴다 (화면을 껐다 켠 경우)
     b.slots.forEach(s => { if(slotFull(s.slot) && !st.recorded[s.slot]) enqueueReplay(s.slot); });
@@ -7496,10 +7498,50 @@ const videoRec = (function(){
     if(sendWaiter && sendWaiter.canon === canon){ const w = sendWaiter; sendWaiter = null; w.res(true); }
     const slowT = setTimeout(() => { if(o.tok === tok && o.inflight){ o.note = '서버가 느려요 — 저장 응답 기다리는 중 (계속 찍어도 돼요)'; renderRun(); } }, SAVE_SLOW_MS);
     const deadT = setTimeout(() => { if(o.tok === tok && o.inflight){ o.inflight = false; checkSlot(n, '응답 없음'); } }, SAVE_DEAD_MS);
-    pr.then(r => r.clone().json().catch(() => ({ ok: r.ok })).then(j => { if(!r.ok || (j && j.ok === false)) throw new Error((j && j.error) || ('서버 응답 ' + r.status)); }))
-      .then(() => { clearTimeout(slowT); clearTimeout(deadT); if(o.tok === tok) o.inflight = false; markRecorded(n, bid); })
+    // 11/16: 구글 서버가 바쁘면 JSON 대신 오류 안내 페이지(HTML)를 200으로 돌려줄 때가 있다 → 예전엔 이걸 "성공"으로 봐서
+    //        화면엔 ✅인데 검수기록엔 없는 일이 생겼음. 이제 {ok:true}를 받은 경우만 성공, 나머지는 서버에 직접 확인한다.
+    pr.then(r => r.clone().text().then(tx => { let j = null; try{ j = JSON.parse(tx); }catch(e){}
+        if(!r.ok) throw new Error('서버 응답 ' + r.status);
+        if(!j) throw new Error('서버 응답을 못 읽음');
+        if(j.ok === false) throw new Error(j.error || '서버 오류'); }))
+      .then(() => { clearTimeout(slowT); clearTimeout(deadT); if(o.tok === tok) o.inflight = false; markRecorded(n, bid); laterVerify(n, bid); })
       .catch(e => { clearTimeout(slowT); clearTimeout(deadT); if(o.tok !== tok) return; o.inflight = false; checkSlot(n, String((e && e.message) || e).slice(0, 60)); });
     renderRun();
+  }
+  // 저장 성공 응답을 받아도 30초 뒤 한 번 더 서버 검수기록에서 확인 → 없으면 다시 보냄 (라벨은 다시 안 뽑음)
+  function laterVerify(n, bid){
+    setTimeout(async () => {
+      if(!active || active.id !== bid || !st || !st.recorded[n]) return;
+      const has = await serverHas(n);
+      if(has !== false || !active || active.id !== bid) return;
+      const s = active.slots.find(x => x.slot === n);
+      st.recorded[n] = false; st.allDoneShown = false;
+      logLine(`${n}번 ${s.company} — 검수기록에 없어서 다시 보내요`, true);
+      try{ const ck = canonicalDocKeyJS(s.key); if(processedDocMap[ck] && processedDocMap[ck].local) delete processedDocMap[ck]; }catch(e){}
+      renderRun(); scheduleSave(true);
+      const o = sv[n]; if(o && o.body){ o.tries = 0; checkSlot(n, '저장 재확인'); } else enqueueReplay(n);
+    }, 30000);
+  }
+  // 11/16: 묶음을 열 때(묶음 QR로 다시 열어도) ✅ 칸이 정말 검수기록에 있는지 한 번에 확인 → 없는 칸만 다시 기록 (라벨은 다시 안 뽑음)
+  async function verifyAll(manual){
+    if(!active || !st) return;
+    const b = active, done = b.slots.filter(x => st.recorded[x.slot]);
+    if(!done.length){ if(manual) say('확인할 칸이 없어요'); return; }
+    if(Date.now() - Number(b.created || 0) > 36 * 3600 * 1000 && !manual) return; // 서버 확인은 오늘·어제 검수기록만 봄
+    let map = null;
+    try{ const r = await _fetch(gasWebhookUrl + '?action=getProcessedDocKeys&_=' + Date.now()); const d = await r.json(); if(d && d.ok) map = d.map || {}; }catch(e){}
+    if(!map || !active || active !== b){ if(manual) say('서버 확인이 안 돼요'); return; }
+    const missing = done.filter(x => !map[canonicalDocKeyJS(x.key)]);
+    if(!missing.length){ if(manual){ say('기록 모두 확인'); logLine(`검수기록 확인 — ${done.length}칸 모두 있어요`); renderRun(); } return; }
+    missing.forEach(x => {
+      st.recorded[x.slot] = false; delete st.failed[x.slot];
+      try{ const ck = canonicalDocKeyJS(x.key); if(processedDocMap[ck] && processedDocMap[ck].local) delete processedDocMap[ck]; }catch(e){}
+      logLine(`${x.slot}번 ${x.company} — 검수기록에 없어서 다시 기록해요 (라벨은 다시 안 뽑음)`, true);
+    });
+    st.allDoneShown = false;
+    say(`${missing.length}칸 다시 기록`);
+    renderRun(); scheduleSave(true);
+    missing.forEach(x => enqueueReplay(x.slot));
   }
   function markRecorded(n, bid, note){
     if(!active || active.id !== bid || !st || st.recorded[n]) return;
