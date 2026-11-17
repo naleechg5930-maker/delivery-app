@@ -5200,6 +5200,9 @@ async function printAllQueued(){
   if(currentPendingQueue.length === 0) return;
   const btn = document.getElementById('printAllQueueBtn');
   btn.disabled = true;
+  // 11/17: [전체 인쇄]를 누르면 대기열 창은 바로 닫는다 (인쇄는 뒤에서 차례로 계속됨)
+  try{ document.getElementById('printQueueOverlay').classList.remove('show'); }catch(e){}
+  try{ focusInput(); }catch(e){}
   for(const item of currentPendingQueue.slice()){
     await printQueuedItem(item); // 앞 건이 다 인쇄된 뒤 다음 건
     await new Promise(r => setTimeout(r, 500));
@@ -6601,6 +6604,7 @@ const videoRec = (function(){
     <span style="font-size:13px; font-weight:800;" title="묶음을 만들 때 기본으로 들어가는 이름 — 실제 피킹자는 묶음 QR 다음에 찍는 이름 QR로 정해져요">기본 작업자</span>
     <select id="sortWorker"></select>
     <button class="s-tab" id="sortLightBtn" title="칸마다 LED 불빛 + 부저 (USB로 연결한 아두이노)">💡 불빛 <span id="sortLightDot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#94a3b8;margin-left:3px;"></span></button>
+    <button class="s-tab" id="sortPrintBtn" title="칸이 끝날 때마다 라벨을 이 컴퓨터 프린터로 바로 출력 (끄면 인쇄 대기열로)">🖨 바로 인쇄</button>
     <button class="s-tab" id="sortSoundBtn">🔊 소리</button>
     <button class="s-link" id="sortToInspect" title="검수 화면으로">검수 화면으로 ↗</button>
   </div>
@@ -7171,7 +7175,8 @@ const videoRec = (function(){
     const w = window.open('', '_blank', 'width=900,height=1000');
     if(!w){ alert('팝업이 막혀서 피킹지를 못 열었어요. 주소창 오른쪽에서 팝업 허용 후 [피킹지 다시 출력]을 눌러주세요.'); return; }
     w.document.open(); w.document.write(html); w.document.close();
-    const go = () => { try{ w.focus(); w.print(); }catch(e){} };
+    let printed = false; // 11/17: 그림 로딩 완료 + 시간초과 둘 다 불러서 인쇄창이 2번 뜨던 것 → 한 번만
+    const go = () => { if(printed) return; printed = true; try{ w.focus(); w.print(); }catch(e){} };
     const img = w.document.querySelector('img');
     if(img && !img.complete){ img.onload = go; setTimeout(go, 1500); } else setTimeout(go, 300);
   }
@@ -7189,7 +7194,7 @@ const videoRec = (function(){
       seqI[s.slot] = (st.seq[s.slot] || []).map(c => { const i = codes.indexOf(c); return i < 0 ? c : i; }).join(',');
       let prev = t0; tsD[s.slot] = (st.ts[s.slot] || []).map(t => { const d = Math.max(0, Math.round((t - prev) / 100)); prev = t; return d; }).join(',');
     });
-    return { v: 2, counts: st.counts, seqI, tsD, t0, ms: st.ms, recorded: st.recorded, failed: st.failed, labeled: st.labeled, inspector: st.inspector, lastScanAt: st.lastScanAt };
+    return { v: 2, counts: st.counts, seqI, tsD, t0, ms: st.ms, recorded: st.recorded, failed: st.failed, labeled: st.labeled, partial: st.partial, inspector: st.inspector, lastScanAt: st.lastScanAt };
   }
   function expandProgress(b, p){
     if(!p || p.v !== 2) return p || {};
@@ -7206,7 +7211,7 @@ const videoRec = (function(){
     const need = {};
     b.slots.forEach(s => { need[s.slot] = {}; s.items.forEach(it => { need[s.slot][it.code] = (need[s.slot][it.code] || 0) + Number(it.qty || 0); }); });
     const p = expandProgress(b, b.progress || {});
-    return { need, counts: p.counts || {}, seq: p.seq || {}, ts: p.ts || {}, ms: p.ms || {}, recorded: p.recorded || {}, failed: p.failed || {}, labeled: p.labeled || {}, inspector: p.inspector || '', lastScanAt: p.lastScanAt || 0, log: [] };
+    return { need, counts: p.counts || {}, seq: p.seq || {}, ts: p.ts || {}, ms: p.ms || {}, recorded: p.recorded || {}, failed: p.failed || {}, labeled: p.labeled || {}, partial: p.partial || {}, inspector: p.inspector || '', lastScanAt: p.lastScanAt || 0, log: [] };
   }
   function openBatch(b){
     if(!b) return;
@@ -7218,7 +7223,7 @@ const videoRec = (function(){
     setTimeout(() => { if(active === b) verifyAll(false); }, 1500);
     ensureLocOrder().then(() => { if(active === b) renderRun(); }); // 남은 상품 목록을 진열순서대로
     // 다 찼는데 아직 기록 안 된 칸이 있으면 다시 넘긴다 (화면을 껐다 켠 경우)
-    b.slots.forEach(s => { if(slotFull(s.slot) && !st.recorded[s.slot]) enqueueReplay(s.slot); });
+    b.slots.forEach(s => { if((slotFull(s.slot) || (st.partial && st.partial[s.slot])) && !st.recorded[s.slot] && !st.failed[s.slot]) enqueueReplay(s.slot); });
   }
   const slotSum = (obj) => Object.values(obj || {}).reduce((a, b) => a + b, 0);
   function slotFull(n){ const need = st.need[n] || {}; return Object.keys(need).every(c => (st.counts[n][c] || 0) >= need[c]); }
@@ -7244,11 +7249,13 @@ const videoRec = (function(){
       const full = have >= need, rec = st.recorded[n], fail = st.failed[n];
       const cls = rec ? 'rec' : fail ? 'fail' : full ? 'full' : (lastSlot === n ? 'cur' : '');
       const o = sv[n] && sv[n].bid === active.id ? sv[n] : null;
-      const q = rec ? '✅ 검수완료' : fail ? `⚠️ 확인 필요 <button class="btn b-red" style="padding:2px 8px;font-size:12px" data-retry="${n}">다시</button>` : full ? ('⏳ ' + ((o && o.note) || '검수기록 저장 중…')) : `${have}/${need}`;
-      html += `<div class="cell ${cls}${leftFilter === n ? ' pick' : ''}" data-slot="${n}"><div class="no">${n}</div><div class="co">${escapeHtml(s.company)}</div><div class="k">${escapeHtml(s.key)}</div><div class="bar"><i style="width:${need ? Math.round(have / need * 100) : 0}%"></i></div><div class="q">${q}</div>${fail ? `<div class="k" style="color:#DC2626">${escapeHtml(fail)}</div>` : ''}</div>`;
+      const canPartial = !rec && !full && !fail && have > 0 && active.status === '분배중' && !(st.partial && st.partial[n]);
+      const q = rec ? ((st.partial && st.partial[n]) ? '✅ 검수완료 (미스캔 제외)' : '✅ 검수완료') : (st.partial && st.partial[n] && !fail) ? ('⏳ ' + ((o && o.note) || '미스캔 제외 완료 처리 중…')) : fail ? `⚠️ 확인 필요 <button class="btn b-red" style="padding:2px 8px;font-size:12px" data-retry="${n}">다시</button>` : full ? ('⏳ ' + ((o && o.note) || '검수기록 저장 중…')) : `${have}/${need}`;
+      html += `<div class="cell ${cls}${leftFilter === n ? ' pick' : ''}" data-slot="${n}"><div class="no">${n}</div><div class="co">${escapeHtml(s.company)}</div><div class="k">${escapeHtml(s.key)}</div><div class="bar"><i style="width:${need ? Math.round(have / need * 100) : 0}%"></i></div><div class="q">${q}</div>${fail ? `<div class="k" style="color:#DC2626">${escapeHtml(fail)}</div>` : ''}${leftFilter === n && canPartial ? `<button class="btn b-red" style="margin-top:6px;padding:4px 8px;font-size:12px;width:100%" data-partial="${n}">⚡ 미스캔 제외 완료</button>` : ''}</div>`;
     }
     $('sortCells').innerHTML = html;
-    $('sortCells').querySelectorAll('.cell[data-slot]').forEach(el => el.addEventListener('click', ev => { if(ev.target.closest('[data-retry]')) return; const n = Number(el.getAttribute('data-slot')); leftFilter = leftFilter === n ? 0 : n; renderRun(); }));
+    $('sortCells').querySelectorAll('[data-partial]').forEach(bt => bt.addEventListener('click', ev => { ev.stopPropagation(); partialSlot(Number(bt.getAttribute('data-partial'))); }));
+    $('sortCells').querySelectorAll('.cell[data-slot]').forEach(el => el.addEventListener('click', ev => { if(ev.target.closest('[data-retry]') || ev.target.closest('[data-partial]')) return; const n = Number(el.getAttribute('data-slot')); leftFilter = leftFilter === n ? 0 : n; renderRun(); }));
     renderLeft();
     $('sortCells').querySelectorAll('[data-retry]').forEach(b => b.onclick = () => retrySlot(Number(b.getAttribute('data-retry'))));
     $('sortLog').innerHTML = st.log.slice(0, 40).map(l => `<div class="${l.bad ? 'bad' : ''}">${escapeHtml(l.t)} · ${escapeHtml(l.m)}</div>`).join('');
@@ -7359,7 +7366,7 @@ const videoRec = (function(){
     clearTimeout(saveTimer);
     const run = () => { if(!active) return; post({ type:'sortSaveProgress', id: active.id, progress: packProgress() })
       .then(d => { if(d && d.status === '완료' && active){ active.status = '완료'; renderRun(); refreshSortLocks(); } }).catch(() => {}); saveTimer = null; };
-    if(now) run(); else saveTimer = setTimeout(run, 2500);
+    if(now) run(); else saveTimer = setTimeout(run, 8000); // 11/17: 찍는 중 진행 저장은 8초에 한 번 (검수기록 저장과 서버에서 겹치지 않게)
   }
   $('sortCancel').onclick = async () => {
     if(!active) return;
@@ -7454,7 +7461,7 @@ const videoRec = (function(){
     logLine(`${c} → ${slot}번 (${s.company})`);
     if(slotFull(slot)){
       announce(slot, true);
-      big('done', slot, `${slot}번 완료 · ${s.company}`, '검수완료 기록 + 라벨 인쇄 대기열');
+      big('done', slot, `${slot}번 완료 · ${s.company}`, directPrint ? '검수완료 기록 + 라벨 바로 인쇄' : '검수완료 기록 + 라벨 인쇄 대기열');
       renderRun(slot);
       enqueueReplay(slot);
       scheduleSave(true);
@@ -7562,7 +7569,7 @@ const videoRec = (function(){
     $('sortDoneSub').textContent = `묶음 ${active.id} · ${active.slots.length}전표 모두 끝났어요`;
     $('sortDoneList').innerHTML = active.slots.map(x => `${x.slot}번 ${escapeHtml(x.company)} ✓`).join('<br>');
     $('sortDone').classList.add('show');
-    big('done', '✓', `묶음 ${active.id} 검수완료`, '라벨은 인쇄 대기열로 갔어요 · 다음 묶음은 ① 전표 고르기에서');
+    big('done', '✓', `묶음 ${active.id} 검수완료`, (directPrint ? '라벨은 바로 인쇄됐어요' : '라벨은 인쇄 대기열로 갔어요') + ' · 다음 묶음은 ① 전표 고르기에서');
     stopAll();
     try{ audioIn(); const t0 = sCtx.currentTime; [523, 659, 784, 1047].forEach((f, i) => toneAt(f, t0 + i * 0.12, 0.14)); }catch(e){}
     annTimer = setTimeout(() => speak('검수 완료', 1), 550);
@@ -7614,6 +7621,33 @@ const videoRec = (function(){
     renderRun(); enqueueReplay(n);
   }
 
+  // 11/17: 칸 끝날 때 라벨 바로 인쇄 (분배 PC에 프린터가 있을 때) — 이 컴퓨터에 기억
+  let directPrint = false;
+  try{ directPrint = localStorage.getItem('sortDirectPrint') === '1'; }catch(e){}
+  function paintPrintBtn(){ const bt = $('sortPrintBtn'); if(!bt) return; bt.classList.toggle('on', directPrint); bt.textContent = directPrint ? '🖨 바로 인쇄 ON' : '🖨 대기열로 인쇄'; }
+  $('sortPrintBtn').onclick = () => {
+    directPrint = !directPrint;
+    try{ localStorage.setItem('sortDirectPrint', directPrint ? '1' : '0'); }catch(e){}
+    paintPrintBtn(); say(directPrint ? '라벨 바로 인쇄' : '라벨 인쇄 대기열로'); scan.focus();
+  };
+  paintPrintBtn();
+  // 11/17: ⚡ 미스캔 제외 완료 — 그 칸에 찍은 것만으로 검수완료 (검수 화면의 [⚡ 미스캔 제외 강제완료]와 같음)
+  function partialSlot(n){
+    if(!active || !st || st.recorded[n]) return;
+    const s = active.slots.find(x => x.slot === n);
+    const short = s.items.map(it => ({ code: it.code, name: it.name, spec: it.spec, need: st.need[n][it.code] || 0, have: st.counts[n][it.code] || 0 })).filter(x => x.have < x.need);
+    if(!short.length){ say('다 찼어요'); return; }
+    if(!slotSum(st.counts[n])){ sortBeep('err'); say('찍은 상품이 없어요'); return; }
+    const list = short.map(x => `• ${x.code} ${x.name || ''} ${x.spec || ''} (주문 ${x.need}개 → 출고 ${x.have}개)`).join('\n');
+    if(!confirm(`${n}번 ${s.company}\n\n다음 ${short.length}개 품목은 주문보다 적게 나갑니다:\n${list}\n\n찍은 수량만으로 검수완료 처리할까요?`)){ scan.focus(); return; }
+    st.partial = st.partial || {}; st.partial[n] = true;
+    leftFilter = 0;
+    logLine(`${n}번 ${s.company} → ⚡ 미스캔 제외 완료 (${short.map(x => x.code + ' ' + x.have + '/' + x.need).join(', ')})`);
+    announce(n, true);
+    big('done', n, `${n}번 미스캔 제외 완료 · ${s.company}`, '찍은 수량만 검수완료 기록 + ' + (directPrint ? '라벨 바로 인쇄' : '라벨 인쇄 대기열'));
+    renderRun(n); scheduleSave(true);
+    enqueueReplay(n);
+  }
   function enqueueReplay(n){ replayQueue = replayQueue.then(() => replaySlot(n)).catch(() => {}); }
   async function replaySlot(n){
     if(!active || st.recorded[n]) return;
@@ -7630,8 +7664,9 @@ const videoRec = (function(){
     const savedSound = soundOn, npEl = document.getElementById('noPrinterToggle'), savedNp = npEl ? npEl.checked : false;
     const _mp = maybePrintCompletedBagsImmediately, _pcl = printCompletionLabel;
     const skipLabel = !!st.labeled[n];
-    sortReplaying = true; soundOn = false; if(npEl) npEl.checked = true; // 라벨은 항상 인쇄 대기열로
-    maybePrintCompletedBagsImmediately = function(){}; // 에이블리 포장명세 즉시 인쇄도 대기열 쪽에서 같이 나옴
+    // 11/17: [🖨 바로 인쇄] 켜짐 → 이 컴퓨터 프린터로 바로 출력 (검수 화면에서 프린터 있는 컴퓨터와 똑같이), 꺼짐 → 인쇄 대기열
+    sortReplaying = true; soundOn = false; if(npEl) npEl.checked = !directPrint;
+    if(!directPrint) maybePrintCompletedBagsImmediately = function(){}; // 대기열이면 에이블리 포장명세도 대기열 쪽에서 같이 나옴
     printCompletionLabel = function(){ if(skipLabel) return; st.labeled[n] = true; return _pcl.apply(this, arguments); }; // 다시 넘길 땐 라벨은 또 안 뽑음
     try{
       try{ if(processedDocMap[canon] && processedDocMap[canon].local) delete processedDocMap[canon]; }catch(e){}
@@ -7643,7 +7678,8 @@ const videoRec = (function(){
       try{ if(exclusiveBlocking){ document.getElementById('exclusiveOverlay').style.display = 'none'; exclusiveBlocking = false; throw new Error('완전분배 확인이 필요한 전표예요 → 검수 화면에서 처리'); } }catch(e){ if(e.message.indexOf('완전분배') !== -1) throw e; }
       // 판매현황이 바뀌었는지 확인 (찍은 수량과 주문 수량이 다르면 넘기지 않음)
       const need = {}; items.forEach(it => need[it.code] = (need[it.code] || 0) + it.orderQty);
-      const have = st.counts[n] || {};
+      const partial = !!(st.partial && st.partial[n]);
+      const have = partial ? st.need[n] : (st.counts[n] || {}); // 미스캔 제외면 "찍은 수량"이 아니라 "묶을 때 주문 수량"과 비교
       const diff = Object.keys(Object.assign({}, need, have)).filter(c => (need[c] || 0) !== (have[c] || 0));
       if(diff.length) throw new Error('판매현황 수량이 바뀌었어요: ' + diff.slice(0, 3).join(', ') + ' → 검수 화면에서 확인');
       // 11/16: 검수 화면 쪽에 숨어서 떠 있는 경고(오피킹·전표 전환·박스 선택)가 있으면 스캔이 전부 막히므로 먼저 닫는다
@@ -7654,7 +7690,8 @@ const videoRec = (function(){
       currentWorker = st.inspector || b.worker; deferredInspectStart = null; // 검수자 = 피킹자 (분배 중에 다른 사람 QR을 찍었으면 그 사람)
       try{ document.getElementById('workerBlockOverlay').style.display = 'none'; }catch(e){}
       inspectionStartTime = new Date(Date.now() - Math.max(1000, st.ms[n] || 0)); // 검수시간 = 이 칸에 넣느라 찍은 시간 합
-      const sent = new Promise(res => { sendWaiter = { canon, res }; setTimeout(() => res(false), 15000); });
+      // 바로 인쇄면 인쇄창이 떠 있는 동안 저장이 멈춰 있을 수 있어서 넉넉히 기다린다 (그 사이 다시 보내 두 번 저장되는 일 방지)
+      const sent = new Promise(res => { sendWaiter = { canon, res }; setTimeout(() => res(false), directPrint ? 180000 : 15000); });
       (st.seq[n] || []).forEach(code => processScan(code));
       // 스캔로그에는 실제로 찍은 시각을 넣는다 (한꺼번에 넘겨서 '연속 스캔'으로 잘못 잡히지 않게)
       try{
@@ -7662,6 +7699,19 @@ const videoRec = (function(){
         scanLogBuffer.forEach(e => { if(e.button || e.skip) return; if(j < ts.length) e.t = ts[j++];
           e.rapid = !!prev && prev.code === e.code && (e.t - prev.t) < RAPID_SCAN_MS; if(e.rapid) scanLogRapidCount++; prev = e; });
       }catch(e){}
+      if(partial){ // 찍은 품목만 남기고 주문 수량을 찍은 수량으로 맞춘 뒤 검수완료 (검수 화면 버튼과 같은 처리)
+        const shortItems = items.filter(it => it.scannedQty < it.orderQty).map(it => ({ code: it.code, orderQty: it.orderQty, scannedQty: it.scannedQty }));
+        const scannedIts = items.filter(it => it.scannedQty > 0);
+        if(!scannedIts.length) throw new Error('찍은 상품이 없어서 미스캔 제외 완료를 못 해요');
+        partialCompleteInfo = shortItems.length ? { items: shortItems } : null;
+        if(scannedIts.length < items.length){
+          items = scannedIts; codeIndex = {}; items.forEach(it => codeIndex[it.code.toUpperCase()] = it);
+          scanSequence = scanSequence.filter(x => x.bagClose || codeIndex[String(x.code || '').toUpperCase()]);
+        }
+        items.forEach(it => { it.orderQty = it.scannedQty; });
+        try{ renderTable(); updateMiniStats(); }catch(e){}
+        checkAllComplete();
+      }
       if(!items.every(it => it.scannedQty >= it.orderQty)){
         const short = items.filter(it => it.scannedQty < it.orderQty).map(it => `${it.code} ${it.scannedQty}/${it.orderQty}`);
         const why = (typeof mispickBlocking !== 'undefined' && mispickBlocking) ? ' · 경고창 잠김' : (exclusiveBlocking ? ' · 완전분배 잠김' : '');
@@ -7669,7 +7719,7 @@ const videoRec = (function(){
         throw new Error('검수 화면에서 수량이 다 차지 않았어요 (' + short.slice(0, 3).join(', ') + why + ')');
       }
       if(!(await sent)) throw new Error('검수기록 저장 요청이 안 나갔어요 — [다시]');
-      logLine(`${n}번 ${s.company} → 검수기록 보냄${skipLabel ? '' : ' · 라벨 인쇄 대기열'}`);
+      logLine(`${n}번 ${s.company} → 검수기록 보냄${skipLabel ? '' : (directPrint ? ' · 라벨 바로 인쇄' : ' · 라벨 인쇄 대기열')}`);
       st.replayTries && delete st.replayTries[n];
     }catch(err){
       const msg = err.message || String(err);
@@ -7727,7 +7777,7 @@ const videoRec = (function(){
     try{ const id = localStorage.getItem('sortActiveId'); const b = id && batches.find(x => x.id === id); if(b) openBatch(b); else if(id) localStorage.removeItem('sortActiveId'); }catch(e){}
   })();
   setInterval(() => { if(view === 'pick' && document.activeElement !== $('sortSearch')) { refreshSortLocks().then(renderCandidates); } }, 60000);
-  window.__sortBusy = () => sortReplaying || !!saveTimer || (st && active && active.slots.some(s => slotFull(s.slot) && !st.recorded[s.slot] && !st.failed[s.slot])) || Object.values(sv).some(o => o.inflight || o.checking);
+  window.__sortBusy = () => sortReplaying || !!saveTimer || (st && active && active.slots.some(s => (slotFull(s.slot) || (st.partial && st.partial[s.slot])) && !st.recorded[s.slot] && !st.failed[s.slot])) || Object.values(sv).some(o => o.inflight || o.checking);
   window.__sort = { get active(){ return active; }, get st(){ return st; }, renderCandidates, toggleSel, onProductScan, onBatchQr, replaySlot, printPickSheet, get candidates(){ return candidates; } };
 })();
 </script>
