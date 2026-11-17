@@ -6614,6 +6614,20 @@ const videoRec = (function(){
 #sortApp .s-kind.on{ background:#161D65; color:#fff; } #sortApp .s-kind.on b{ background:#F59E0B; color:#111; }
 #sortApp .tag-small{ display:inline-block; margin-left:6px; padding:0 7px; border-radius:6px; background:#FEF3C7; color:#92400E; font-size:12px; font-weight:900; }
 #sortApp .bcard:hover{ border-color:#2563EB; }
+#sortApp .ab{ border:2px solid #cbd5e1; border-radius:14px; padding:10px 14px; margin-top:8px; background:#fff; }
+#sortApp .ab.mine{ border-color:#2563EB; background:#EFF6FF; }
+#sortApp .ab.stale{ border-color:#F59E0B; background:#FFFBEB; }
+#sortApp .ab .hd{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+#sortApp .ab .id{ font-weight:900; font-size:16px; }
+#sortApp .ab .sb{ border-radius:999px; padding:1px 10px; font-weight:900; font-size:12.5px; }
+#sortApp .ab .sb.s배정{ background:#E2E8F0; color:#334155; } #sortApp .ab .sb.s피킹중{ background:#FEF3C7; color:#92400E; } #sortApp .ab .sb.s분배중{ background:#DBEAFE; color:#1E40AF; }
+#sortApp .ab .meta{ font-size:13px; color:#475569; } #sortApp .ab .meta b{ color:#111827; }
+#sortApp .ab .bar{ height:8px; background:#E2E8F0; border-radius:999px; overflow:hidden; width:140px; display:inline-block; vertical-align:middle; }
+#sortApp .ab .bar i{ display:block; height:100%; background:#16A34A; }
+#sortApp .ab .acts{ margin-left:auto; display:flex; gap:6px; flex-wrap:wrap; }
+#sortApp .ab .acts .btn{ padding:6px 12px; font-size:13px; }
+#sortApp .ab .co{ font-size:12.5px; color:#64748b; margin-top:4px; }
+#sortApp .ab table{ margin-top:8px; } #sortApp .ab td.okc{ color:#16A34A; font-weight:900; } #sortApp .ab td.warnc{ color:#B45309; font-weight:900; } #sortApp .ab td.badc{ color:#DC2626; font-weight:900; }
 @media (max-width:900px){ #sortApp .cells{ grid-template-columns:repeat(3,1fr); } }
 </style>
 <div id="sortApp">
@@ -6709,9 +6723,12 @@ const videoRec = (function(){
           <button class="btn b-green" id="sortCreate" disabled>칸 배정 + 피킹지 출력 ▶</button></span>
         </div>
       </div>
-      <div class="s-card" id="sortActiveBox" style="display:none;">
-        <div style="font-weight:900; margin-bottom:8px;">진행 중인 묶음 (누르면 이어서)</div>
-        <div class="s-row" id="sortActiveList"></div>
+      <div class="s-card" id="sortActiveBox">
+        <div class="s-row" style="justify-content:space-between;margin-bottom:8px;">
+          <div class="s-row"><b style="font-size:17px;">📋 진행 중인 묶음 <span id="sortActiveCnt">0</span>개</b><span class="muted">이어서 하기 · 내용 확인 · 피킹지 다시 출력 · 묶음 취소</span></div>
+          <button class="btn b-line" id="sortActiveReload">🔄 다시 불러오기</button>
+        </div>
+        <div id="sortActiveList"></div>
       </div>
     </div>
 
@@ -7295,17 +7312,73 @@ const videoRec = (function(){
   }
   $('sortRefresh').onclick = refreshAll;
 
-  /* ---------- 진행 중인 묶음 ---------- */
+  /* ---------- 진행 중인 묶음 (11/17: 아래 칸에서 이어서 하기 · 내용 확인 · 피킹지 · 묶음 취소) ---------- */
+  let abOpen = {};
+  const agoText = t => { if(!t) return ''; const m = Math.floor((Date.now() - t) / 60000); return m < 1 ? '방금' : m < 60 ? m + '분 전' : Math.floor(m / 60) + '시간 ' + (m % 60) + '분 전'; };
+  const hhmm = t => { if(!t) return ''; const d = new Date(t); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+  function batchSummary(b){
+    const x = (active && active.id === b.id && st) ? st : emptyState(b); // 이 화면에서 여는 묶음은 지금 찍은 것까지
+    const rows = b.slots.map(s => {
+      const need = slotSum(x.need[s.slot]), have = slotSum(x.counts[s.slot]);
+      const stt = x.recorded[s.slot] ? 'rec' : x.failed[s.slot] ? 'fail' : x.partial[s.slot] ? 'part' : (need && have >= need) ? 'full' : have ? 'ing' : 'wait';
+      return { s, need, have, stt };
+    });
+    return { rows, rec: rows.filter(r => r.stt === 'rec').length, need: rows.reduce((a, r) => a + r.need, 0), have: rows.reduce((a, r) => a + r.have, 0), last: x.lastScanAt || b.pickEnd || b.pickStart || b.created, inspector: x.inspector };
+  }
+  const STT = { rec: ['✅ 기록됨', 'okc'], fail: ['⚠️ 확인 필요', 'badc'], part: ['✂ 미스캔 제외 종료', 'warnc'], full: ['⏳ 기록 대기', 'warnc'], ing: ['분배 중', ''], wait: ['대기', ''] };
+  function renderActiveList(){
+    $('sortActiveCnt').textContent = batches.length;
+    const list = $('sortActiveList');
+    if(!batches.length){ list.innerHTML = '<div class="muted" style="padding:6px 2px">지금 진행 중인 묶음이 없어요</div>'; return; }
+    list.innerHTML = batches.map(b => {
+      const sm = batchSummary(b), mine = active && active.id === b.id;
+      const stale = !mine && sm.last && Date.now() - sm.last > 2 * 3600 * 1000; // 2시간 넘게 손 안 댄 묶음
+      const pct = sm.need ? Math.round(sm.have / sm.need * 100) : 0;
+      const open = !!abOpen[b.id];
+      return `<div class="ab${mine ? ' mine' : stale ? ' stale' : ''}" data-id="${escapeHtml(b.id)}">
+        <div class="hd"><span class="id">${escapeHtml(b.id)}</span><span class="sb s${escapeHtml(b.status)}">${escapeHtml(b.status)}</span>${mine ? '<span class="sb" style="background:#2563EB;color:#fff">이 화면에서 여는 중</span>' : ''}${stale ? '<span class="sb" style="background:#F59E0B;color:#111">2시간 넘게 멈춤</span>' : ''}
+          <span class="meta">피킹 <b>${escapeHtml(b.status === '배정' ? '(시작 전)' : b.worker || '-')}</b>${sm.inspector ? ' · 검수 <b>' + escapeHtml(sm.inspector) + '</b>' : ''} · 만든 시각 ${hhmm(b.created)} · 마지막 작업 ${agoText(sm.last)}</span>
+          <span class="meta">칸 <b>${sm.rec}/${b.slots.length}</b> 완료 · <span class="bar"><i style="width:${pct}%"></i></span> <b>${sm.have}/${sm.need}</b>개</span>
+          <span class="acts"><button class="btn b-navy" data-act="open">▶ 이어서 하기</button><button class="btn b-line" data-act="view">${open ? '▲ 접기' : '🔍 내용 보기'}</button><button class="btn b-line" data-act="print">🖨 피킹지</button><button class="btn b-red" data-act="cancel">묶음 취소</button></span></div>
+        <div class="co">${b.slots.map(s => s.slot + '. ' + escapeHtml(s.company)).join(' · ')}</div>
+        ${open ? `<table><thead><tr><th style="width:44px">칸</th><th style="width:150px">전표번호</th><th style="width:130px">업체</th><th>품목</th><th style="width:110px">분배 수량</th><th style="width:150px">상태</th></tr></thead><tbody>${sm.rows.map(r => `<tr><td><span class="slotn">${r.s.slot}</span></td><td>${escapeHtml(r.s.key)}</td><td>${escapeHtml(r.s.company)}</td><td style="font-size:12px">${r.s.items.map(it => escapeHtml(it.code) + ' ×' + it.qty).join(', ')}</td><td><b>${r.have}</b> / ${r.need}</td><td class="${STT[r.stt][1]}">${STT[r.stt][0]}</td></tr>`).join('')}</tbody></table>` : ''}
+      </div>`;
+    }).join('');
+    list.querySelectorAll('.ab').forEach(el => {
+      const id = el.getAttribute('data-id'), b = batches.find(x => x.id === id);
+      el.querySelectorAll('[data-act]').forEach(btn => btn.onclick = ev => {
+        ev.stopPropagation();
+        const act = btn.getAttribute('data-act');
+        if(act === 'open') openBatch(active && active.id === id ? active : b);
+        else if(act === 'view'){ abOpen[id] = !abOpen[id]; renderActiveList(); }
+        else if(act === 'print') printPickSheet(b);
+        else if(act === 'cancel') cancelBatch(b);
+        scan.focus();
+      });
+    });
+  }
   async function loadBatches(){
     try{
       const d = await post({ type:'sortListBatches' });
       if(!d.ok) return;
       batches = d.batches || [];
-      const box = $('sortActiveBox'), list = $('sortActiveList');
-      box.style.display = batches.length ? '' : 'none';
-      list.innerHTML = batches.map(b => `<div class="bcard" data-id="${escapeHtml(b.id)}"><b>${escapeHtml(b.id)}</b> · ${escapeHtml(b.worker)} · ${escapeHtml(b.status)}<div class="muted">${b.slots.map(s => s.slot + '. ' + escapeHtml(s.company)).join(' · ')}</div></div>`).join('');
-      list.querySelectorAll('.bcard').forEach(el => el.onclick = () => openBatch(batches.find(b => b.id === el.getAttribute('data-id'))));
+      renderActiveList();
     }catch(e){}
+  }
+  $('sortActiveReload').onclick = async () => { const bt = $('sortActiveReload'); bt.disabled = true; bt.textContent = '불러오는 중…'; await loadBatches(); bt.disabled = false; bt.textContent = '🔄 다시 불러오기'; scan.focus(); };
+  async function cancelBatch(b){
+    if(!b) return;
+    const sm = batchSummary(b), mine = active && active.id === b.id;
+    const msg = `묶음 ${b.id} (${b.slots.length}장)을 취소할까요?\n\n` +
+      (sm.rec ? `· 이미 기록된 ${sm.rec}칸은 그대로 두고, 남은 ${b.slots.length - sm.rec}칸만 풀어요.\n` : '· 아직 기록된 칸이 없어서 전표가 전부 풀려요.\n') +
+      `· 풀린 전표는 다시 검수 화면이나 다른 묶음에서 처리할 수 있어요.\n` +
+      (() => { const q = sm.rows.filter(r => r.stt !== 'rec').reduce((t, r) => t + r.have, 0); return q ? `· 기록 안 된 칸에 이미 분배한 ${q}개는 검수기록에 안 남아요 (그 상품은 칸에서 빼서 다시 처리).\n` : ''; })() +
+      (!mine && b.status !== '배정' ? '· 다른 PC에서 이 묶음을 하고 있으면 그쪽 작업도 멈춰요.' : '');
+    if(!confirm(msg)) return;
+    try{ const d = await post({ type:'sortCancelBatch', id: b.id }); if(!d.ok){ alert(d.error); return; } if(d.note) say(d.note); }catch(e){ alert('통신 오류: ' + e.message); return; }
+    if(mine){ active = null; st = null; try{ localStorage.removeItem('sortActiveId'); }catch(e){} renderRun(); big('idle', '–', '묶음이 취소됐어요'); }
+    delete abOpen[b.id];
+    await refreshSortLocks(); setView('pick'); renderCandidates(); loadBatches();
   }
 
   /* ---------- 묶음 만들기 + 피킹지 ---------- */
@@ -7558,12 +7631,7 @@ const videoRec = (function(){
       .then(d => { if(d && d.status === '완료' && active){ active.status = '완료'; renderRun(); refreshSortLocks(); } }).catch(() => {}); saveTimer = null; };
     if(now) run(); else saveTimer = setTimeout(run, 8000); // 11/17: 찍는 중 진행 저장은 8초에 한 번 (검수기록 저장과 서버에서 겹치지 않게)
   }
-  $('sortCancel').onclick = async () => {
-    if(!active) return;
-    if(!confirm(`묶음 ${active.id}을(를) 취소할까요? 아직 끝나지 않은 전표는 다시 검수 화면이나 다른 묶음에서 처리할 수 있어요.`)) return;
-    try{ const d = await post({ type:'sortCancelBatch', id: active.id }); if(!d.ok){ alert(d.error); return; } }catch(e){ alert('통신 오류: ' + e.message); return; }
-    active = null; st = null; try{ localStorage.removeItem('sortActiveId'); }catch(e){} renderRun(); big('idle', '–', '묶음이 취소됐어요'); await refreshSortLocks(); setView('pick'); renderCandidates(); loadBatches();
-  };
+  $('sortCancel').onclick = () => { if(active) cancelBatch(active); };
 
   async function onBatchQr(id){
     let b = active && active.id === id ? active : null;
