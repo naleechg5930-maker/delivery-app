@@ -6010,7 +6010,7 @@ setInterval(refreshRemainingWorkStatus, 180000); // 3분마다 - 서버 부하�
 <script>
 /* ===================== 검수 영상 녹화 (10/22) =====================
    첫 상품 스캔 → 녹화 시작 → 배송라벨(DLV) 스캔 → 저장.
-   다른 전표를 찍거나 20분이 지나도 그때까지 저장. 영상 위쪽에 전표번호·업체·시간·작업자·진행수량을 글자로 넣는다.
+   다른 전표를 찍거나 60분이 지나도 그때까지 저장 (11/17: 20분 → 60분, 넘으면 2부로 바로 이어서 녹화). 영상 위쪽에 전표번호·업체·시간·작업자·진행수량을 글자로 넣는다.
    저장: [저장 폴더 선택]으로 고른 폴더 안에 업체명 폴더(예: 에이블리(오더))로. 폴더를 안 골랐으면 다운로드 폴더로.
    보관일이 지난 영상(파일 이름 앞 날짜 기준)은 저장할 때 자동으로 지운다. */
 const videoRec = (function(){
@@ -6027,7 +6027,9 @@ const videoRec = (function(){
       c.restore();
     });
   }
-  const MAX_MS = 20 * 60 * 1000, FPS = 12, W = 640, H = 480, BPS = 600000;
+  // 11/17: 한 파일 최대 60분 (예전 20분). 녹화 중인 영상은 저장 전까지 컴퓨터 메모리에 들고 있어서 끝없이 늘리면
+  //        크롬이 멈출 수 있음 → 60분(약 270MB)마다 저장하고 같은 전표면 끊김 없이 2부·3부로 이어서 찍는다
+  const MAX_MS = 60 * 60 * 1000, FPS = 12, W = 640, H = 480, BPS = 600000;
   let enabled = false, dirHandle = null, stream = null, video = null, canvas = null, ctx = null, drawTimer = null;
   let rec = null, cur = null, maxTimer = null, uiTimer = null;
   const $ = id => document.getElementById(id);
@@ -6134,7 +6136,7 @@ const videoRec = (function(){
     if(tickWorker){ try{ tickWorker.postMessage(0); tickWorker.terminate(); }catch(e){} tickWorker = null; }
     clearInterval(drawTimer); drawTimer = null;
   }
-  // cont = 20분이 넘어서 이어 찍는 다음 부 { series, part } (10/25: 1부·2부… 로 끊김 없이 이어서 녹화)
+  // cont = 60분이 넘어서 이어 찍는 다음 부 { series, part } (10/25: 1부·2부… 로 끊김 없이 이어서 녹화)
   function start(cont){
     if(!enabled || rec || !stream || !currentDocumentKey || !items.length || typeof MediaRecorder === 'undefined') return;
     cur = { docKey: currentDocumentKey, suffix: extractDocumentSuffixJS(currentDocumentKey), company: (($('companyNameInput') || {}).value || '').trim(), worker: currentWorker || '', startAt: new Date(),
@@ -6149,9 +6151,9 @@ const videoRec = (function(){
     rec.ondataavailable = e => { if(e.data && e.data.size) myChunks.push(e.data); };
     rec.start(5000);
     maxTimer = setTimeout(() => {
-      // 20분이 되면 이 부를 저장하고, 같은 전표 검수 중이면 바로 다음 부 녹화를 이어서 시작한다
+      // 60분이 되면 이 부를 저장하고, 같은 전표 검수 중이면 바로 다음 부 녹화를 이어서 시작한다
       const next = cur ? { series: cur.series, part: cur.part + 1, docKey: cur.docKey } : null;
-      stop(`20분 → ${next ? next.part + '부로 이어서' : '종료'}`);
+      stop(`${Math.round(MAX_MS / 60000)}분 → ${next ? next.part + '부로 이어서' : '종료'}`);
       if(next && enabled && currentDocumentKey === next.docKey) start(next);
     }, MAX_MS);
     uiTimer = setInterval(updateBadge, 1000); updateBadge();
@@ -6587,6 +6589,26 @@ const videoRec = (function(){
 #sortApp .bcard{ border:2px solid #cbd5e1; border-radius:12px; padding:10px 12px; cursor:pointer; background:#fff; }
 #sortApp .cell[data-slot]{ cursor:pointer; } #sortApp .cell.pick{ outline:4px solid #F59E0B; }
 #sortApp #sortLeftBody td.n{ font-size:18px; font-weight:900; color:#DC2626; }
+#sortApp .recs{ display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:10px; }
+#sortApp .rc{ border:2px solid #cbd5e1; border-radius:14px; padding:10px 12px; background:#fff; position:relative; }
+#sortApp .rc.on{ border:3px solid #2563EB; background:#EFF6FF; }
+#sortApp .rc.warn{ border-style:dashed; border-color:#F59E0B; background:#FFFBEB; }
+#sortApp .rc .z{ display:inline-block; background:#161D65; color:#fff; border-radius:8px; padding:1px 9px; font-weight:900; font-size:15px; }
+#sortApp .rc.warn .z{ background:#B45309; }
+#sortApp .rc .n{ font-weight:900; font-size:15px; margin-left:6px; }
+#sortApp .rc .route{ font-size:12.5px; color:#334155; margin-top:6px; } #sortApp .rc .route b{ color:#2563EB; }
+#sortApp .rc .co{ font-size:12.5px; color:#475569; margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#sortApp .rc .ov{ display:inline-block; margin-top:6px; background:#DCFCE7; color:#166534; border-radius:6px; padding:1px 8px; font-size:12px; font-weight:900; }
+#sortApp .rc .pin{ position:absolute; top:-11px; right:10px; background:#2563EB; color:#fff; border-radius:999px; padding:1px 10px; font-size:12px; font-weight:900; }
+#sortApp .rc button{ margin-top:8px; width:100%; }
+#sortApp .zt{ display:inline-block; border-radius:6px; padding:0 7px; font-weight:900; font-size:12.5px; background:#E0E7FF; color:#3730A3; }
+#sortApp .zt.u{ background:#F1F5F9; color:#64748b; } #sortApp .mixz{ color:#94a3b8; font-size:12px; margin-left:3px; }
+#sortApp .chips span{ display:inline-block; border-radius:6px; padding:0 6px; margin:1px 2px 1px 0; font-size:11.5px; font-weight:800; background:#F1F5F9; color:#334155; }
+#sortApp .chips span.ov{ background:#DCFCE7; color:#166534; }
+#sortApp tr.rout td{ color:#94a3b8; background:#F8FAFC; } #sortApp tr.rin td{ background:#EFF6FF; }
+#sortApp #sortRecBody tr, #sortApp #sortRecMore tr{ cursor:pointer; }
+#sortApp .addb{ display:inline-block; border:2px solid #16A34A; color:#16A34A; border-radius:8px; padding:0 9px; font-weight:900; background:#fff; }
+@media (max-width:1100px){ #sortApp .recs{ grid-template-columns:repeat(2,1fr); } }
 #sortApp .s-kind{ border:2px solid #161D65; background:#fff; color:#161D65; border-radius:999px; padding:7px 16px; font-weight:900; font-size:14px; cursor:pointer; }
 #sortApp .s-kind b{ display:inline-block; min-width:22px; margin-left:4px; padding:0 6px; border-radius:999px; background:#E0E7FF; color:#161D65; }
 #sortApp .s-kind.on{ background:#161D65; color:#fff; } #sortApp .s-kind.on b{ background:#F59E0B; color:#111; }
@@ -6635,6 +6657,29 @@ const videoRec = (function(){
 
     <!-- ① 전표 고르기 -->
     <div id="sortViewPick">
+      <div class="s-card" id="sortRecCard">
+        <div class="s-row" style="justify-content:space-between;">
+          <div class="s-row"><b style="font-size:17px;">💡 추천 묶음 — 진열 구역 기준</b><span class="muted">같은 진열 구역 + 같은 품번이 많이 겹치는 전표끼리 · 아래 탭(10~100개/소량/전체)도 같이 적용</span></div>
+          <div class="s-row"><span style="font-weight:800;font-size:13.5px;">칸 수</span>
+            <select class="f" id="sortRecSlots"><option>4</option><option>6</option><option>8</option><option>10</option><option>12</option></select>
+            <button class="btn b-line" id="sortRecAgain">🔄 다시 추천</button></div>
+        </div>
+        <div class="recs" id="sortRecs"></div>
+        <div id="sortRecUnset" class="muted" style="margin-top:8px;"></div>
+        <div id="sortRecDetail" style="display:none; margin-top:12px; border:3px solid #2563EB; border-radius:14px; padding:12px 14px;">
+          <div class="s-row" style="justify-content:space-between;">
+            <div class="s-row"><b style="font-size:16px;" id="sortRecTitle"></b><span class="muted">체크를 빼거나 더한 다음 출력하세요 · 칸 번호는 체크한 순서대로</span></div>
+            <div class="s-row" id="sortRecSum" style="gap:16px;font-weight:800;font-size:13.5px;"></div>
+          </div>
+          <table style="margin-top:8px;"><thead><tr><th style="width:34px"></th><th style="width:44px">칸</th><th style="width:140px">전표번호</th><th style="width:120px">업체</th><th style="width:110px">진열 구역</th><th>품번 (초록 = 다른 전표와 겹침)</th><th style="width:60px">수량</th></tr></thead><tbody id="sortRecBody"></tbody></table>
+          <div style="font-weight:900;margin:12px 0 4px;color:#334155;">➕ 같은 구역에서 더 넣을 수 있는 전표 <span class="muted" style="font-weight:700">겹치는 품번이 많은 순</span></div>
+          <table><tbody id="sortRecMore"></tbody></table>
+          <div class="s-row" style="justify-content:space-between;margin-top:12px;">
+            <span class="s-row"><button class="btn b-line" id="sortRecClose">✕ 닫기</button><button class="btn b-line" id="sortRecNone">전체 해제</button></span>
+            <button class="btn b-green" id="sortRecGo" style="font-size:15px;">선택한 0장으로 칸 배정 + 피킹지 출력 ▶</button>
+          </div>
+        </div>
+      </div>
       <div class="s-card">
         <div class="s-row" style="margin-bottom:10px;" id="sortKindRow">
           <button class="s-kind on" data-kind="mid">📦 10~100개 <b id="sortKindMid">0</b></button>
@@ -6643,14 +6688,13 @@ const videoRec = (function(){
           <span class="muted">· 칸에는 섞어서 담아도 돼요 (고른 건 탭을 바꿔도 유지)</span>
         </div>
         <div class="s-row" style="margin-bottom:10px;">
-          <select class="f" id="sortZone"><option value="">구역: 전체</option></select>
+          <select class="f" id="sortZone"><option value="">진열구역: 전체</option></select>
           <input type="text" id="sortSearch" placeholder="업체·전표번호 검색" style="flex:1; min-width:160px;">
-          <button class="btn b-line" id="sortRecommend">💡 같은 구역끼리 추천</button>
           <button class="btn b-line" id="sortRefresh">🔄 새로고침</button>
         </div>
         <div class="muted" id="sortPickInfo" style="margin-bottom:8px;">불러오는 중…</div>
         <div style="max-height:56vh; overflow:auto;">
-          <table><thead><tr><th style="width:30px"></th><th style="width:44px">칸</th><th>전표번호</th><th>업체</th><th>구역</th><th>품목</th><th>수량</th><th>비고</th></tr></thead>
+          <table><thead><tr><th style="width:30px"></th><th style="width:44px">칸</th><th>전표번호</th><th>업체</th><th>진열 구역</th><th>품목</th><th>수량</th><th>비고</th></tr></thead>
           <tbody id="sortCandBody"></tbody></table>
         </div>
         <div class="s-row" style="margin-top:12px; justify-content:space-between;">
@@ -7042,14 +7086,29 @@ const videoRec = (function(){
     b.onclick = () => { sortKind = b.getAttribute('data-kind'); try{ localStorage.setItem('sortKind', sortKind); }catch(e){}
       document.querySelectorAll('#sortKindRow .s-kind').forEach(x => x.classList.toggle('on', x === b)); renderCandidates(); scan.focus(); };
   });
+  /* 11/17: 진열 구역 (진열순서 탭) — 전표의 대표 구역 = 상품 수량이 가장 많이 있는 구역 (A-1, A-3 → 큰 구역 "A") */
+  const UNSET = '미지정';
+  const majorZone = z => { z = String(z || '').trim(); if(!z) return ''; const m = z.match(/^[^-\s_/.]+/); return m ? m[0] : z; };
+  function zoneSeq(major){ let m = 1e9; (locOrder || []).forEach(e => { if(majorZone(e.zone) === major && e.seq < m) m = e.seq; }); return m; }
+  function applyZone(c){
+    const byZ = {};
+    c.items.forEach(it => { const l = locOf(it.code); const z = l ? (majorZone(l.zone) || UNSET) : UNSET; byZ[z] = (byZ[z] || 0) + it.qty; it.loc = l; });
+    const zs = Object.keys(byZ).filter(z => z !== UNSET).sort((a, b) => byZ[b] - byZ[a] || zoneSeq(a) - zoneSeq(b));
+    c.pz = zs.length ? zs[0] : UNSET;
+    c.pzExtra = Object.keys(byZ).filter(z => z !== c.pz).map(z => ({ z, q: byZ[z] }));
+    c.minSeq = Math.min(...c.items.map(it => it.loc ? it.loc.seq : 9999));
+  }
+  const zoneCell = c => `<span class="zt${c.pz === UNSET ? ' u' : ''}">${escapeHtml(c.pz)}</span>${c.pzExtra && c.pzExtra.length ? `<span class="mixz">(${c.pzExtra.map(x => '+' + escapeHtml(x.z) + ' ' + x.q + '개').join(', ')})</span>` : ''}`;
   function renderCandidates(){
     buildCandidates();
+    candidates.forEach(applyZone);
     const zsel = $('sortZone'), zv = zsel.value;
-    const zones = [...new Set(candidates.map(c => c.zone).filter(Boolean))].sort();
-    zsel.innerHTML = '<option value="">구역: 전체</option>' + zones.map(z => `<option value="${escapeHtml(z)}">${escapeHtml(z)}구역</option>`).join('');
+    const zones = [...new Set(candidates.map(c => c.pz).filter(Boolean))].sort((a, b) => (a === UNSET) - (b === UNSET) || zoneSeq(a) - zoneSeq(b) || a.localeCompare(b));
+    zsel.innerHTML = '<option value="">진열구역: 전체</option>' + zones.map(z => `<option value="${escapeHtml(z)}">${z === UNSET ? '미지정' : escapeHtml(z) + '구역'}</option>`).join('');
     zsel.value = zones.indexOf(zv) !== -1 ? zv : '';
     const q = $('sortSearch').value.trim().toLowerCase();
-    const list = candidates.filter(c => kindOk(c) && (!zsel.value || c.zone === zsel.value) && (!q || (c.company + ' ' + c.key).toLowerCase().indexOf(q) !== -1));
+    const list = candidates.filter(c => kindOk(c) && (!zsel.value || c.pz === zsel.value) && (!q || (c.company + ' ' + c.key).toLowerCase().indexOf(q) !== -1))
+      .sort((a, b) => (a.pz === UNSET) - (b.pz === UNSET) || zoneSeq(a.pz) - zoneSeq(b.pz) || a.minSeq - b.minSeq || a.canon.localeCompare(b.canon, undefined, { numeric:true }));
     const free = c => !c.lock && !c.ex;
     $('sortKindMid').textContent = candidates.filter(c => !c.small && free(c)).length;
     $('sortKindSmall').textContent = candidates.filter(c => c.small && free(c)).length;
@@ -7059,12 +7118,13 @@ const videoRec = (function(){
     $('sortPickInfo').textContent = salesCache ? `분배 대상 ${ok}장 (${kindTxt}) · 판매현황 ${salesCacheFetchedAt ? new Date(salesCacheFetchedAt).toLocaleTimeString('ko-KR',{hour12:false}) : ''} 기준` : '판매현황을 받는 중…';
     $('sortCandBody').innerHTML = list.map(c => {
       const si = selected.indexOf(c.canon);
-      if(c.lock) return `<tr class="lock"><td>🔒</td><td></td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${escapeHtml(c.zone)}</td><td>${c.sku}</td><td>${c.total}</td><td>${escapeHtml(c.lock.worker)} · ${escapeHtml(c.lock.id)}</td></tr>`;
-      if(c.ex) return `<tr class="ex"><td>✋</td><td></td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${escapeHtml(c.zone)}</td><td>${c.sku}</td><td>${c.total}</td><td>${escapeHtml(c.ex)}</td></tr>`;
-      return `<tr class="cand ${si !== -1 ? 'sel' : ''}" data-canon="${escapeHtml(c.canon)}"><td><input type="checkbox" ${si !== -1 ? 'checked' : ''} tabindex="-1"></td><td>${si !== -1 ? `<span class="slotn">${si + 1}</span>` : ''}</td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${escapeHtml(c.zone)}</td><td>${c.sku}</td><td>${c.total}${c.small ? '<span class="tag-small">소량</span>' : ''}</td><td></td></tr>`;
+      if(c.lock) return `<tr class="lock"><td>🔒</td><td></td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${zoneCell(c)}</td><td>${c.sku}</td><td>${c.total}</td><td>${escapeHtml(c.lock.worker)} · ${escapeHtml(c.lock.id)}</td></tr>`;
+      if(c.ex) return `<tr class="ex"><td>✋</td><td></td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${zoneCell(c)}</td><td>${c.sku}</td><td>${c.total}</td><td>${escapeHtml(c.ex)}</td></tr>`;
+      return `<tr class="cand ${si !== -1 ? 'sel' : ''}" data-canon="${escapeHtml(c.canon)}"><td><input type="checkbox" ${si !== -1 ? 'checked' : ''} tabindex="-1"></td><td>${si !== -1 ? `<span class="slotn">${si + 1}</span>` : ''}</td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${zoneCell(c)}</td><td>${c.sku}</td><td>${c.total}${c.small ? '<span class="tag-small">소량</span>' : ''}</td><td></td></tr>`;
     }).join('') || '<tr><td colspan="8" class="muted" style="padding:16px">지금 분배할 수 있는 전표가 없어요</td></tr>';
     $('sortCandBody').querySelectorAll('tr.cand').forEach(tr => tr.onclick = () => toggleSel(tr.getAttribute('data-canon')));
     updateSelInfo();
+    renderRecs();
   }
   function toggleSel(canon, fromScan){
     const c = candidates.find(x => x.canon === canon);
@@ -7087,16 +7147,127 @@ const videoRec = (function(){
   $('sortZone').onchange = renderCandidates;
   $('sortSearch').oninput = renderCandidates;
   $('sortClearSel').onclick = () => { selected = []; renderCandidates(); };
-  $('sortRecommend').onclick = () => {
-    const ok = candidates.filter(c => !c.lock && !c.ex && kindOk(c) && (!$('sortZone').value || c.zone === $('sortZone').value));
-    if(!ok.length){ say('추천할 전표가 없어요'); return; }
-    const byZone = {}; ok.forEach(c => (byZone[c.zone || '-'] = byZone[c.zone || '-'] || []).push(c));
-    const best = Object.values(byZone).sort((a, b) => b.length - a.length)[0];
-    // 같은 구역 안에서 품번이 많이 겹치는 순서로
-    const codes = {}; best.forEach(c => c.items.forEach(i => codes[i.code] = (codes[i.code] || 0) + 1));
-    best.sort((a, b) => b.items.reduce((s, i) => s + codes[i.code], 0) / b.items.length - a.items.reduce((s, i) => s + codes[i.code], 0) / a.items.length);
-    selected = best.slice(0, MAX_SLOTS).map(c => c.canon);
+  /* ---------- 11/17: 추천 묶음 (진열 구역별) → 누르면 아래에 목록이 펼쳐지고 골라서 출력 ---------- */
+  let recSlots = 6, recs = [], recOpen = null, recSel = [];
+  try{ const v = Number(localStorage.getItem('sortRecSlots')); if([4, 6, 8, 10, 12].indexOf(v) !== -1) recSlots = v; }catch(e){}
+  $('sortRecSlots').value = String(recSlots);
+  $('sortRecSlots').onchange = () => { recSlots = Number($('sortRecSlots').value) || 6; try{ localStorage.setItem('sortRecSlots', recSlots); }catch(e){} recOpen = null; renderRecs(); scan.focus(); };
+  $('sortRecAgain').onclick = () => { recOpen = null; refreshAll(); };
+  const codesOf = c => c.items.map(i => i.code);
+  function overlapWith(c, set){ return codesOf(c).filter(x => set.has(x)).length; }
+  function buildRecs(){
+    const free = candidates.filter(c => !c.lock && !c.ex && kindOk(c));
+    const byZ = {}; free.forEach(c => (byZ[c.pz] = byZ[c.pz] || []).push(c));
+    const out = [];
+    Object.keys(byZ).filter(z => z !== UNSET).sort((a, b) => zoneSeq(a) - zoneSeq(b) || a.localeCompare(b)).forEach(z => {
+      let pool = byZ[z].slice(), no = 0;
+      while(pool.length){
+        // 씨앗: 다른 전표와 품번이 제일 많이 겹치는 전표 (같으면 동선 앞쪽)
+        const cnt = {}; pool.forEach(c => codesOf(c).forEach(x => cnt[x] = (cnt[x] || 0) + 1));
+        pool.sort((a, b) => codesOf(b).reduce((s, x) => s + cnt[x] - 1, 0) - codesOf(a).reduce((s, x) => s + cnt[x] - 1, 0) || a.minSeq - b.minSeq);
+        const batch = [pool.shift()]; const set = new Set(codesOf(batch[0]));
+        while(batch.length < recSlots && pool.length){
+          pool.sort((a, b) => overlapWith(b, set) - overlapWith(a, set) || a.minSeq - b.minSeq);
+          const c = pool.shift(); batch.push(c); codesOf(c).forEach(x => set.add(x));
+        }
+        out.push({ id: z + '-' + (++no), zone: z, no, slips: batch });
+      }
+    });
+    // 혼자 묶기엔 적은 묶음(칸 수의 1/3 이하) → 옆 구역 묶음 중 자리가 남는 곳 제안
+    out.forEach(r => {
+      r.small = r.slips.length <= Math.max(2, Math.floor(recSlots / 3)) && out.length > 1;
+      if(!r.small) return;
+      const room = out.filter(o => o !== r && o.zone !== r.zone && o.slips.length + r.slips.length <= recSlots)
+        .sort((a, b) => Math.abs(zoneSeq(a.zone) - zoneSeq(r.zone)) - Math.abs(zoneSeq(b.zone) - zoneSeq(r.zone)));
+      r.mergeWith = room[0] || null;
+    });
+    return { list: out, unset: (byZ[UNSET] || []) };
+  }
+  function recStats(slips){
+    const cnt = {}; slips.forEach(c => codesOf(c).forEach(x => cnt[x] = (cnt[x] || 0) + 1));
+    const kinds = Object.keys(cnt).length, ov = Object.keys(cnt).filter(x => cnt[x] > 1).length;
+    const locs = []; slips.forEach(c => c.items.forEach(it => { if(it.loc) locs.push(it.loc); }));
+    locs.sort((a, b) => a.seq - b.seq);
+    const zonesFull = [...new Set(locs.map(l => String(l.zone || '').trim()).filter(Boolean))];
+    return { kinds, ov, qty: slips.reduce((a, c) => a + c.total, 0), route: zonesFull, cnt };
+  }
+  const circled = n => '①②③④⑤⑥⑦⑧⑨⑩'.charAt(n - 1) || ('(' + n + ')');
+  function renderRecs(){
+    const { list, unset } = buildRecs();
+    recs = list;
+    if(recOpen && !recs.find(r => r.id === recOpen.id) && !recOpen.merged) recOpen = null;
+    $('sortRecs').innerHTML = recs.length ? recs.map(r => {
+      const st = recStats(r.slips);
+      const main = st.route.filter(z => majorZone(z) === r.zone), other = st.route.filter(z => majorZone(z) !== r.zone);
+      const route = main.length ? `<b>${escapeHtml(main[0])}</b>${main.length > 1 ? ' → <b>' + escapeHtml(main[main.length - 1]) + '</b>' : ''}` : escapeHtml(r.zone);
+      const on = recOpen && recOpen.id === r.id;
+      if(r.small) return `<div class="rc warn${on ? ' on' : ''}">${on ? '<span class="pin">보는 중</span>' : ''}<span class="z">${escapeHtml(r.zone)}구역</span><span class="n">${circled(r.no)} ${r.slips.length}장 · ${st.qty}개</span>
+        <div class="route">혼자 묶기엔 적어요${r.mergeWith ? ` → <b>${escapeHtml(r.mergeWith.zone)}구역 ${circled(r.mergeWith.no)}</b>과 같이` : ''}</div>
+        <div class="co">${r.slips.map(c => escapeHtml(c.company)).join(' · ')}</div>
+        <button class="btn b-line" data-rec="${escapeHtml(r.id)}">${on ? '▼ 아래에서 고르기' : '보기'}</button>${r.mergeWith ? `<button class="btn b-line" style="border-color:#F59E0B;color:#B45309" data-merge="${escapeHtml(r.id)}">${escapeHtml(r.mergeWith.zone)}구역 ${circled(r.mergeWith.no)}과 같이 보기</button>` : ''}</div>`;
+      return `<div class="rc${on ? ' on' : ''}">${on ? '<span class="pin">보는 중</span>' : ''}<span class="z">${escapeHtml(r.zone)}구역</span><span class="n">${circled(r.no)} ${r.slips.length}장 · ${st.qty}개</span>
+        <div class="route">피킹 동선 ${route} · 품번 ${st.kinds}종${other.length ? ` <span class="muted">(+${other.map(escapeHtml).join(', ')})</span>` : ''}</div>
+        <div class="co">${r.slips.map(c => escapeHtml(c.company)).join(' · ')}</div>
+        <span class="ov">겹치는 품번 ${st.ov}개 → 피킹지 ${st.kinds}줄</span>
+        <button class="btn ${on ? 'b-navy' : 'b-line'}" data-rec="${escapeHtml(r.id)}">${on ? '▼ 아래에서 고르기' : '보기'}</button></div>`;
+    }).join('') : '<div class="muted" style="padding:6px 2px">지금 추천할 전표가 없어요 (진열순서 탭이 비어 있으면 전부 "미지정"으로 빠져요)</div>';
+    $('sortRecUnset').innerHTML = unset.length ? `<span class="zt u">미지정</span> ${unset.length}장 · 진열순서 탭에 없는 상품만 있는 전표 — 진열순서 탭을 채우면 추천에 들어가요 (아래 목록에서 직접 골라 담기는 그대로 돼요)` : '';
+    $('sortRecs').querySelectorAll('[data-rec]').forEach(b => b.onclick = () => openRec(recs.find(r => r.id === b.getAttribute('data-rec'))));
+    $('sortRecs').querySelectorAll('[data-merge]').forEach(b => b.onclick = () => { const r = recs.find(x => x.id === b.getAttribute('data-merge')); if(r && r.mergeWith) openRec({ id: r.id + '+' + r.mergeWith.id, merged: true, zone: r.mergeWith.zone, zones: [r.mergeWith.zone, r.zone], title: `${r.mergeWith.zone}구역 ${circled(r.mergeWith.no)} + ${r.zone}구역 ${circled(r.no)}`, slips: r.mergeWith.slips.concat(r.slips) }); });
+    renderRecDetail();
+  }
+  function openRec(r){
+    if(!r) return;
+    if(recOpen && recOpen.id === r.id){ recOpen = null; renderRecs(); scan.focus(); return; } // 다시 누르면 접기
+    recOpen = r; recSel = r.slips.map(c => c.canon).slice(0, recSlots);
+    renderRecs();
+    try{ $('sortRecDetail').scrollIntoView({ behavior:'smooth', block:'nearest' }); }catch(e){}
+    scan.focus();
+  }
+  function renderRecDetail(){
+    const box = $('sortRecDetail');
+    if(!recOpen){ box.style.display = 'none'; return; }
+    box.style.display = '';
+    const r = recOpen, zones = r.zones || [r.zone];
+    const byCanon = k => candidates.find(c => c.canon === k);
+    const ok = c => c && !c.lock && !c.ex;
+    recSel = recSel.filter(k => ok(byCanon(k)));
+    const rows = r.slips.filter(ok);
+    recSel.forEach(k => { if(!rows.find(c => c.canon === k)){ const c = byCanon(k); if(c) rows.push(c); } }); // [+]로 추가한 전표도 위 목록에
+    const picked = recSel.map(byCanon).filter(Boolean);
+    const st = recStats(picked);
+    $('sortRecTitle').textContent = '📋 ' + (r.title || `${r.zone}구역 ${circled(r.no)} 추천 전표`);
+    $('sortRecSum').innerHTML = `<span>선택 <b>${picked.length}장</b></span><span>수량 <b>${st.qty}개</b></span><span>품번 <b>${st.kinds}종</b></span><span>피킹지 <b>${st.kinds}줄</b></span><span class="muted">칸 ${recSlots}개</span>`;
+    const chips = (c, cnt) => c.items.map(it => `<span class="${cnt[it.code] > 1 ? 'ov' : ''}">${escapeHtml(it.code)} ×${it.qty}</span>`).join('');
+    $('sortRecBody').innerHTML = rows.map(c => {
+      const i = recSel.indexOf(c.canon);
+      return `<tr class="${i !== -1 ? 'rin' : 'rout'}" data-canon="${escapeHtml(c.canon)}"><td><input type="checkbox" ${i !== -1 ? 'checked' : ''} tabindex="-1"></td><td>${i !== -1 ? `<span class="slotn">${i + 1}</span>` : '–'}</td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${zoneCell(c)}</td><td class="chips">${chips(c, st.cnt)}</td><td><b>${c.total}</b></td></tr>`;
+    }).join('');
+    const set = new Set(); picked.forEach(c => codesOf(c).forEach(x => set.add(x)));
+    const more = candidates.filter(c => ok(c) && kindOk(c) && zones.indexOf(c.pz) !== -1 && !rows.find(x => x.canon === c.canon))
+      .sort((a, b) => overlapWith(b, set) - overlapWith(a, set) || a.minSeq - b.minSeq).slice(0, 8);
+    $('sortRecMore').innerHTML = more.length ? more.map(c => `<tr data-add="${escapeHtml(c.canon)}"><td style="width:34px"><span class="addb">+</span></td><td style="width:44px"></td><td style="width:140px">${escapeHtml(c.key)}</td><td style="width:120px">${escapeHtml(c.company)}</td><td style="width:110px">${zoneCell(c)}</td><td class="chips">${c.items.map(it => `<span class="${set.has(it.code) ? 'ov' : ''}">${escapeHtml(it.code)} ×${it.qty}</span>`).join('')}</td><td style="width:60px">${c.total}</td></tr>`).join('')
+      : '<tr><td class="muted" style="padding:8px">더 넣을 수 있는 같은 구역 전표가 없어요</td></tr>';
+    $('sortRecBody').querySelectorAll('tr[data-canon]').forEach(tr => tr.onclick = () => {
+      const k = tr.getAttribute('data-canon'), i = recSel.indexOf(k);
+      if(i !== -1) recSel.splice(i, 1);
+      else{ if(recSel.length >= recSlots){ sortBeep('err'); say(`${NUM_WORD[recSlots]}칸까지예요`); return; } recSel.push(k); }
+      renderRecDetail(); scan.focus();
+    });
+    $('sortRecMore').querySelectorAll('tr[data-add]').forEach(tr => tr.onclick = () => {
+      if(recSel.length >= recSlots){ sortBeep('err'); say(`${NUM_WORD[recSlots]}칸까지예요`); return; }
+      recSel.push(tr.getAttribute('data-add')); renderRecDetail(); scan.focus();
+    });
+    const go = $('sortRecGo'); go.textContent = `선택한 ${picked.length}장으로 칸 배정 + 피킹지 출력 ▶`; go.disabled = !picked.length;
+  }
+  $('sortRecClose').onclick = () => { recOpen = null; renderRecs(); scan.focus(); };
+  $('sortRecNone').onclick = () => { recSel = []; renderRecDetail(); scan.focus(); };
+  $('sortRecGo').onclick = () => {
+    if(!recSel.length) return;
+    selected = recSel.slice(0, MAX_SLOTS);
+    recOpen = null; recSel = [];
     renderCandidates();
+    $('sortCreate').onclick();
   };
   async function refreshAll(){
     $('sortPickInfo').textContent = '새로 받는 중…';
@@ -7771,8 +7942,8 @@ const videoRec = (function(){
   (async function boot(){
     for(let i = 0; i < 40 && !gasWebhookUrl; i++) await new Promise(r => setTimeout(r, 250));
     if(!gasWebhookUrl){ $('sortPickInfo').textContent = '구글시트 연동 주소가 없어요 — [검수 화면으로]에서 먼저 연결해주세요'; return; }
+    await ensureLocOrder(); // 진열 구역 추천에 필요해서 먼저 받는다
     await refreshAll();
-    ensureLocOrder();
     // 새로고침(자동 업데이트 포함) 뒤에도 하던 묶음을 바로 이어서
     try{ const id = localStorage.getItem('sortActiveId'); const b = id && batches.find(x => x.id === id); if(b) openBatch(b); else if(id) localStorage.removeItem('sortActiveId'); }catch(e){}
   })();
