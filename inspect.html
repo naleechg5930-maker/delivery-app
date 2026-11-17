@@ -6659,7 +6659,13 @@ const videoRec = (function(){
     <div id="sortViewPick">
       <div class="s-card" id="sortRecCard">
         <div class="s-row" style="justify-content:space-between;">
-          <div class="s-row"><b style="font-size:17px;">💡 추천 묶음 — 진열 구역 기준</b><span class="muted">같은 진열 구역 + 같은 품번이 많이 겹치는 전표끼리 · 아래 탭(10~100개/소량/전체)도 같이 적용</span></div>
+          <div class="s-row"><b style="font-size:17px;">💡 추천 묶음 — 진열 구역 기준</b>
+            <span class="s-row" id="sortRecKindRow" style="gap:6px;">
+              <button class="s-kind" data-rkind="mid">📦 10~100개 <b id="sortRecKMid">0</b></button>
+              <button class="s-kind" data-rkind="small">🧺 소량 1~9개 <b id="sortRecKSmall">0</b></button>
+              <button class="s-kind" data-rkind="all">전체 <b id="sortRecKAll">0</b></button>
+            </span>
+            <span class="muted">숫자 = 묶을 수 있는 전표 장수</span></div>
           <div class="s-row"><span style="font-weight:800;font-size:13.5px;">칸 수</span>
             <select class="f" id="sortRecSlots"><option>4</option><option>6</option><option>8</option><option>10</option><option>12</option></select>
             <button class="btn b-line" id="sortRecAgain">🔄 다시 추천</button></div>
@@ -6671,7 +6677,7 @@ const videoRec = (function(){
             <div class="s-row"><b style="font-size:16px;" id="sortRecTitle"></b><span class="muted">체크를 빼거나 더한 다음 출력하세요 · 칸 번호는 체크한 순서대로</span></div>
             <div class="s-row" id="sortRecSum" style="gap:16px;font-weight:800;font-size:13.5px;"></div>
           </div>
-          <table style="margin-top:8px;"><thead><tr><th style="width:34px"></th><th style="width:44px">칸</th><th style="width:140px">전표번호</th><th style="width:120px">업체</th><th style="width:110px">진열 구역</th><th>품번 (초록 = 다른 전표와 겹침)</th><th style="width:60px">수량</th></tr></thead><tbody id="sortRecBody"></tbody></table>
+          <table style="margin-top:8px;"><thead><tr><th style="width:34px"></th><th style="width:44px">칸</th><th style="width:140px">전표번호</th><th style="width:120px">업체</th><th style="width:110px">진열 구역</th><th>품번 (초록 = 다른 전표와 겹침)</th><th style="width:100px">수량</th></tr></thead><tbody id="sortRecBody"></tbody></table>
           <div style="font-weight:900;margin:12px 0 4px;color:#334155;">➕ 같은 구역에서 더 넣을 수 있는 전표 <span class="muted" style="font-weight:700">겹치는 품번이 많은 순</span></div>
           <table><tbody id="sortRecMore"></tbody></table>
           <div class="s-row" style="justify-content:space-between;margin-top:12px;">
@@ -7153,10 +7159,19 @@ const videoRec = (function(){
   $('sortRecSlots').value = String(recSlots);
   $('sortRecSlots').onchange = () => { recSlots = Number($('sortRecSlots').value) || 6; try{ localStorage.setItem('sortRecSlots', recSlots); }catch(e){} recOpen = null; renderRecs(); scan.focus(); };
   $('sortRecAgain').onclick = () => { recOpen = null; refreshAll(); };
+  let recKind = 'mid';
+  try{ const v = localStorage.getItem('sortRecKind'); if(['mid', 'small', 'all'].indexOf(v) !== -1) recKind = v; }catch(e){}
+  const recKindOk = c => recKind === 'all' || (recKind === 'small' ? c.small : !c.small);
+  document.querySelectorAll('#sortRecKindRow .s-kind').forEach(b => {
+    b.classList.toggle('on', b.getAttribute('data-rkind') === recKind);
+    b.onclick = () => { recKind = b.getAttribute('data-rkind'); try{ localStorage.setItem('sortRecKind', recKind); }catch(e){}
+      document.querySelectorAll('#sortRecKindRow .s-kind').forEach(x => x.classList.toggle('on', x === b));
+      recOpen = null; renderRecs(); scan.focus(); };
+  });
   const codesOf = c => c.items.map(i => i.code);
   function overlapWith(c, set){ return codesOf(c).filter(x => set.has(x)).length; }
   function buildRecs(){
-    const free = candidates.filter(c => !c.lock && !c.ex && kindOk(c));
+    const free = candidates.filter(c => !c.lock && !c.ex && recKindOk(c));
     const byZ = {}; free.forEach(c => (byZ[c.pz] = byZ[c.pz] || []).push(c));
     const out = [];
     Object.keys(byZ).filter(z => z !== UNSET).sort((a, b) => zoneSeq(a) - zoneSeq(b) || a.localeCompare(b)).forEach(z => {
@@ -7193,6 +7208,10 @@ const videoRec = (function(){
   }
   const circled = n => '①②③④⑤⑥⑦⑧⑨⑩'.charAt(n - 1) || ('(' + n + ')');
   function renderRecs(){
+    const fr = candidates.filter(c => !c.lock && !c.ex && c.pz !== UNSET);
+    $('sortRecKMid').textContent = fr.filter(c => !c.small).length;
+    $('sortRecKSmall').textContent = fr.filter(c => c.small).length;
+    $('sortRecKAll').textContent = fr.length;
     const { list, unset } = buildRecs();
     recs = list;
     if(recOpen && !recs.find(r => r.id === recOpen.id) && !recOpen.merged) recOpen = null;
@@ -7208,9 +7227,9 @@ const videoRec = (function(){
       return `<div class="rc${on ? ' on' : ''}">${on ? '<span class="pin">보는 중</span>' : ''}<span class="z">${escapeHtml(r.zone)}구역</span><span class="n">${circled(r.no)} ${r.slips.length}장 · ${st.qty}개</span>
         <div class="route">피킹 동선 ${route} · 품번 ${st.kinds}종${other.length ? ` <span class="muted">(+${other.map(escapeHtml).join(', ')})</span>` : ''}</div>
         <div class="co">${r.slips.map(c => escapeHtml(c.company)).join(' · ')}</div>
-        <span class="ov">겹치는 품번 ${st.ov}개 → 피킹지 ${st.kinds}줄</span>
+        ${recKind === 'all' && r.slips.some(c => c.small) ? `<span class="ov" style="background:#FEF3C7;color:#92400E;margin-right:4px">소량 ${r.slips.filter(c => c.small).length}장 포함</span>` : ''}<span class="ov">겹치는 품번 ${st.ov}개 → 피킹지 ${st.kinds}줄</span>
         <button class="btn ${on ? 'b-navy' : 'b-line'}" data-rec="${escapeHtml(r.id)}">${on ? '▼ 아래에서 고르기' : '보기'}</button></div>`;
-    }).join('') : '<div class="muted" style="padding:6px 2px">지금 추천할 전표가 없어요 (진열순서 탭이 비어 있으면 전부 "미지정"으로 빠져요)</div>';
+    }).join('') : `<div class="muted" style="padding:6px 2px">${recKind === 'small' ? '소량(1~9개) ' : recKind === 'mid' ? '10~100개 ' : ''}지금 추천할 전표가 없어요 (진열순서 탭이 비어 있으면 전부 "미지정"으로 빠져요)</div>`;
     $('sortRecUnset').innerHTML = unset.length ? `<span class="zt u">미지정</span> ${unset.length}장 · 진열순서 탭에 없는 상품만 있는 전표 — 진열순서 탭을 채우면 추천에 들어가요 (아래 목록에서 직접 골라 담기는 그대로 돼요)` : '';
     $('sortRecs').querySelectorAll('[data-rec]').forEach(b => b.onclick = () => openRec(recs.find(r => r.id === b.getAttribute('data-rec'))));
     $('sortRecs').querySelectorAll('[data-merge]').forEach(b => b.onclick = () => { const r = recs.find(x => x.id === b.getAttribute('data-merge')); if(r && r.mergeWith) openRec({ id: r.id + '+' + r.mergeWith.id, merged: true, zone: r.mergeWith.zone, zones: [r.mergeWith.zone, r.zone], title: `${r.mergeWith.zone}구역 ${circled(r.mergeWith.no)} + ${r.zone}구역 ${circled(r.no)}`, slips: r.mergeWith.slips.concat(r.slips) }); });
@@ -7241,12 +7260,12 @@ const videoRec = (function(){
     const chips = (c, cnt) => c.items.map(it => `<span class="${cnt[it.code] > 1 ? 'ov' : ''}">${escapeHtml(it.code)} ×${it.qty}</span>`).join('');
     $('sortRecBody').innerHTML = rows.map(c => {
       const i = recSel.indexOf(c.canon);
-      return `<tr class="${i !== -1 ? 'rin' : 'rout'}" data-canon="${escapeHtml(c.canon)}"><td><input type="checkbox" ${i !== -1 ? 'checked' : ''} tabindex="-1"></td><td>${i !== -1 ? `<span class="slotn">${i + 1}</span>` : '–'}</td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${zoneCell(c)}</td><td class="chips">${chips(c, st.cnt)}</td><td><b>${c.total}</b></td></tr>`;
+      return `<tr class="${i !== -1 ? 'rin' : 'rout'}" data-canon="${escapeHtml(c.canon)}"><td><input type="checkbox" ${i !== -1 ? 'checked' : ''} tabindex="-1"></td><td>${i !== -1 ? `<span class="slotn">${i + 1}</span>` : '–'}</td><td>${escapeHtml(c.key)}</td><td>${escapeHtml(c.company)}</td><td>${zoneCell(c)}</td><td class="chips">${chips(c, st.cnt)}</td><td><b>${c.total}</b>${c.small ? '<span class="tag-small">소량</span>' : ''}</td></tr>`;
     }).join('');
     const set = new Set(); picked.forEach(c => codesOf(c).forEach(x => set.add(x)));
-    const more = candidates.filter(c => ok(c) && kindOk(c) && zones.indexOf(c.pz) !== -1 && !rows.find(x => x.canon === c.canon))
+    const more = candidates.filter(c => ok(c) && recKindOk(c) && zones.indexOf(c.pz) !== -1 && !rows.find(x => x.canon === c.canon))
       .sort((a, b) => overlapWith(b, set) - overlapWith(a, set) || a.minSeq - b.minSeq).slice(0, 8);
-    $('sortRecMore').innerHTML = more.length ? more.map(c => `<tr data-add="${escapeHtml(c.canon)}"><td style="width:34px"><span class="addb">+</span></td><td style="width:44px"></td><td style="width:140px">${escapeHtml(c.key)}</td><td style="width:120px">${escapeHtml(c.company)}</td><td style="width:110px">${zoneCell(c)}</td><td class="chips">${c.items.map(it => `<span class="${set.has(it.code) ? 'ov' : ''}">${escapeHtml(it.code)} ×${it.qty}</span>`).join('')}</td><td style="width:60px">${c.total}</td></tr>`).join('')
+    $('sortRecMore').innerHTML = more.length ? more.map(c => `<tr data-add="${escapeHtml(c.canon)}"><td style="width:34px"><span class="addb">+</span></td><td style="width:44px"></td><td style="width:140px">${escapeHtml(c.key)}</td><td style="width:120px">${escapeHtml(c.company)}</td><td style="width:110px">${zoneCell(c)}</td><td class="chips">${c.items.map(it => `<span class="${set.has(it.code) ? 'ov' : ''}">${escapeHtml(it.code)} ×${it.qty}</span>`).join('')}</td><td style="width:100px">${c.total}${c.small ? '<span class="tag-small">소량</span>' : ''}</td></tr>`).join('')
       : '<tr><td class="muted" style="padding:8px">더 넣을 수 있는 같은 구역 전표가 없어요</td></tr>';
     $('sortRecBody').querySelectorAll('tr[data-canon]').forEach(tr => tr.onclick = () => {
       const k = tr.getAttribute('data-canon'), i = recSel.indexOf(k);
