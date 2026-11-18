@@ -7077,7 +7077,7 @@ const videoRec = (function(){
       if(!r.code || qty <= 0) return;
       const g = groups[canon] || (groups[canon] = { canon, key: r.key, company: r.company || '', items: {}, bad: false });
       const note = String(r.note || '').replace(/\s+/g, ''); // 11/18: "샘플 결제"처럼 띄어 써도 제외
-      if(EXCLUDE_NOTES.some(k => note.indexOf(k) !== -1) || String(r.company || '').indexOf('개인구매') !== -1) g.bad = true;
+      if(r.ex || EXCLUDE_NOTES.some(k => note.indexOf(k) !== -1) || String(r.company || '').replace(/\s+/g, '').indexOf('개인구매') !== -1) g.bad = true; // r.ex = 서버가 줄 전체에서 찾은 것
       const c = stripOrderCodeSuffix(String(r.code)).toUpperCase();
       const it = g.items[c] || (g.items[c] = { code: c, name: r.name || '', spec: r.spec || '', qty: 0 });
       it.qty += qty;
