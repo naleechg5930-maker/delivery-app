@@ -7076,7 +7076,7 @@ const videoRec = (function(){
       const qty = parseFloat(String(r.qty).replace(/,/g, '')) || 0;
       if(!r.code || qty <= 0) return;
       const g = groups[canon] || (groups[canon] = { canon, key: r.key, company: r.company || '', items: {}, bad: false });
-      const note = String(r.note || '');
+      const note = String(r.note || '').replace(/\s+/g, ''); // 11/18: "샘플 결제"처럼 띄어 써도 제외
       if(EXCLUDE_NOTES.some(k => note.indexOf(k) !== -1) || String(r.company || '').indexOf('개인구매') !== -1) g.bad = true;
       const c = stripOrderCodeSuffix(String(r.code)).toUpperCase();
       const it = g.items[c] || (g.items[c] = { code: c, name: r.name || '', spec: r.spec || '', qty: 0 });
