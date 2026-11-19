@@ -7037,10 +7037,12 @@ const videoRec = (function(){
 
   /* ---------- 작업자 ---------- */
   const wsel = $('sortWorker');
+  // 11/19: 기본은 "미지정" — 피킹자는 묶음 QR 다음에 찍는 이름 QR로 정해진다 (켤 때마다 특정 사람 이름이 들어가지 않게, 기억도 안 함)
+  { const o = document.createElement('option'); o.value = ''; o.textContent = '미지정'; wsel.appendChild(o); }
   Object.keys(WORKER_CODE_MAP).forEach(k => { const o = document.createElement('option'); o.value = WORKER_CODE_MAP[k]; o.textContent = WORKER_CODE_MAP[k]; wsel.appendChild(o); });
-  try{ wsel.value = localStorage.getItem('sortWorker') || '이시안'; }catch(e){ wsel.value = '이시안'; }
-  if(!wsel.value) wsel.selectedIndex = 0;
-  wsel.addEventListener('change', () => { try{ localStorage.setItem('sortWorker', wsel.value); }catch(e){} scan.focus(); });
+  wsel.value = '';
+  try{ localStorage.removeItem('sortWorker'); }catch(e){}
+  wsel.addEventListener('change', () => scan.focus());
 
   function setView(v){
     view = v;
@@ -7412,7 +7414,8 @@ const videoRec = (function(){
     if(!sel.length) return;
     const btn = $('sortCreate'); btn.disabled = true; btn.textContent = '만드는 중…';
     try{
-      const d = await post({ type:'sortCreateBatch', worker: wsel.value, slots: sel.map((c, i) => ({ slot: i + 1, key: c.key, company: c.company, zone: c.zone, qty: c.total, sku: c.sku, items: c.items })) });
+      const d = await post({ type:'sortCreateBatch', worker: wsel.value || '미지정', slots: sel.map((c, i) => ({ slot: i + 1, key: c.key, company: c.company, zone: c.zone, qty: c.total, sku: c.sku, items: c.items })) });
+      wsel.value = ''; // 다음 묶음은 다시 미지정
       if(!d.ok){ sortBeep('err'); alert(d.error || '묶음을 만들지 못했어요'); await refreshSortLocks(); renderCandidates(); return; }
       selected = [];
       await refreshSortLocks();
@@ -7689,7 +7692,6 @@ const videoRec = (function(){
   async function onWorkerQr(name){
     if(pendingPicker && active && pendingPicker.id === active.id && Date.now() - pendingPicker.at <= PICKER_WAIT_MS){
       pendingPicker = null; clearInterval(pickerTimer);
-      wsel.value = name; try{ localStorage.setItem('sortWorker', name); }catch(e){}
       await sendPickScan(active, name);
       return;
     }
@@ -7698,7 +7700,7 @@ const videoRec = (function(){
       big('idle', '🙋', `검수자: ${name}`, '이제부터 다 차는 칸은 이 사람 이름으로 검수기록에 남아요');
       return;
     }
-    wsel.value = name; try{ localStorage.setItem('sortWorker', name); }catch(e){} say(name);
+    wsel.value = name; say(name); // 다음 묶음에만 쓰고 기억하지 않음
   }
   async function sendPickScan(b, worker){
     big('idle', '…', b.status === '배정' ? '피킹 시작 기록 중' : '피킹 완료 기록 중');
