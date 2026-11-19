@@ -54,6 +54,20 @@
   .row .pt{ display:block; font-size:11px; font-weight:800; color:var(--sub); font-family:"Noto Sans KR",sans-serif; }
   .row.cur .pt{ color:#cbd5e1; }
   .hidden{ display:none !important; }
+  /* 11/19: 분배 영상 — 그 업체 장면만 이어보기 */
+  .clipbar{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+  .mbtn{ font-family:inherit; border:2px solid var(--navy); border-radius:10px; padding:8px 14px; font-weight:900; font-size:14px; background:#fff; color:var(--navy); cursor:pointer; }
+  .mbtn.on{ background:var(--navy); color:#fff; }
+  .cset{ margin-left:auto; display:flex; gap:6px; align-items:center; font-size:13px; font-weight:700; color:#475569; }
+  .cset select{ font:inherit; border:2px solid #cbd5e1; border-radius:8px; padding:3px 6px; }
+  .vwrap{ position:relative; }
+  .scenetag{ position:absolute; left:12px; top:64px; background:#2563EB; color:#fff; font-weight:900; border-radius:999px; padding:3px 12px; font-size:14px; pointer-events:none; }
+  .seg{ position:absolute; top:9px; height:16px; border-radius:3px; background:#2563EB; opacity:.85; pointer-events:none; }
+  .seg.cur{ background:#16A34A; opacity:1; box-shadow:0 0 0 2px #bbf7d0; }
+  .clipinfo{ margin-top:6px; font-size:13.5px; font-weight:800; color:var(--navy); }
+  .clipinfo .sc{ background:#EFF6FF; color:#1E40AF; border-radius:8px; padding:3px 9px; margin:0 6px; }
+  .row .sg{ display:block; font-size:11px; font-weight:900; color:#2563EB; font-family:"Noto Sans KR",sans-serif; }
+  .row.cur .sg{ color:#93c5fd; }
   @media (max-width: 860px){
     .body{ grid-template-columns:1fr; }
     .left{ border-right:0; border-bottom:1px solid var(--line); }
@@ -81,16 +95,23 @@
     </div>
     <div id="player" class="hidden">
       <div class="parts hidden" id="parts"></div>
-      <video id="vid" controls playsinline preload="auto"></video>
-      <div class="bar" id="bar"><div class="track"></div><div class="fill" id="fill"></div><div id="ticks"></div><div class="knob" id="knob"></div></div>
+      <div class="clipbar hidden" id="clipBar">
+        <button type="button" class="mbtn on" id="clipOn">▶ <span id="clipName"></span> 장면만 이어보기</button>
+        <button type="button" class="mbtn" id="clipOff">전체 영상 보기</button>
+        <span class="cset">찍기 전 <select id="preSel"><option value="0">바로</option><option value="0.5">0.5초</option><option value="1">1초</option><option value="2">2초</option></select>
+          찍은 뒤 최대 <select id="postSel"><option value="1">1초</option><option value="2">2초</option><option value="3">3초</option><option value="5">5초</option></select></span>
+      </div>
+      <div class="vwrap"><video id="vid" controls playsinline preload="auto"></video><div class="scenetag hidden" id="sceneTag"></div></div>
+      <div class="bar" id="bar"><div class="track"></div><div class="fill" id="fill"></div><div id="segs"></div><div id="ticks"></div><div class="knob" id="knob"></div></div>
       <div class="times"><span id="tNow">0:00</span><span id="tEnd">0:00</span></div>
+      <div class="clipinfo hidden" id="clipInfo"></div>
       <div class="legend"><span><i style="background:var(--ok)"></i>정상 스캔</span><span><i style="background:var(--err)"></i>오피킹</span><span><i style="background:var(--hit)"></i>검색한 품번</span><span class="keyhint" style="margin-left:auto">← → 키: 이전/다음 스캔으로 이동</span></div>
     </div>
     <div class="msg" id="msg"></div>
   </div>
   <div class="right">
     <input class="search" id="search" placeholder="품번 일부 검색 (예: 8032, C111, 화이트 S)" autocomplete="off">
-    <div class="chips"><button type="button" class="chip on" data-f="all" id="cAll">전체 0</button><button type="button" class="chip" data-f="ok" id="cOk">정상 0</button><button type="button" class="chip red" data-f="err" id="cErr">오피킹 0</button></div>
+    <div class="chips"><button type="button" class="chip hidden" data-f="mine" id="cMine">이 전표만 0</button><button type="button" class="chip on" data-f="all" id="cAll">전체 0</button><button type="button" class="chip" data-f="ok" id="cOk">정상 0</button><button type="button" class="chip red" data-f="err" id="cErr">오피킹 0</button></div>
     <div class="cnt" id="cnt">스캔 목록이 아직 없어요</div>
     <div class="list" id="list"></div>
   </div>
@@ -102,6 +123,10 @@ const $ = id => document.getElementById(id);
 const vid = $('vid');
 // parts: 한 전표 영상이 20분마다 1부·2부…로 나뉘어 있으면 여러 개. 각 부 = { no, v(드라이브 영상 id), j(목록 id), file, meta, src, label }
 let loading = false, parts = [], cp = -1, events = [], filter = 'all', shown = [], curIdx = -1, durationSec = 0, pinned = null, loadToken = 0;
+// 11/19: 분배 묶음 영상 — 주소의 d=전표번호 → 그 전표(칸) 장면만 먼저 보여줌
+const normKey = k => String(k || '').replace(/\s+/g, '');
+const focusKey = normKey(new URLSearchParams(location.search).get('d'));
+let sortInfo = null; // { keys:[{slot,key,company}], focus:{slot,key,company} }
 const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 const fmtT = s => { s = Math.max(0, Math.floor(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const hm = d => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -122,8 +147,13 @@ function setParts(list){
   events.forEach((e, i) => { e.i = i; });
   const first = parts.find(p => p.meta) ? parts.find(p => p.meta).meta : null;
   const last = parts.slice().reverse().find(p => p.meta) ? parts.slice().reverse().find(p => p.meta).meta : null;
+  sortInfo = null;
+  if(first && first.sort && Array.isArray(first.keys)){
+    const f = focusKey ? first.keys.find(k => normKey(k.key) === focusKey) : null;
+    sortInfo = { keys: first.keys, focus: f || null };
+  }
   if(first){
-    $('title').textContent = `${first.docKey || ''} · ${first.company || ''}`;
+    $('title').textContent = sortInfo ? `분배 묶음 ${first.docKey || ''}${sortInfo.focus ? ` · ${sortInfo.focus.company || ''}` : ` · ${sortInfo.keys.length}전표`}` : `${first.docKey || ''} · ${first.company || ''}`;
     const st = first.startAt ? new Date(first.startAt) : null;
     const en = last && last.startAt && last.durationMs ? new Date(new Date(last.startAt).getTime() + last.durationMs) : null;
     const total = parts.reduce((a, p) => a + ((p.meta && p.meta.durationMs) || 0), 0);
@@ -134,6 +164,11 @@ function setParts(list){
     $('meta').textContent = bits.filter(Boolean).join(' · ');
     document.title = `검수 영상 · ${first.docKey || ''} ${first.company || ''}`;
   }
+  const mine = sortInfo && sortInfo.focus ? events.filter(e => normKey(e.k) === focusKey).length : 0;
+  $('cMine').classList.toggle('hidden', !(sortInfo && sortInfo.focus));
+  $('cMine').textContent = sortInfo && sortInfo.focus ? `${sortInfo.focus.company || '이 전표'}만 ${mine}` : '';
+  if(sortInfo && sortInfo.focus && filter === 'all' && !setParts.did){ filter = 'mine'; document.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x.dataset.f === 'mine')); }
+  setParts.did = true;
   $('cAll').textContent = `전체 ${events.length}`;
   $('cOk').textContent = `정상 ${events.filter(e => e.ok).length}`;
   $('cErr').textContent = `오피킹 ${events.filter(e => !e.ok).length}`;
@@ -153,15 +188,15 @@ function hl(text, toks){
   toks.forEach(t => { const i = out.toUpperCase().indexOf(esc(t)); if(i !== -1) out = out.slice(0, i) + '<mark>' + out.slice(i, i + esc(t).length) + '</mark>' + out.slice(i + esc(t).length); });
   return out;
 }
-const qLabel = e => e.ok ? (e.q > 1 ? '+' + e.q : '+1') : '오피킹';
+const qLabel = e => e.ok ? ((e.q > 1 ? '+' + e.q : '+1') + (e.f ? ' ✔완료' : '')) : '오피킹';
 function renderList(){
   const toks = tokens();
-  shown = events.filter(e => (filter === 'all' || (filter === 'ok' ? e.ok : !e.ok)) && toks.every(t => `${e.c} ${e.n} ${e.s}`.toUpperCase().indexOf(t) !== -1));
+  shown = events.filter(e => (filter === 'all' || (filter === 'mine' ? (normKey(e.k) === focusKey) : filter === 'ok' ? e.ok : !e.ok)) && toks.every(t => `${e.c} ${e.n} ${e.s}`.toUpperCase().indexOf(t) !== -1));
   $('cnt').textContent = !events.length ? (parts.length ? '이 영상에는 스캔 목록이 없어요 (예전에 녹화한 영상)' : '스캔 목록이 아직 없어요')
-    : (toks.length ? `"${$('search').value.trim()}" 와 맞는 스캔 ${shown.length}건 · 누르면 그 장면 3초 전부터 재생` : `스캔 ${shown.length}건 · 누르면 그 장면 3초 전부터 재생`);
+    : (toks.length ? `"${$('search').value.trim()}" 와 맞는 스캔 ${shown.length}건 · 누르면 그 장면${clipMode ? '' : ' 3초 전'}부터 재생` : `스캔 ${shown.length}건 · 누르면 그 장면${clipMode ? '' : ' 3초 전'}부터 재생`);
   $('list').innerHTML = shown.map(e => `<button type="button" class="row${e.ok ? '' : ' err'}" data-i="${e.i}">
-      <span class="tm">${multi() ? `<span class="pt">${parts[e.pi].no}부</span>` : ''}${fmtT(e.t / 1000)}</span>
-      <span><span class="cd">${e.ok ? '' : '⚠ '}${hl(e.c, toks)}</span><br><span class="sp2">${e.ok ? hl(e.s || e.n || '', toks) + (e.p ? ' · ' + esc(e.p) : '') : esc(e.m || '오피킹')}</span></span>
+      <span class="tm">${clipMode && e.seg ? `<span class="sg">장면 ${e.seg}</span>` : ''}${multi() ? `<span class="pt">${parts[e.pi].no}부</span>` : ''}${fmtT(e.t / 1000)}</span>
+      <span><span class="cd">${e.ok ? '' : '⚠ '}${hl(e.c, toks)}</span><br><span class="sp2">${e.slot ? `<b>${esc(e.co || (e.slot + '번'))}</b>` : ''}${e.ok ? [e.slot ? '' : null, (e.s || e.n) ? hl(e.s || e.n, toks) : null, e.p ? esc(e.p) : null].filter(x => x !== null).join(' · ') : (e.slot ? ' · ' : '') + esc(e.m || '오피킹')}</span></span>
       <span class="q">${qLabel(e)}</span></button>`).join('');
   $('list').querySelectorAll('.row').forEach(r => r.addEventListener('click', () => seekTo(events[Number(r.dataset.i)], true)));
   renderTabs(); renderTicks(); curIdx = -2; markCurrent(false);
@@ -171,10 +206,12 @@ function renderTicks(){
   const dur = partDur();
   if(!dur || cp < 0){ $('ticks').innerHTML = ''; return; }
   const toks = tokens(), hit = new Set(toks.length ? shown.map(e => e.i) : []);
+  renderSegs();
   $('ticks').innerHTML = events.filter(e => e.pi === cp).map(e => `<div class="tick${!e.ok ? ' err' : ''}${hit.has(e.i) ? ' hit' : ''}" style="left:${Math.min(100, e.t / 10 / dur)}%"></div>`).join('');
 }
 function seekTo(e, play){
   if(!e) return;
+  if(clipMode && e.seg){ playSeg(e.seg - 1, play); return; }
   pinned = e; // 그 스캔 장면이 나오기 전 3초 동안도 누른 줄을 표시
   const at = Math.max(0, e.t / 1000 - 3);
   if(e.pi !== cp || !vid.src) { selectPart(e.pi, at, play); return; }
@@ -216,7 +253,10 @@ vid.addEventListener('timeupdate', () => { updateBar(); markCurrent(false); });
 vid.addEventListener('play', () => markCurrent(true));
 vid.addEventListener('pause', () => markCurrent(true));
 // 한 부가 끝나면 다음 부로 이어서 재생
-vid.addEventListener('ended', () => { if(cp >= 0 && cp < parts.length - 1) selectPart(cp + 1, 0, true); });
+vid.addEventListener('ended', () => {
+  if(clipMode && segs.length){ if(segIdx >= 0 && segIdx < segs.length - 1) playSeg(segIdx + 1, true); return; }
+  if(cp >= 0 && cp < parts.length - 1) selectPart(cp + 1, 0, true);
+});
 $('bar').addEventListener('click', ev => {
   const r = $('bar').getBoundingClientRect(); const dur = partDur();
   if(dur) vid.currentTime = Math.max(0, Math.min(dur, (ev.clientX - r.left) / r.width * dur));
@@ -238,6 +278,101 @@ document.addEventListener('keydown', ev => {
   else { k = -1; shown.forEach((e, j) => { if(before(e)) k = j; }); if(k < 0) k = 0; }
   seekTo(shown[k], true);
 });
+
+/* ---------- 11/19: 분배 영상 — 그 업체 장면만 이어보기 ----------
+   그 업체 상품을 찍기 조금 전(기본 0.5초)부터, 찍은 뒤 최대 2초까지만 재생하고 다음 장면으로 넘어간다.
+   그 사이 다른 업체 상품을 찍는 순간이 오면 바로 거기서 끊는다. 연달아 찍은 건 한 장면. */
+let clipMode = false, segs = [], segIdx = -1;
+let preS = 0.5, postS = 2;
+try{ const a = localStorage.getItem('clipPre'), b = localStorage.getItem('clipPost'); if(a !== null && !isNaN(+a)) preS = +a; if(b !== null && !isNaN(+b)) postS = +b; }catch(e){}
+const isMine = e => normKey(e.k) === focusKey;
+function buildSegs(){
+  segs = [];
+  events.forEach(e => { e.seg = 0; });
+  if(!(sortInfo && sortInfo.focus)) return;
+  const byPart = {}; events.forEach(e => (byPart[e.pi] = byPart[e.pi] || []).push(e));
+  Object.keys(byPart).map(Number).sort((a, b) => a - b).forEach(pi => {
+    const L = byPart[pi].slice().sort((a, b) => a.t - b.t);
+    for(let i = 0; i < L.length;){
+      if(!isMine(L[i])){ i++; continue; }
+      let j = i; while(j + 1 < L.length && isMine(L[j + 1])) j++;
+      const prev = i > 0 ? L[i - 1].t : -1e12, next = j + 1 < L.length ? L[j + 1].t : 1e12;
+      let s = Math.max(0, L[i].t - preS * 1000, prev + 150);
+      let e = Math.min(L[j].t + postS * 1000, next - 150);
+      if(s > L[i].t) s = L[i].t;
+      if(e < L[j].t + 300) e = L[j].t + 300; // 찍는 순간은 꼭 보이게
+      segs.push({ pi, s, e, evs: L.slice(i, j + 1) });
+      i = j + 1;
+    }
+  });
+  segs.forEach((g, n) => { g.no = n + 1; g.evs.forEach(x => { x.seg = g.no; }); });
+}
+const segAt = (pi, ms) => segs.findIndex(g => g.pi === pi && ms >= g.s - 50 && ms < g.e);
+const segAfter = (pi, ms) => segs.findIndex(g => g.pi > pi || (g.pi === pi && g.s >= ms));
+function playSeg(n, play){
+  const g = segs[n];
+  if(!g){ vid.pause(); return; }
+  segIdx = n; pinned = g.evs[0];
+  if(g.pi !== cp || !vid.src) selectPart(g.pi, g.s / 1000, play);
+  else { vid.currentTime = g.s / 1000; if(play) vid.play().catch(() => {}); markCurrent(true); }
+  updClip();
+}
+function clock(pi, ms){
+  const p = parts[pi], st = p && p.meta && p.meta.startAt ? new Date(p.meta.startAt).getTime() : 0;
+  if(!st) return fmtT(ms / 1000);
+  const d = new Date(st + ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+}
+function renderSegs(){
+  const dur = partDur();
+  $('segs').innerHTML = clipMode && dur ? segs.filter(g => g.pi === cp).map(g => `<div class="seg${segs[segIdx] === g ? ' cur' : ''}" style="left:${Math.min(100, g.s / 10 / dur)}%;width:${Math.max(0.4, (g.e - g.s) / 10 / dur)}%"></div>`).join('') : '';
+}
+function updClip(){
+  const has = !!(sortInfo && sortInfo.focus);
+  $('clipBar').classList.toggle('hidden', !has);
+  if(!has) return;
+  $('clipName').textContent = sortInfo.focus.company || '이 업체';
+  $('clipOn').classList.toggle('on', clipMode); $('clipOff').classList.toggle('on', !clipMode);
+  $('preSel').value = String(preS); $('postSel').value = String(postS);
+  const g = segs[segIdx];
+  $('sceneTag').classList.toggle('hidden', !(clipMode && g));
+  $('clipInfo').classList.toggle('hidden', !clipMode);
+  if(clipMode){
+    if(!segs.length){ $('clipInfo').textContent = '이 업체 스캔 장면이 없어요 — 전체 영상 보기로 확인해 주세요'; }
+    else if(g){
+      $('sceneTag').textContent = `${sortInfo.focus.company || ''} 장면 ${g.no} / ${segs.length}`;
+      const nx = segs[segIdx + 1];
+      $('clipInfo').innerHTML = `장면 ${g.no} / ${segs.length}<span class="sc">${clock(g.pi, g.s)} ~ ${clock(g.pi, g.e)} (${((g.e - g.s) / 1000).toFixed(1)}초)</span>` +
+        (nx ? `<span style="color:#64748b;font-weight:600">→ 끝나면 자동으로 장면 ${nx.no} (${clock(nx.pi, nx.s)})</span>` : '<span style="color:#64748b;font-weight:600">마지막 장면</span>') +
+        `<span style="color:#64748b;font-weight:600;margin-left:10px">· 전체 중 이 업체 장면 합계 ${fmtT(segs.reduce((a, x) => a + (x.e - x.s), 0) / 1000)}</span>`;
+    } else $('clipInfo').textContent = `이 업체 장면 ${segs.length}개 · ▶ 누르면 장면 1부터 이어서 재생`;
+  }
+  renderSegs();
+}
+function setClip(on){
+  clipMode = !!on && !!(sortInfo && sortInfo.focus);
+  filter = clipMode ? 'mine' : 'all';
+  document.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x.dataset.f === filter));
+  renderList(); updClip();
+}
+$('clipOn').addEventListener('click', () => { setClip(true); playSeg(Math.max(0, segIdx), true); });
+$('clipOff').addEventListener('click', () => { setClip(false); });
+$('preSel').addEventListener('change', e => { preS = +e.target.value; try{ localStorage.setItem('clipPre', preS); }catch(x){} buildSegs(); renderList(); updClip(); });
+$('postSel').addEventListener('change', e => { postS = +e.target.value; try{ localStorage.setItem('clipPost', postS); }catch(x){} buildSegs(); renderList(); updClip(); });
+// 재생 중 장면 끝을 정확히 잡으려고 화면 그릴 때마다 확인 (timeupdate는 0.25초 간격이라 늦음)
+(function loop(){
+  if(clipMode && segs.length && !vid.paused && !loading && cp >= 0){
+    const ms = vid.currentTime * 1000, g = segs[segIdx];
+    if(g && g.pi === cp && ms >= g.e){
+      if(segIdx < segs.length - 1) playSeg(segIdx + 1, true); else { vid.pause(); }
+    } else if(!g || g.pi !== cp || ms < g.s - 400){
+      // 사용자가 막대를 눌러 옮긴 경우: 그 자리 장면, 없으면 다음 장면으로
+      const k = segAt(cp, ms);
+      if(k >= 0){ segIdx = k; updClip(); }
+      else { const n = segAfter(cp, ms); if(n >= 0) playSeg(n, true); else vid.pause(); }
+    }
+  }
+  requestAnimationFrame(loop);
+})();
 
 /* ---------- 영상 불러오기 ---------- */
 // 11/19: 큰 영상(100MB↑, 60분 녹화)도 "바이러스 검사" 확인 페이지 없이 바로 재생되는 주소를 먼저 쓴다
@@ -308,7 +443,10 @@ async function loadFromDrive(list){
     return { v: x.v, j: x.j, meta: m, no: (m && m.part) || idx + 1 };
   }));
   setParts(loaded);
-  selectPart(0, 0, false);
+  // 분배 영상을 전표 줄에서 열었으면 → 그 업체 장면만 이어보기로 시작 (장면 1에서 멈춘 상태, ▶ 누르면 이어서)
+  buildSegs();
+  if(segs.length){ setClip(true); playSeg(0, false); }
+  else { updClip(); selectPart(0, 0, false); }
 }
 // 노트북 파일 열기 — 영상(.webm)마다 같은 이름 .json을 짝지어서, 1부·2부… 순서로
 async function openFiles(files){

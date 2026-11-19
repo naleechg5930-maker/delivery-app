@@ -6454,10 +6454,10 @@ const videoRec = (function(){
   function sortNote(e){
     if(!rec || !cur || !cur.ext) return;
     lastScan = { at: Date.now(), ok: !!e.ok, skip: false,
-      l1: e.ok ? `${e.slot}번 칸 ← ${e.code}${e.full ? '   ✔ 이 칸 완료' : ''}` : `⚠ ${e.code}  ${e.msg || ''}`,
-      l2: e.ok ? `${e.company} · ${e.name || ''} ${e.spec || ''} · 이 칸 ${e.have}/${e.need}` : '' };
+      l1: e.ok ? `${e.company} ← ${e.code}${e.full ? '   ✔ 완료' : ''}` : `⚠ ${e.code}  ${e.msg || ''}`,
+      l2: e.ok ? `${e.name || ''} ${e.spec || ''} · 이 업체 ${e.have}/${e.need} · ${e.slot}번 자리` : '' };
     cur.events.push({ t: Date.now() - cur.startAt.getTime(), c: e.code, n: e.name || '', s: e.spec || '', p: e.ok ? `${e.have}/${e.need}` : '', q: 1, ok: !!e.ok, m: e.ok ? '' : (e.msg || ''),
-      slot: e.slot || 0, k: e.key || '', co: e.company || '' });
+      slot: e.slot || 0, k: e.key || '', co: e.company || '', f: e.full ? 1 : 0 });
   }
   function sortEnd(id, reason){ if(rec && cur && cur.ext && (!id || cur.ext.docKey === id)) stop(reason || '묶음 끝'); }
   return {
