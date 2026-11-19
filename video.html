@@ -240,7 +240,9 @@ document.addEventListener('keydown', ev => {
 });
 
 /* ---------- 영상 불러오기 ---------- */
-const driveUrl = id => `https://drive.google.com/uc?export=download&id=${encodeURIComponent(id)}`;
+// 11/19: 큰 영상(100MB↑, 60분 녹화)도 "바이러스 검사" 확인 페이지 없이 바로 재생되는 주소를 먼저 쓴다
+const driveUrl = id => `https://drive.usercontent.google.com/download?id=${encodeURIComponent(id)}&export=download&confirm=t`;
+const driveUrls = id => [driveUrl(id), `https://drive.google.com/uc?export=download&id=${encodeURIComponent(id)}`];
 function waitMeta(ms){
   return new Promise(res => {
     const done = ok => { clearTimeout(t); vid.removeEventListener('loadedmetadata', okF); vid.removeEventListener('error', errF); res(ok); };
@@ -253,7 +255,7 @@ function waitMeta(ms){
 async function fetchViaApi(p, token){
   const chunks = []; let off = 0, total = 1;
   while(off < total){
-    const r = await (await fetch(`${API}?part=${encodeURIComponent(p.v)}&offset=${off}`)).json();
+    const r = await (await fetch(`${API}?part=${encodeURIComponent(p.v)}&offset=${off}&len=8388608`)).json();
     if(!r.ok) throw new Error(r.error || '영상 받기 실패');
     total = r.total;
     const bin = atob(r.data); const arr = new Uint8Array(bin.length); for(let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
@@ -275,9 +277,13 @@ async function selectPart(k, at, play){
     if(!p.src){
       if(p.file) p.src = URL.createObjectURL(p.file);
       else if(p.v){
-        vid.src = driveUrl(p.v);
-        if(await waitMeta(9000)) p.src = driveUrl(p.v);
-        else { if(token !== loadToken) return; p.src = await fetchViaApi(p, token); }
+        showMsg(`${multi() ? p.no + '부 ' : ''}영상을 불러오는 중이에요...`);
+        for(const u of driveUrls(p.v)){ // 드라이브에서 바로 재생 (다운로드 없이)
+          if(token !== loadToken) return;
+          vid.src = u;
+          if(await waitMeta(12000)){ p.src = u; break; }
+        }
+        if(!p.src){ if(token !== loadToken) return; p.src = await fetchViaApi(p, token); } // 막히면 업로드 서버를 거쳐 받기
       } else throw new Error('영상 파일이 없어요');
     }
     if(token !== loadToken) return;
@@ -297,6 +303,7 @@ async function loadFromDrive(list){
   // list = [{v, j}] — 목록(JSON)을 먼저 다 받아서 몇 부인지 맞춘 뒤 1부부터 연다
   const loaded = await Promise.all(list.map(async (x, idx) => {
     let m = null;
+    if(!x.j && x.v){ try{ const r = await (await fetch(`${API}?findMeta=${encodeURIComponent(x.v)}`)).json(); if(r && r.ok && r.j) x.j = r.j; }catch(e){} } // 11/19: 목록 번호 없는 링크 → 같은 이름 .json 찾기
     if(x.j){ try{ m = await (await fetch(`${API}?meta=${encodeURIComponent(x.j)}`)).json(); if(m && m.ok === false) throw new Error(m.error); }catch(e){ m = null; showMsg('스캔 목록 일부를 불러오지 못했어요 (' + (e.message || e) + ')'); } }
     return { v: x.v, j: x.j, meta: m, no: (m && m.part) || idx + 1 };
   }));
