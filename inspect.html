@@ -4949,6 +4949,7 @@ function checkAllComplete(){
   if(items.length === 0) return;
   const allDone = items.every(it => it.scannedQty >= it.orderQty);
   if(allDone){
+    try{ if(typeof videoRec !== 'undefined' && videoRec.onComplete) videoRec.onComplete(); }catch(e){} // 11/19: 검수완료 5초 뒤 영상 마무리
     try{ setQtyCard(1, 'done'); }catch(e){} // 11/11: 검수완료 → 낱장으로
     setTimeout(()=>{
       const company = (document.getElementById('companyNameInput').value || '').trim() || '업체명 미입력';
@@ -6031,7 +6032,8 @@ const videoRec = (function(){
   //        크롬이 멈출 수 있음 → 60분(약 270MB)마다 저장하고 같은 전표면 끊김 없이 2부·3부로 이어서 찍는다
   const MAX_MS = 60 * 60 * 1000, FPS = 12, W = 640, H = 480, BPS = 600000;
   let enabled = false, dirHandle = null, stream = null, video = null, canvas = null, ctx = null, drawTimer = null;
-  let rec = null, cur = null, maxTimer = null, uiTimer = null;
+  let rec = null, cur = null, maxTimer = null, uiTimer = null, doneTimer = null;
+  const DONE_TAIL_MS = 5000; // 11/19: 검수완료 화면이 5초쯤 찍힌 뒤 영상 마무리
   const $ = id => document.getElementById(id);
   const p2 = n => String(n).padStart(2, '0');
   function ls(k, v){ try{ if(v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); }catch(e){ return null; } }
@@ -6079,7 +6081,8 @@ const videoRec = (function(){
     // 10/22: 오른쪽 위 큰 카운트 — 진행중 "최종 100개 / 23개 진행중", 다 찍으면 "… 완료"
     let prog = '', progColor = '#fde047';
     try{
-      if(items.length){
+      if(cur && cur.ext){ const pg = cur.ext.prog(); prog = pg.text; progColor = pg.color; } // 11/19: 분배 묶음 = 묶음 전체 진행 (칸 완료 수 · 수량)
+      else if(items.length){
         const orderSum = items.reduce((a, it) => a + it.orderQty, 0);
         const scannedSum = items.reduce((a, it) => a + Math.min(it.scannedQty, it.orderQty) + (it.overShown || 0), 0);
         // 미스캔 제외로 끝내면 주문수량이 찍은 수량으로 바뀌므로 그냥 "최종 23개 / 23개 완료"로 보인다 (미스캔 여부는 영상에 표시 안 함)
@@ -6088,7 +6091,7 @@ const videoRec = (function(){
       }
     }catch(e){}
     const l1 = cur ? `${cur.docKey}   ${cur.company}${cur.part > 1 ? '   [' + cur.part + '부]' : ''}` : '';
-    const l2 = `${now.getFullYear()}-${p2(now.getMonth()+1)}-${p2(now.getDate())} ${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}   ${cur ? (currentWorker || cur.worker) : ''}`;
+    const l2 = `${now.getFullYear()}-${p2(now.getMonth()+1)}-${p2(now.getDate())} ${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}   ${cur ? (cur.ext ? cur.ext.worker() : (currentWorker || cur.worker)) : ''}`;
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, 54);
     ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(l1, 10, 23);
     ctx.font = '16px sans-serif'; ctx.fillText(l2, 10, 45);
@@ -6105,6 +6108,7 @@ const videoRec = (function(){
   // 검수 로그에 한 줄 남을 때마다(정상/오피킹) 영상 아래쪽에 "방금 찍은 품목"을 띄운다
   function noteScan(code, ok, note){
     if(!rec) return;
+    if(window.__sortMode) return; // 11/19: 분배 화면은 칸 완료 때 검수 엔진으로 "다시 찍기"만 하므로 여기 기록하지 않음 (sortNote 사용)
     const c = String(code || ''), n = String(note || '');
     if(c.indexOf('WK:') === 0 || c.indexOf('DLV|') === 0 || n.indexOf('전표 조회') === 0) return;
     const base = c.replace(/\s*\[.*?\]/g, '').split('→').pop().trim().toUpperCase();
@@ -6137,9 +6141,13 @@ const videoRec = (function(){
     clearInterval(drawTimer); drawTimer = null;
   }
   // cont = 60분이 넘어서 이어 찍는 다음 부 { series, part } (10/25: 1부·2부… 로 끊김 없이 이어서 녹화)
-  function start(cont){
-    if(!enabled || rec || !stream || !currentDocumentKey || !items.length || typeof MediaRecorder === 'undefined') return;
-    cur = { docKey: currentDocumentKey, suffix: extractDocumentSuffixJS(currentDocumentKey), company: (($('companyNameInput') || {}).value || '').trim(), worker: currentWorker || '', startAt: new Date(),
+  // ex = 11/19 분배 묶음 녹화 { docKey: 묶음번호, company, vendor, keys:[{slot,key,company}], worker(), prog(), alive() }
+  function start(cont, ex){
+    if(!enabled || rec || !stream || typeof MediaRecorder === 'undefined') return;
+    if(!ex && (!currentDocumentKey || !items.length)) return;
+    cur = ex ? { docKey: ex.docKey, suffix: ex.docKey, company: ex.company, vendor: ex.vendor, keys: ex.keys, ext: ex, worker: ex.worker(), startAt: new Date(),
+        series: cont ? cont.series : Date.now().toString(36), part: cont ? cont.part : 1 }
+      : { docKey: currentDocumentKey, suffix: extractDocumentSuffixJS(currentDocumentKey), company: (($('companyNameInput') || {}).value || '').trim(), worker: currentWorker || '', startAt: new Date(),
       series: cont ? cont.series : Date.now().toString(36), part: cont ? cont.part : 1 };
     canvas = canvas || document.createElement('canvas'); canvas.width = W; canvas.height = H; ctx = canvas.getContext('2d');
     cur.frames = 0; cur.chunks = []; cur.events = [];
@@ -6153,17 +6161,18 @@ const videoRec = (function(){
     maxTimer = setTimeout(() => {
       // 60분이 되면 이 부를 저장하고, 같은 전표 검수 중이면 바로 다음 부 녹화를 이어서 시작한다
       const next = cur ? { series: cur.series, part: cur.part + 1, docKey: cur.docKey } : null;
+      const ex = cur && cur.ext;
       stop(`${Math.round(MAX_MS / 60000)}분 → ${next ? next.part + '부로 이어서' : '종료'}`);
-      if(next && enabled && currentDocumentKey === next.docKey) start(next);
+      if(next && enabled && (ex ? ex.alive() : currentDocumentKey === next.docKey)) start(next, ex);
     }, MAX_MS);
     uiTimer = setInterval(updateBadge, 1000); updateBadge();
   }
   function stop(reason){
     if(!rec) return Promise.resolve();
     const r = rec, info = cur; rec = null; cur = null;
-    clearTimeout(maxTimer); clearInterval(uiTimer); stopTicker();
+    clearTimeout(maxTimer); clearTimeout(doneTimer); clearInterval(uiTimer); stopTicker();
     info.stopAt = new Date();
-    try{ info.summary = { items: items.length, order: items.reduce((a, it) => a + it.orderQty, 0), scanned: items.reduce((a, it) => a + Math.min(it.scannedQty, it.orderQty), 0) }; }catch(e){ info.summary = null; }
+    try{ info.summary = info.ext ? info.ext.summary() : { items: items.length, order: items.reduce((a, it) => a + it.orderQty, 0), scanned: items.reduce((a, it) => a + Math.min(it.scannedQty, it.orderQty), 0) }; }catch(e){ info.summary = null; }
     updateBadge();
     return new Promise(resolve => {
       r.onstop = async () => {
@@ -6204,18 +6213,19 @@ const videoRec = (function(){
   async function save(blob, info, reason){
     if(!blob.size) return;
     const d = info.startAt, day = `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;
-    const name = `${day}_${p2(d.getHours())}${p2(d.getMinutes())}_전표${safe(info.suffix)}_${safe(info.company)}_${safe(info.worker || currentWorker)}${info.part > 1 ? '_' + info.part + '부' : ''}.webm`;
+    const name = info.ext ? `${day}_${p2(d.getHours())}${p2(d.getMinutes())}_분배${safe(info.docKey)}_${info.keys.length}전표_${safe(info.worker)}${info.part > 1 ? '_' + info.part + '부' : ''}.webm`
+      : `${day}_${p2(d.getHours())}${p2(d.getMinutes())}_전표${safe(info.suffix)}_${safe(info.company)}_${safe(info.worker || currentWorker)}${info.part > 1 ? '_' + info.part + '부' : ''}.webm`;
     const mb = (blob.size / 1048576).toFixed(1);
     const secs = Math.round(((info.stopAt || new Date()) - info.startAt) / 1000);
     const lenTxt = `${Math.floor(secs / 60)}분 ${secs % 60}초 · 화면 ${info.frames || 0}장`; // 화면 장수가 (초×12)보다 훨씬 적으면 그 사이 창이 가려져 녹화가 끊긴 것
     // 영상 보기 화면용 스캔 목록 파일 (영상과 같은 이름 .json)
     const jsonName = name.replace(/\.webm$/, '.json');
-    const jsonText = JSON.stringify({ v: 1, video: name, docKey: info.docKey, company: info.company, worker: info.worker || currentWorker || '', startAt: info.startAt.toISOString(), durationMs: (info.stopAt || new Date()) - info.startAt, summary: info.summary || null, reason, series: info.series || '', part: info.part || 1, events: info.events || [] });
+    const jsonText = JSON.stringify({ v: 1, video: name, docKey: info.docKey, company: info.company, worker: info.worker || currentWorker || '', startAt: info.startAt.toISOString(), durationMs: (info.stopAt || new Date()) - info.startAt, summary: info.summary || null, reason, series: info.series || '', part: info.part || 1, events: info.events || [], sort: info.ext ? 1 : 0, keys: info.keys || null });
     try{
       const dir = await refreshFolderLabel(false);
       if(dir){
         // 10/22: 예전 검수 스크린샷처럼 업체명 폴더로 나눠서 저장 (파일 이름 앞에 날짜가 있어서 날짜순으로 정렬됨)
-        const vendor = sanitizeFilename(String(info.company || '').replace(/\s*\(도착보장\)\s*$/, ''));
+        const vendor = info.vendor || sanitizeFilename(String(info.company || '').replace(/\s*\(도착보장\)\s*$/, ''));
         const sub = await dir.getDirectoryHandle(vendor, { create:true });
         const fh = await sub.getFileHandle(name, { create:true });
         const w = await fh.createWritable(); await w.write(blob); await w.close();
@@ -6228,7 +6238,7 @@ const videoRec = (function(){
         setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 10000);
         setTimeout(() => { const j = document.createElement('a'); j.href = URL.createObjectURL(new Blob([jsonText], { type:'application/json' })); j.download = jsonName; document.body.appendChild(j); j.click(); setTimeout(() => { URL.revokeObjectURL(j.href); j.remove(); }, 10000); }, 800);
         addScreenOnlyLog('🎥 영상 저장', `${name} (${lenTxt} · ${mb}MB · 다운로드 폴더 · ${reason})`, '🎥');
-        enqueue(blob, info, name, sanitizeFilename(String(info.company || '').replace(/\s*\(도착보장\)\s*$/, '')), jsonText);
+        enqueue(blob, info, name, info.vendor || sanitizeFilename(String(info.company || '').replace(/\s*\(도착보장\)\s*$/, '')), jsonText);
       }
     }catch(e){ addScreenOnlyLog('🎥 영상 저장 실패', String(e.message || e)); }
   }
@@ -6354,7 +6364,8 @@ const videoRec = (function(){
     if(!upUrl()) return;
     const id = 'vq_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
     const d = info.startAt; const bd = new Date(d.getTime() - (d.getHours() < 5 ? 86400000 : 0)); // 새벽 5시 전은 전날 탭 (검수기록과 같은 기준)
-    const meta = { name, vendor, documentKey: info.docKey, dateStr: `${bd.getFullYear()}-${p2(bd.getMonth()+1)}-${p2(bd.getDate())}`, size: blob.size, tries: 0, series: info.series || '', part: info.part || 1 };
+    const meta = { name, vendor, documentKey: info.docKey, dateStr: `${bd.getFullYear()}-${p2(bd.getMonth()+1)}-${p2(bd.getDate())}`, size: blob.size, tries: 0, series: info.series || '', part: info.part || 1,
+      documentKeys: info.keys ? info.keys.map(k => k.key) : null }; // 11/19: 분배 묶음 영상 → 묶음 안 전표 줄마다 링크
     try{ await idbSet(id, { meta, blob, json: jsonText || null }); const list = await qIndex(); list.push(id); await setQIndex(list); }catch(e){ addScreenOnlyLog('☁ 업로드 대기 등록 실패', String(e.message || e)); return; }
     updateUploadInfo(); processQueue();
   }
@@ -6387,7 +6398,7 @@ const videoRec = (function(){
       const data = await blobToBase64(part);
       let r = null, err = null;
       for(let k = 0; k < 3; k++){ // 조각 하나당 3번까지 다시 시도
-        try{ r = await post({ type:'chunk', uploadUrl: st.uploadUrl, offset: off, total: blob.size, data, documentKey: meta.documentKey, dateStr: meta.dateStr, jsonId: meta.jsonId || '', series: meta.series || '', part: meta.part || 1 }); if(r.ok) break; err = r.error; }
+        try{ r = await post({ type:'chunk', uploadUrl: st.uploadUrl, offset: off, total: blob.size, data, documentKey: meta.documentKey, dateStr: meta.dateStr, jsonId: meta.jsonId || '', series: meta.series || '', part: meta.part || 1, documentKeys: meta.documentKeys || null }); if(r.ok) break; err = r.error; }
         catch(e){ err = e.message || String(e); }
         await new Promise(z => setTimeout(z, 3000 * (k + 1)));
       }
@@ -6433,11 +6444,34 @@ const videoRec = (function(){
   $('videoUploadUrl').addEventListener('change', e => { ls('videoUploadUrl', e.target.value.trim()); updateUploadInfo(); processQueue(); });
   updateUploadInfo(); setTimeout(processQueue, 5000); // 이전에 못 올린 영상이 있으면 이어서
 
+  // 11/19: 분배 화면 — 묶음 하나를 영상 하나로 (분배 시작~묶음 검수완료), 찍을 때마다 몇 번 칸인지 같이 남김
+  function sortBegin(ex){
+    if(!enabled) return;
+    if(rec && cur && cur.ext && cur.ext.docKey === ex.docKey) return; // 이미 이 묶음 녹화 중
+    if(rec) stop('다른 묶음');
+    start(null, ex);
+  }
+  function sortNote(e){
+    if(!rec || !cur || !cur.ext) return;
+    lastScan = { at: Date.now(), ok: !!e.ok, skip: false,
+      l1: e.ok ? `${e.slot}번 칸 ← ${e.code}${e.full ? '   ✔ 이 칸 완료' : ''}` : `⚠ ${e.code}  ${e.msg || ''}`,
+      l2: e.ok ? `${e.company} · ${e.name || ''} ${e.spec || ''} · 이 칸 ${e.have}/${e.need}` : '' };
+    cur.events.push({ t: Date.now() - cur.startAt.getTime(), c: e.code, n: e.name || '', s: e.spec || '', p: e.ok ? `${e.have}/${e.need}` : '', q: 1, ok: !!e.ok, m: e.ok ? '' : (e.msg || ''),
+      slot: e.slot || 0, k: e.key || '', co: e.company || '' });
+  }
+  function sortEnd(id, reason){ if(rec && cur && cur.ext && (!id || cur.ext.docKey === id)) stop(reason || '묶음 끝'); }
   return {
-    noteScan, enqueue,
-    onItemScan(){ if(enabled && !rec) start(); },
-    onDocumentScan(raw){ if(!rec || !cur) return; const k = docKeyFromScan(raw); if(k && k !== canonicalDocKeyJS(cur.docKey)) stop('다음 전표'); },
-    onDlv(suffix){ if(rec && cur && String(cur.suffix) === String(suffix)) stop('배송라벨 스캔'); },
+    noteScan, enqueue, sortBegin, sortNote, sortEnd,
+    // 11/19: 녹화 = 첫 상품을 찍을 때 시작 → 검수완료 5초 뒤 마무리. 이미 다 끝난 전표에 더 찍는 것(배송라벨 등)으로는 새로 시작하지 않음
+    onItemScan(){ if(window.__sortMode) return; try{ if(items.length && items.every(it => it.scannedQty >= it.orderQty)) return; }catch(e){} if(enabled && !rec) start(); },
+    onComplete(){
+      if(window.__sortMode || !rec || !cur || cur.ext) return;
+      if(canonicalDocKeyJS(cur.docKey) !== canonicalDocKeyJS(currentDocumentKey)) return;
+      const mine = cur; clearTimeout(doneTimer);
+      doneTimer = setTimeout(() => { if(rec && cur === mine) stop('검수완료'); }, DONE_TAIL_MS);
+    },
+    onDocumentScan(raw){ if(window.__sortMode) return; if(!rec || !cur) return; const k = docKeyFromScan(raw); if(k && k !== canonicalDocKeyJS(cur.docKey)) stop('다음 전표'); },
+    onDlv(suffix){ if(window.__sortMode) return; if(rec && cur && String(cur.suffix) === String(suffix)) stop('배송라벨 스캔'); },
     stop, isRecording: () => !!rec, isUploading: () => uploading,
   };
 })();
@@ -7402,6 +7436,7 @@ const videoRec = (function(){
       (() => { const q = sm.rows.filter(r => r.stt !== 'rec').reduce((t, r) => t + r.have, 0); return q ? `· 기록 안 된 칸에 이미 분배한 ${q}개는 검수기록에 안 남아요 (그 상품은 칸에서 빼서 다시 처리).\n` : ''; })() +
       (!mine && b.status !== '배정' ? '· 다른 PC에서 이 묶음을 하고 있으면 그쪽 작업도 멈춰요.' : '');
     if(!confirm(msg)) return;
+    vidEnd('묶음 취소', b.id);
     try{ const d = await post({ type:'sortCancelBatch', id: b.id }); if(!d.ok){ alert(d.error); return; } if(d.note) say(d.note); }catch(e){ alert('통신 오류: ' + e.message); return; }
     if(mine){ active = null; st = null; try{ localStorage.removeItem('sortActiveId'); }catch(e){} renderRun(); big('idle', '–', '묶음이 취소됐어요'); }
     delete abOpen[b.id];
@@ -7506,6 +7541,7 @@ const videoRec = (function(){
   }
   function openBatch(b){
     if(!b) return;
+    if(active && active.id !== b.id) vidEnd('다른 묶음 열기');
     active = b; st = emptyState(b);
     try{ localStorage.setItem('sortActiveId', b.id); }catch(e){}
     b.slots.forEach(s => { st.counts[s.slot] = st.counts[s.slot] || {}; st.seq[s.slot] = st.seq[s.slot] || []; st.ts[s.slot] = st.ts[s.slot] || []; st.ms[s.slot] = st.ms[s.slot] || 0; });
@@ -7715,6 +7751,27 @@ const videoRec = (function(){
     }catch(e){ sortBeep('err'); big('err', '✕', '통신 오류 — 다시 찍어주세요'); say('다시 찍어주세요'); }
   }
 
+  /* 11/19: 분배 영상 — 묶음 하나 = 영상 하나 (첫 상품을 찍을 때 시작, 묶음 검수완료·취소·다른 묶음 열면 저장)
+     예전엔 칸이 다 찰 때 검수 엔진이 "다시 찍기"하는 몇 초만 전표마다 녹화돼서 완료 장면만 남았음 */
+  function vidBegin(){
+    if(!active || typeof videoRec === 'undefined' || !videoRec.sortBegin) return;
+    const b = active;
+    videoRec.sortBegin({
+      docKey: b.id, company: `분배 ${b.slots.length}전표`, vendor: '분배묶음',
+      keys: b.slots.map(s => ({ slot: s.slot, key: canonicalDocKeyJS(s.key), company: s.company })),
+      worker: () => (st && st.inspector) || b.worker || '',
+      alive: () => active === b && st && !st.allDoneShown,
+      prog: () => {
+        if(active !== b || !st) return { text: '', color: '#fde047' };
+        const done = b.slots.filter(x => st.recorded[x.slot]).length;
+        const need = b.slots.reduce((a, x) => a + slotSum(st.need[x.slot]), 0), have = b.slots.reduce((a, x) => a + slotSum(st.counts[x.slot]), 0);
+        return { text: `칸 ${done}/${b.slots.length} 완료 · ${have}/${need}개`, color: done === b.slots.length ? '#4ade80' : '#fde047' };
+      },
+      summary: () => ({ items: b.slots.length, order: b.slots.reduce((a, x) => a + slotSum(st.need[x.slot]), 0), scanned: b.slots.reduce((a, x) => a + slotSum(st.counts[x.slot]), 0) }),
+    });
+  }
+  function vidNote(e){ try{ if(e.ok) vidBegin(); videoRec.sortNote(e); }catch(err){} }
+  function vidEnd(reason, id){ try{ videoRec.sortEnd(id, reason); }catch(e){} }
   function onProductScan(raw){
     if(!active){ sortBeep('err'); say('묶음을 먼저 열어주세요'); return; }
     if(active.status === '배정' || active.status === '피킹중'){ sortBeep('err'); big('err', '✕', '묶음 QR을 먼저 찍어주세요', active.status === '배정' ? '피킹 시작 전이에요' : '피킹 완료(묶음 QR)를 먼저 찍어주세요'); say('묶음 큐알을 먼저 찍어주세요'); return; }
@@ -7730,10 +7787,10 @@ const videoRec = (function(){
       try{ tries.push(stripOrderCodeSuffix(t).toUpperCase()); }catch(e){}
       c = tries.find(x => codes.has(x)) || '';
     }
-    if(!c && t.length > 11 && codes.has(t.slice(0, 11)) && /^\d+$/.test(t.slice(11))){ sortBeep('err'); big('err', '✕', '낱개로 찍어주세요', `${t} — 박스·묶음 바코드는 안 돼요`); say('낱개로 찍어주세요'); logLine(`${t} ✕ 박스·묶음 바코드`, true); renderRun(); return; }
-    if(!c){ sortBeep('err'); big('err', '✕', '이 묶음에 없는 품번', t); say('없음'); logLine(`${t} ✕ 이 묶음에 없는 품번`, true); renderRun(); return; }
+    if(!c && t.length > 11 && codes.has(t.slice(0, 11)) && /^\d+$/.test(t.slice(11))){ vidNote({ ok:false, code:t, msg:'박스·묶음 바코드' }); sortBeep('err'); big('err', '✕', '낱개로 찍어주세요', `${t} — 박스·묶음 바코드는 안 돼요`); say('낱개로 찍어주세요'); logLine(`${t} ✕ 박스·묶음 바코드`, true); renderRun(); return; }
+    if(!c){ vidNote({ ok:false, code:t, msg:'이 묶음에 없는 품번' }); sortBeep('err'); big('err', '✕', '이 묶음에 없는 품번', t); say('없음'); logLine(`${t} ✕ 이 묶음에 없는 품번`, true); renderRun(); return; }
     const slot = active.slots.map(s => s.slot).sort((a, b) => a - b).find(n => !st.recorded[n] && (st.counts[n][c] || 0) < (st.need[n][c] || 0));
-    if(!slot){ sortBeep('err'); big('err', '✕', '이미 다 찼어요', `${c} — 필요한 수량을 다 찍었어요`); say('다 찼어요'); logLine(`${c} ✕ 필요 수량 다 참`, true); renderRun(); return; }
+    if(!slot){ vidNote({ ok:false, code:c, msg:'필요 수량 다 참' }); sortBeep('err'); big('err', '✕', '이미 다 찼어요', `${c} — 필요한 수량을 다 찍었어요`); say('다 찼어요'); logLine(`${c} ✕ 필요 수량 다 참`, true); renderRun(); return; }
     const now = Date.now();
     const dt = st.lastScanAt ? Math.min(60000, Math.max(0, now - st.lastScanAt)) : 3000;
     st.lastScanAt = now;
@@ -7744,6 +7801,7 @@ const videoRec = (function(){
     const s = active.slots.find(x => x.slot === slot);
     const it = s.items.find(i => i.code === c);
     logLine(`${c} → ${slot}번 (${s.company})`);
+    vidNote({ ok:true, code:c, slot, key: canonicalDocKeyJS(s.key), company: s.company, name: it ? it.name : '', spec: it ? it.spec : '', have: st.counts[slot][c], need: st.need[slot][c], full: slotFull(slot) });
     if(slotFull(slot)){
       announce(slot, true);
       big('done', slot, `${slot}번 완료 · ${s.company}`, directPrint ? '검수완료 기록 + 라벨 바로 인쇄' : '검수완료 기록 + 라벨 인쇄 대기열');
@@ -7850,6 +7908,7 @@ const videoRec = (function(){
     if(!active.slots.every(x => st.recorded[x.slot])) return;
     st.allDoneShown = true;
     try{ ptl.allDone(); }catch(e){}
+    setTimeout(() => vidEnd('묶음 검수완료', active && active.id), 5000); // 완료 화면이 5초쯤 찍힌 뒤 저장
     try{ localStorage.removeItem('sortActiveId'); }catch(e){}
     $('sortDoneSub').textContent = `묶음 ${active.id} · ${active.slots.length}전표 모두 끝났어요`;
     $('sortDoneList').innerHTML = active.slots.map(x => `${x.slot}번 ${escapeHtml(x.company)} ✓`).join('<br>');
