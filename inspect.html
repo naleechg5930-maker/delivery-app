@@ -6094,10 +6094,37 @@ const videoRec = (function(){
     const l1 = cur ? `${cur.docKey}   ${cur.company}${cur.part > 1 ? '   [' + cur.part + '부]' : ''}` : '';
     const l2 = `${now.getFullYear()}-${p2(now.getMonth()+1)}-${p2(now.getDate())} ${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}   ${cur ? (cur.ext ? cur.ext.worker() : (currentWorker || cur.worker)) : ''}`;
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, 54);
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(l1, 10, 23);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif';
+    if(cur && cur.ext && cur.ext.names){
+      // 11/19: 분배 — "분배 6전표" 대신 업체 이름을 나란히 (완료한 업체 ✔초록, 방금 찍은 업체 노랑)
+      let x = 10; const maxX = W - (prog ? ctx.measureText(prog).width + 90 : 60);
+      const head = `${cur.docKey}${cur.part > 1 ? ' [' + cur.part + '부]' : ''}  `;
+      ctx.fillText(head, x, 23); x += ctx.measureText(head).width;
+      const names = cur.ext.names(), hot = lastScan && Date.now() - lastScan.at < 4000 ? lastScan.co : '';
+      for(let i = 0; i < names.length; i++){
+        const nm = names[i], txt = (nm.done ? '✔' : '') + nm.name + (i < names.length - 1 ? ' · ' : '');
+        const w = ctx.measureText(txt).width, rest = `외 ${names.length - i}곳`;
+        if(x + w > maxX - (i < names.length - 1 ? ctx.measureText(rest).width : 0)){ ctx.fillStyle = '#cbd5e1'; ctx.fillText(rest, x, 23); break; }
+        ctx.fillStyle = nm.done ? '#4ade80' : (hot && nm.name === hot ? '#fde047' : '#fff');
+        ctx.fillText(txt, x, 23); x += w;
+      }
+      ctx.fillStyle = '#fff';
+    } else ctx.fillText(l1, 10, 23);
     ctx.font = '16px sans-serif'; ctx.fillText(l2, 10, 45);
     if(prog){ ctx.textAlign = 'right'; ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = progColor; ctx.fillText(prog, W - 40, 36); ctx.textAlign = 'left'; }
     ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(W - 22, 22, 8, 0, Math.PI * 2); ctx.fill();
+    // 11/19: 업체(전표) 완료 순간 — 가운데에 크게 "✔ ○○ 완료" (3.5초)
+    if(doneBanner && Date.now() - doneBanner.at < (doneBanner.ms || 3500)){
+      const bw = Math.min(W - 80, 720), bh = 128, bx = (W - bw) / 2, by = (H - bh) / 2 - 20;
+      ctx.fillStyle = 'rgba(21,128,61,0.92)';
+      if(ctx.roundRect){ ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 22); ctx.fill(); } else ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeStyle = '#bbf7d0'; ctx.lineWidth = 4; if(ctx.roundRect){ ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 22); ctx.stroke(); }
+      ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+      let fs = 46; ctx.font = `bold ${fs}px sans-serif`; while(ctx.measureText(doneBanner.text).width > bw - 40 && fs > 22){ fs -= 2; ctx.font = `bold ${fs}px sans-serif`; }
+      ctx.fillText(doneBanner.text, W / 2, by + 66);
+      ctx.font = '20px sans-serif'; ctx.fillText(doneBanner.sub || '', W / 2, by + 104);
+      ctx.textAlign = 'left';
+    }
     // 방금 찍은 품목 (4초 동안 아래쪽에 크게)
     if(lastScan && Date.now() - lastScan.at < 4000){
       ctx.fillStyle = lastScan.ok ? 'rgba(21,128,61,0.88)' : (lastScan.skip ? 'rgba(194,65,12,0.9)' : 'rgba(185,28,28,0.9)'); ctx.fillRect(0, H - 62, W, 62);
@@ -6105,7 +6132,7 @@ const videoRec = (function(){
       ctx.font = '16px sans-serif'; ctx.fillText(lastScan.l2, 10, H - 12);
     }
   }
-  let lastScan = null;
+  let lastScan = null, doneBanner = null; // doneBanner = { at, text, sub, ms }
   // 검수 로그에 한 줄 남을 때마다(정상/오피킹) 영상 아래쪽에 "방금 찍은 품목"을 띄운다
   function noteScan(code, ok, note){
     if(!rec) return;
@@ -6150,7 +6177,7 @@ const videoRec = (function(){
         series: cont ? cont.series : Date.now().toString(36), part: cont ? cont.part : 1 }
       : { docKey: currentDocumentKey, suffix: extractDocumentSuffixJS(currentDocumentKey), company: (($('companyNameInput') || {}).value || '').trim(), worker: currentWorker || '', startAt: new Date(),
       series: cont ? cont.series : Date.now().toString(36), part: cont ? cont.part : 1 };
-    canvas = canvas || document.createElement('canvas'); canvas.width = W; canvas.height = H; ctx = canvas.getContext('2d');
+    canvas = canvas || document.createElement('canvas'); canvas.width = W; canvas.height = H; ctx = canvas.getContext('2d'); window.__vidCanvas = canvas; // 확인용
     cur.frames = 0; cur.chunks = []; cur.events = [];
     draw(); startTicker();
     const mime = ['video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) || '';
@@ -6456,19 +6483,26 @@ const videoRec = (function(){
     if(!rec || !cur || !cur.ext) return;
     lastScan = { at: Date.now(), ok: !!e.ok, skip: false,
       l1: e.ok ? `${e.company} ← ${e.code}${e.q > 1 ? '  ×' + e.q + '개 (묶음)' : ''}${e.full ? '   ✔ 완료' : ''}` : `⚠ ${e.code}  ${e.msg || ''}`,
-      l2: e.ok ? `${e.name || ''} ${e.spec || ''} · 이 업체 ${e.have}/${e.need} · ${e.slot}번 자리` : '' };
+      l2: e.ok ? `${e.name || ''} ${e.spec || ''} · 이 업체 ${e.have}/${e.need} · ${e.slot}번 자리` : '', co: e.company || '' };
+    if(e.ok && e.full){ // 그 업체 마지막 상품 → 가운데 큰 완료 표시
+      let sub = ''; try{ const pg = cur.ext.prog(); sub = pg.text || ''; }catch(x){}
+      doneBanner = { at: Date.now(), text: `✔ ${e.company} 완료`, sub: `${e.slot}번 자리 · ${sub}`, ms: 3500 };
+    }
     cur.events.push({ t: (e.at || Date.now()) - cur.startAt.getTime(), te: e.endAt ? e.endAt - cur.startAt.getTime() : undefined, c: e.code, n: e.name || '', s: e.spec || '', p: e.ok ? `${e.have}/${e.need}` : '', q: e.q || 1, ok: !!e.ok, m: e.ok ? '' : (e.msg || ''),
       slot: e.slot || 0, k: e.key || '', co: e.company || '', f: e.full ? 1 : 0 });
   }
+  function sortBanner(text, sub, ms){ if(rec && cur) doneBanner = { at: Date.now(), text, sub: sub || '', ms: ms || 5000 }; }
   function sortEnd(id, reason){ if(rec && cur && cur.ext && (!id || cur.ext.docKey === id)) stop(reason || '묶음 끝'); }
   return {
-    noteScan, enqueue, sortBegin, sortNote, sortEnd,
+    noteScan, enqueue, sortBegin, sortNote, sortEnd, sortBanner,
     // 11/19: 녹화 = 첫 상품을 찍을 때 시작 → 검수완료 5초 뒤 마무리. 이미 다 끝난 전표에 더 찍는 것(배송라벨 등)으로는 새로 시작하지 않음
     onItemScan(){ if(window.__sortMode) return; try{ if(items.length && items.every(it => it.scannedQty >= it.orderQty)) return; }catch(e){} if(enabled && !rec) start(); },
     onComplete(){
       if(window.__sortMode || !rec || !cur || cur.ext) return;
       if(canonicalDocKeyJS(cur.docKey) !== canonicalDocKeyJS(currentDocumentKey)) return;
       const mine = cur; clearTimeout(doneTimer);
+      // 일반 검수도 마지막 5초에 가운데 "✔ ○○ 검수완료"
+      try{ const sum = items.reduce((a, it) => a + Math.min(it.scannedQty, it.orderQty), 0); doneBanner = { at: Date.now(), text: `✔ ${cur.company || cur.docKey} 검수완료`, sub: `${cur.docKey} · 최종 ${sum}개`, ms: DONE_TAIL_MS }; }catch(e){}
       doneTimer = setTimeout(() => { if(rec && cur === mine) stop('검수완료'); }, DONE_TAIL_MS);
     },
     onDocumentScan(raw){ if(window.__sortMode) return; if(!rec || !cur) return; const k = docKeyFromScan(raw); if(k && k !== canonicalDocKeyJS(cur.docKey)) stop('다음 전표'); },
@@ -7811,12 +7845,13 @@ const videoRec = (function(){
       docKey: b.id, company: `분배 ${b.slots.length}전표`, vendor: '분배묶음',
       keys: b.slots.map(s => ({ slot: s.slot, key: canonicalDocKeyJS(s.key), company: s.company })),
       worker: () => (st && st.inspector) || b.worker || '',
+      names: () => b.slots.map(x => ({ name: x.company, done: !!(active === b && st && (st.recorded[x.slot] || slotFull(x.slot))) })),
       alive: () => active === b && st && !st.allDoneShown,
       prog: () => {
         if(active !== b || !st) return { text: '', color: '#fde047' };
-        const done = b.slots.filter(x => st.recorded[x.slot]).length;
+        const done = b.slots.filter(x => st.recorded[x.slot] || slotFull(x.slot)).length; // 다 찬 칸 = 완료 (기록 저장 중이어도)
         const need = b.slots.reduce((a, x) => a + slotSum(st.need[x.slot]), 0), have = b.slots.reduce((a, x) => a + slotSum(st.counts[x.slot]), 0);
-        return { text: `칸 ${done}/${b.slots.length} 완료 · ${have}/${need}개`, color: done === b.slots.length ? '#4ade80' : '#fde047' };
+        return { text: `${done}/${b.slots.length}곳 완료 · ${have}/${need}개`, color: done === b.slots.length ? '#4ade80' : '#fde047' };
       },
       summary: () => ({ items: b.slots.length, order: b.slots.reduce((a, x) => a + slotSum(st.need[x.slot]), 0), scanned: b.slots.reduce((a, x) => a + slotSum(st.counts[x.slot]), 0) }),
     });
@@ -8102,6 +8137,7 @@ const videoRec = (function(){
     st.allDoneShown = true;
     try{ ptl.allDone(); }catch(e){}
     try{ setSortQty(1, false); }catch(e){} // 묶음 끝 → 다시 낱개
+    try{ videoRec.sortBanner(`✔ 전체 완료 — ${active.slots.length}개 업체`, active.slots.map(x => x.company).join(' · '), 5000); }catch(e){}
     setTimeout(() => vidEnd('묶음 검수완료', active && active.id), 5000); // 완료 화면이 5초쯤 찍힌 뒤 저장
     try{ localStorage.removeItem('sortActiveId'); }catch(e){}
     $('sortDoneSub').textContent = `묶음 ${active.id} · ${active.slots.length}전표 모두 끝났어요`;
