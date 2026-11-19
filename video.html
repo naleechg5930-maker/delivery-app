@@ -298,7 +298,9 @@ function buildSegs(){
       let j = i; while(j + 1 < L.length && isMine(L[j + 1])) j++;
       const prev = i > 0 ? L[i - 1].t : -1e12, next = j + 1 < L.length ? L[j + 1].t : 1e12;
       let s = Math.max(0, L[i].t - preS * 1000, prev + 150);
-      let e = Math.min(L[j].t + postS * 1000, next - 150);
+      // 넣은 칸 확인을 켜고 찍은 건 te = 그 칸 전표 QR을 찍은 시각 → 넣는 모습 + 확인까지 보이게
+      const endBase = Math.max(L[j].t + postS * 1000, L[j].te ? L[j].te + 700 : 0);
+      let e = Math.min(endBase, next - 150);
       if(s > L[i].t) s = L[i].t;
       if(e < L[j].t + 300) e = L[j].t + 300; // 찍는 순간은 꼭 보이게
       segs.push({ pi, s, e, evs: L.slice(i, j + 1) });

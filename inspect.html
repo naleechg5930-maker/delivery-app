@@ -6457,7 +6457,7 @@ const videoRec = (function(){
     lastScan = { at: Date.now(), ok: !!e.ok, skip: false,
       l1: e.ok ? `${e.company} ← ${e.code}${e.q > 1 ? '  ×' + e.q + '개 (묶음)' : ''}${e.full ? '   ✔ 완료' : ''}` : `⚠ ${e.code}  ${e.msg || ''}`,
       l2: e.ok ? `${e.name || ''} ${e.spec || ''} · 이 업체 ${e.have}/${e.need} · ${e.slot}번 자리` : '' };
-    cur.events.push({ t: Date.now() - cur.startAt.getTime(), c: e.code, n: e.name || '', s: e.spec || '', p: e.ok ? `${e.have}/${e.need}` : '', q: e.q || 1, ok: !!e.ok, m: e.ok ? '' : (e.msg || ''),
+    cur.events.push({ t: (e.at || Date.now()) - cur.startAt.getTime(), te: e.endAt ? e.endAt - cur.startAt.getTime() : undefined, c: e.code, n: e.name || '', s: e.spec || '', p: e.ok ? `${e.have}/${e.need}` : '', q: e.q || 1, ok: !!e.ok, m: e.ok ? '' : (e.msg || ''),
       slot: e.slot || 0, k: e.key || '', co: e.company || '', f: e.full ? 1 : 0 });
   }
   function sortEnd(id, reason){ if(rec && cur && cur.ext && (!id || cur.ext.docKey === id)) stop(reason || '묶음 끝'); }
@@ -6684,6 +6684,7 @@ const videoRec = (function(){
     <span style="font-size:13px; font-weight:800;" title="묶음을 만들 때 기본으로 들어가는 이름 — 실제 피킹자는 묶음 QR 다음에 찍는 이름 QR로 정해져요">기본 작업자</span>
     <select id="sortWorker"></select>
     <button class="s-tab" id="sortLightBtn" title="칸마다 LED 불빛 + 부저 (USB로 연결한 아두이노)">💡 불빛 <span id="sortLightDot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#94a3b8;margin-left:3px;"></span></button>
+    <button class="s-tab" id="sortConfirmBtn" title="상품을 칸에 넣은 다음 그 칸 전표 QR(또는 칸 번호 QR)을 찍어야 수량이 들어가요 — 잘못 넣는 걸 막아줘요">☐ 넣은 칸 확인 OFF</button>
     <button class="s-tab" id="sortPrintBtn" title="칸이 끝날 때마다 라벨을 이 컴퓨터 프린터로 바로 출력 (끄면 인쇄 대기열로)">🖨 바로 인쇄</button>
     <button class="s-tab" id="sortSoundBtn">🔊 소리</button>
     <button class="s-link" id="sortToInspect" title="검수 화면으로">검수 화면으로 ↗</button>
@@ -6794,7 +6795,7 @@ const videoRec = (function(){
       <div class="s-card">
         <div class="s-row" style="justify-content:space-between;">
           <div class="s-row"><b style="font-size:18px;" id="sortBatchTitle">묶음 없음</b> <span class="stage" id="sortStage">-</span> <span class="muted" id="sortBatchMeta"></span></div>
-          <div class="s-row"><button class="btn b-line" id="sortVerify" title="✅ 칸이 정말 검수기록에 들어갔는지 서버에서 확인하고, 없으면 다시 기록해요">🔍 기록 확인</button><button class="btn b-line" id="sortReprint">🖨 피킹지 다시 출력</button><button class="btn b-red" id="sortCancel">묶음 취소</button></div>
+          <div class="s-row"><button class="btn b-line" id="sortVerify" title="✅ 칸이 정말 검수기록에 들어갔는지 서버에서 확인하고, 없으면 다시 기록해요">🔍 기록 확인</button><button class="btn b-line" id="sortReprint">🖨 피킹지 다시 출력</button><button class="btn b-line" id="sortSlotQr" title="박스마다 붙여두는 1~12번 칸 번호 QR (한 번만 출력)">🏷 칸 번호 QR 출력</button><button class="btn b-red" id="sortCancel">묶음 취소</button></div>
         </div>
         <div style="height:10px"></div>
         <div class="s-row" id="sortQtyRow" style="margin-bottom:8px; gap:6px;">
@@ -7472,7 +7473,7 @@ const videoRec = (function(){
       (() => { const q = sm.rows.filter(r => r.stt !== 'rec').reduce((t, r) => t + r.have, 0); return q ? `· 기록 안 된 칸에 이미 분배한 ${q}개는 검수기록에 안 남아요 (그 상품은 칸에서 빼서 다시 처리).\n` : ''; })() +
       (!mine && b.status !== '배정' ? '· 다른 PC에서 이 묶음을 하고 있으면 그쪽 작업도 멈춰요.' : '');
     if(!confirm(msg)) return;
-    vidEnd('묶음 취소', b.id);
+    vidEnd('묶음 취소', b.id); if(active && active.id === b.id) pending = null;
     try{ const d = await post({ type:'sortCancelBatch', id: b.id }); if(!d.ok){ alert(d.error); return; } if(d.note) say(d.note); }catch(e){ alert('통신 오류: ' + e.message); return; }
     if(mine){ active = null; st = null; try{ localStorage.removeItem('sortActiveId'); }catch(e){} renderRun(); big('idle', '–', '묶음이 취소됐어요'); }
     delete abOpen[b.id];
@@ -7543,6 +7544,18 @@ const videoRec = (function(){
     if(img && !img.complete){ img.onload = go; setTimeout(go, 1500); } else setTimeout(go, 300);
   }
   $('sortReprint').onclick = () => { if(active) printPickSheet(active); };
+  // 11/19: 칸 번호 QR (SLOT|1 ~ SLOT|12) — 박스마다 붙여두면 전표 대신 찍어서 넣은 칸 확인
+  $('sortSlotQr').onclick = () => {
+    const cells = []; for(let n = 1; n <= MAX_SLOTS; n++){ let q = ''; try{ q = makeLocalQrDataUrl('SLOT|' + n); }catch(e){} cells.push(`<div class="c"><div class="n">${n}</div><img src="${q}"><div class="t">${n}번 칸 · 넣은 칸 확인</div></div>`); }
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>칸 번호 QR</title><style>@page{ size:A4; margin:10mm; } body{ margin:0; font-family:'Malgun Gothic','Noto Sans KR',sans-serif; }
+      .g{ display:grid; grid-template-columns:repeat(3, 1fr); gap:6mm; } .c{ border:2px dashed #94a3b8; border-radius:4mm; padding:4mm; text-align:center; page-break-inside:avoid; }
+      .n{ font-size:64px; font-weight:900; line-height:1; } img{ width:42mm; height:42mm; image-rendering:pixelated; } .t{ font-size:13px; font-weight:700; margin-top:2mm; }</style></head>
+      <body><div class="g">${cells.join('')}</div></body></html>`;
+    const w = window.open('', '_blank', 'width=900,height=1000');
+    if(!w){ alert('팝업이 막혀서 못 열었어요. 주소창 오른쪽에서 팝업 허용 후 다시 눌러주세요.'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+    setTimeout(() => { try{ w.focus(); w.print(); }catch(e){} }, 500);
+  };
   $('sortVerify').onclick = () => verifyAll(true);
 
   /* ---------- ② 묶음 진행 ---------- */
@@ -7578,6 +7591,7 @@ const videoRec = (function(){
   function openBatch(b){
     if(!b) return;
     if(active && active.id !== b.id) vidEnd('다른 묶음 열기');
+    pending = null;
     active = b; st = emptyState(b);
     try{ localStorage.setItem('sortActiveId', b.id); }catch(e){}
     b.slots.forEach(s => { st.counts[s.slot] = st.counts[s.slot] || {}; st.seq[s.slot] = st.seq[s.slot] || []; st.ts[s.slot] = st.ts[s.slot] || []; st.ms[s.slot] = st.ms[s.slot] || 0; });
@@ -7602,7 +7616,7 @@ const videoRec = (function(){
     $('sortBatchTitle').textContent = '묶음 ' + active.id;
     $('sortStage').textContent = stageText();
     const totNeed = active.slots.reduce((a, s) => a + slotSum(st.need[s.slot]), 0), totHave = active.slots.reduce((a, s) => a + slotSum(st.counts[s.slot]), 0);
-    $('sortBatchMeta').textContent = `피킹 ${active.status === '배정' ? '(QR 찍을 때 정해짐)' : active.worker}${st.inspector && st.inspector !== active.worker ? ' · 검수 ' + st.inspector : ''} · ${active.slots.length}전표 · ${totHave}/${totNeed}개` + (active.perSec ? ` · 피킹 전표당 ${Math.floor(active.perSec / 60)}분 ${active.perSec % 60}초` : '');
+    $('sortBatchMeta').textContent = `피킹 ${active.status === '배정' ? '(QR 찍을 때 정해짐)' : active.worker}${st.inspector && st.inspector !== active.worker ? ' · 검수 ' + st.inspector : ''} · ${active.slots.length}전표 · ${totHave}/${totNeed}개` + (st.wrongPut ? ` · 잘못 넣음 ${st.wrongPut}회` : '') + (pending ? ' · ⏳ 넣은 칸 확인 대기' : '') + (active.perSec ? ` · 피킹 전표당 ${Math.floor(active.perSec / 60)}분 ${active.perSec % 60}초` : '');
     let html = '';
     const shown = active.slots.length > 6 ? MAX_SLOTS : 6; // 6장 이하면 6칸, 넘으면 12칸(두 줄)
     for(let n = 1; n <= shown; n++){
@@ -7819,6 +7833,62 @@ const videoRec = (function(){
     scan.focus();
   }
   document.querySelectorAll('#sortQtyRow .sq').forEach(b => b.onclick = () => setSortQty(Number(b.getAttribute('data-q')), false));
+  /* ---------- 11/19: 넣은 칸 확인 (DAS의 "불 끄기 버튼" 대신 그 칸 전표 QR / 칸 번호 QR) ----------
+     켜져 있으면: 상품 찍기 → 화면·음성 "3번 나나상회" → 넣고 → 3번 전표 QR(또는 SLOT|3) → 그때 수량에 들어감
+     다른 칸 QR을 찍으면 "아니에요! 3번이에요" (수량 안 들어감) · 같은 상품을 한 번 더 찍으면 취소 */
+  let sortConfirm = false, pending = null;
+  try{ sortConfirm = localStorage.getItem('sortConfirm') === '1'; }catch(e){}
+  const slotObj = n => (active && active.slots.find(x => x.slot === n)) || { company: '' };
+  function paintConfirmBtn(){ const bt = $('sortConfirmBtn'); if(!bt) return; bt.classList.toggle('on', sortConfirm); bt.textContent = sortConfirm ? '✅ 넣은 칸 확인 ON' : '☐ 넣은 칸 확인 OFF'; }
+  paintConfirmBtn();
+  $('sortConfirmBtn').onclick = () => {
+    if(pending){ sortBeep('err'); say('확인 중인 상품부터 끝내주세요'); return; }
+    sortConfirm = !sortConfirm; try{ localStorage.setItem('sortConfirm', sortConfirm ? '1' : '0'); }catch(e){}
+    paintConfirmBtn();
+    big('idle', sortConfirm ? '✅' : '–', sortConfirm ? '넣은 칸 확인 켜짐' : '넣은 칸 확인 꺼짐', sortConfirm ? '상품을 칸에 넣은 다음 그 칸 전표 QR(또는 칸 번호 QR)을 찍어야 수량이 들어가요' : '상품을 찍으면 바로 수량이 들어가요');
+    scan.focus();
+  };
+  function setPending(pd){ pending = pd; showPending(); }
+  function showPending(){
+    const p = pending.plan[pending.idx], so = slotObj(p.n);
+    const it = (so.items || []).find(x => x.code === pending.c);
+    announce(p.n, false);
+    big('', p.n, `${so.company}에 ${p.q > 1 ? p.q + '개 ' : ''}넣고 → ${p.n}번 전표 QR 찍기`,
+      `${pending.c} ${it ? it.name + ' ' + it.spec : ''}${pending.plan.length > 1 ? ` · 묶음 ${pending.idx + 1}/${pending.plan.length}번째 칸` : ''}${pending.idx === 0 ? ' · 잘못 찍었으면 같은 상품을 한 번 더 찍으면 취소' : ''}`);
+    if(pending.bundle){
+      const sp = $('sortSplit');
+      sp.innerHTML = `<div class="h">📦 ${escapeHtml(pending.c)} ${pending.q}개 묶음 — 칸마다 넣고 그 칸 전표 QR 찍기</div><div class="rows">` +
+        pending.plan.map((x, k) => `<div class="r${k < pending.idx ? ' full' : ''}" style="${k === pending.idx ? 'border-color:#2563EB;box-shadow:0 0 0 3px #BFDBFE' : k > pending.idx ? 'opacity:.6' : ''}"><div class="sn">${k < pending.idx ? '✔' : x.n}</div><div><div class="co">${escapeHtml(slotObj(x.n).company)}</div><div class="muted">${k < pending.idx ? '넣음 확인' : k === pending.idx ? '지금 넣을 칸' : '다음'}</div></div><div class="q">${x.q}개</div></div>`).join('') + '</div>';
+      sp.style.display = '';
+    }
+    renderRun(p.n);
+  }
+  function onConfirm(n){
+    if(!pending){
+      sortBeep('err');
+      if(sortConfirm){ big('idle', '–', '확인할 상품이 없어요', '상품을 먼저 찍고, 넣은 다음 그 칸 전표 QR을 찍어주세요'); say('상품을 먼저 찍어주세요'); }
+      else { big('idle', '–', '넣은 칸 확인이 꺼져 있어요', '위쪽 [☐ 넣은 칸 확인]을 켜면 전표 QR로 넣은 칸을 확인해요'); say('넣은 칸 확인이 꺼져 있어요'); }
+      return;
+    }
+    const p = pending.plan[pending.idx];
+    if(n !== p.n){
+      const ws = slotObj(n), es = slotObj(p.n);
+      st.wrongPut = (st.wrongPut || 0) + 1;
+      vidNote({ ok:false, code: pending.c, msg: `잘못 넣음 → ${n}번 ${ws.company || ''} (맞는 곳 ${p.n}번 ${es.company})`, key: canonicalDocKeyJS(es.key || ''), slot: p.n, company: es.company });
+      logLine(`${pending.c} ✕ 잘못 넣음: ${n}번 ${ws.company || ''} → 맞는 곳 ${p.n}번 ${es.company}`, true);
+      sortBeep('err');
+      big('err', p.n, `아니에요! ${p.n}번 칸이에요 (${es.company})`, `${n}번 칸${ws.company ? '(' + ws.company + ')' : ''}에 넣었으면 꺼내서 ${p.n}번 칸(${es.company})에 넣고 ${p.n}번 전표 QR을 찍어주세요 · 수량은 안 들어갔어요`);
+      stopAll(); speak(`아니에요. ${NUM_WORD[p.n]}번이에요`, 1);
+      try{ ptl.error(); setTimeout(() => { if(pending) ptl.slot(pending.plan[pending.idx].n); }, 1200); }catch(e){}
+      renderRun(); return;
+    }
+    const pd = pending;
+    pd.idx++;
+    if(pd.idx >= pd.plan.length) pending = null;
+    if(pd.bundle) applyBundle(pd.c, [p], p.q, pd.at, true);
+    else applySingle(pd.c, p.n, { at: pd.at });
+    if(pending) setTimeout(() => { if(pending === pd) showPending(); }, 700); // 묶음: 다음 칸 안내
+  }
   function bundlePlan(c, q){
     const open = active.slots.map(s => s.slot).sort((a, b) => a - b)
       .filter(n => !st.recorded[n]).map(n => ({ n, left: (st.need[n][c] || 0) - (st.counts[n][c] || 0) })).filter(x => x.left > 0);
@@ -7832,11 +7902,15 @@ const videoRec = (function(){
   }
   function onBundleScan(c, q){
     const { total, plan } = bundlePlan(c, q);
+    if(plan && sortConfirm){ setPending({ c, plan, idx: 0, bundle: true, q, at: Date.now() }); return; }
     if(!plan){
       vidNote({ ok:false, code:c, msg:`${q}개 묶음 — 남은 ${total}개보다 많음` });
       sortBeep('err'); big('err', '✕', `${q}개 묶음이 남은 수량보다 많아요`, `${c} — 이 묶음에 남은 건 ${total}개예요 · 반영 안 했어요 (뜯어서 낱개로 찍어주세요)`);
       say(total ? `남은 건 ${total}개예요` : '다 찼어요'); logLine(`${c} ×${q} ✕ 남은 ${total}개보다 많음`, true); renderRun(); return;
     }
+    applyBundle(c, plan, q, 0);
+  }
+  function applyBundle(c, plan, q, confirmedAt){ // confirmedAt = 넣은 칸 확인 때 상품 찍은 시각
     const now = Date.now();
     const dt = st.lastScanAt ? Math.min(60000, Math.max(0, now - st.lastScanAt)) : 3000;
     st.lastScanAt = now;
@@ -7847,9 +7921,17 @@ const videoRec = (function(){
       st.ms[p.n] = (st.ms[p.n] || 0) + (i === 0 ? dt : 0);
       const s = active.slots.find(x => x.slot === p.n), it = s.items.find(x => x.code === c);
       p.company = s.company; p.full = slotFull(p.n); if(p.full) fulls.push(p.n);
-      vidNote({ ok:true, code:c, q:p.q, slot:p.n, key: canonicalDocKeyJS(s.key), company: s.company, name: it ? it.name : '', spec: it ? it.spec : '', have: st.counts[p.n][c], need: st.need[p.n][c], full: p.full });
+      vidNote({ ok:true, code:c, q:p.q, slot:p.n, key: canonicalDocKeyJS(s.key), company: s.company, name: it ? it.name : '', spec: it ? it.spec : '', have: st.counts[p.n][c], need: st.need[p.n][c], full: p.full, at: confirmedAt || 0, endAt: confirmedAt ? Date.now() : 0 });
     });
-    logLine(`${c} ×${q} (묶음) → ` + plan.map(p => `${p.n}번 ${p.q}개`).join(', '));
+    logLine(`${c} ×${q} (묶음) → ` + plan.map(p => `${p.n}번 ${p.q}개`).join(', ') + (confirmedAt ? ' ✔ 넣은 칸 확인' : ''));
+    if(confirmedAt){ // 넣은 칸 확인으로 들어온 묶음 한 칸
+      const p = plan[0];
+      sortBeep('ok'); try{ ptl.off && ptl.off(); }catch(e){}
+      big(p.full ? 'done' : 'done', '✔', `${p.n}번 ${p.company}에 ${p.q}개 넣었어요`, p.full ? `${p.n}번 완료 — 검수기록·라벨로 넘어가요` : c);
+      if(p.full){ announce(p.n, true); }
+      renderRun(p.n); fulls.forEach(n => enqueueReplay(n)); scheduleSave(!!fulls.length);
+      return;
+    }
     // 화면: 큰 글씨로 "어느 칸에 몇 개"
     const one = plan.length === 1;
     big(fulls.length ? 'done' : '', one ? plan[0].n : '📦', one ? `${q}개 묶음 → ${plan[0].n}번 ${plan[0].company}에 통째로` : `${q}개 묶음 → ${plan.length}칸에 나눠 넣기`, c);
@@ -7881,6 +7963,12 @@ const videoRec = (function(){
       c = tries.find(x => codes.has(x)) || '';
     }
     let qty = sortQty;
+    if(pending){ // 11/19: 넣은 칸 확인 대기 중
+      const pc = pending.plan[pending.idx];
+      if(c && c === pending.c && pending.idx === 0){ pending = null; sortBeep('ok'); big('idle', '↩', '방금 찍은 상품 취소', `${c} — 수량에 안 들어갔어요. 다시 찍어주세요`); say('취소'); logLine(`${c} ↩ 취소 (넣기 전)`); try{ ptl.off && ptl.off(); }catch(e){} renderRun(); return; }
+      sortBeep('err'); big('err', pc.n, `먼저 ${pc.n}번 전표 QR을 찍어주세요`, `${pending.c}을(를) ${pc.n}번 ${slotObj(pc.n).company}에 넣고 그 칸 전표(또는 칸 번호 QR)를 찍어야 다음으로 넘어가요` + (pending.idx === 0 ? ` · 취소하려면 ${pending.c}을(를) 한 번 더` : ''));
+      say(`먼저 ${NUM_WORD[pc.n]}번 전표`); return;
+    }
     // 11/19: 박스·묶음 바코드(품번 11자리 + 수량)도 받는다 → 그 수량만큼 칸에 나눠 넣기
     if(!c && t.length > 11 && /^\d+$/.test(t.slice(11))){
       let base = t.slice(0, 11);
@@ -7891,6 +7979,11 @@ const videoRec = (function(){
     if(qty > 1){ onBundleScan(c, qty); return; }
     const slot = active.slots.map(s => s.slot).sort((a, b) => a - b).find(n => !st.recorded[n] && (st.counts[n][c] || 0) < (st.need[n][c] || 0));
     if(!slot){ vidNote({ ok:false, code:c, msg:'필요 수량 다 참' }); sortBeep('err'); big('err', '✕', '이미 다 찼어요', `${c} — 필요한 수량을 다 찍었어요`); say('다 찼어요'); logLine(`${c} ✕ 필요 수량 다 참`, true); renderRun(); return; }
+    if(sortConfirm){ setPending({ c, plan: [{ n: slot, q: 1 }], idx: 0, bundle: false, at: Date.now() }); return; }
+    applySingle(c, slot, null);
+  }
+  // 상품 1개를 그 칸 수량에 넣는다 (confirmed = 넣은 칸 확인으로 들어온 것 { at: 상품 찍은 시각 })
+  function applySingle(c, slot, confirmed){
     const now = Date.now();
     const dt = st.lastScanAt ? Math.min(60000, Math.max(0, now - st.lastScanAt)) : 3000;
     st.lastScanAt = now;
@@ -7901,7 +7994,7 @@ const videoRec = (function(){
     const s = active.slots.find(x => x.slot === slot);
     const it = s.items.find(i => i.code === c);
     logLine(`${c} → ${slot}번 (${s.company})`);
-    vidNote({ ok:true, code:c, slot, key: canonicalDocKeyJS(s.key), company: s.company, name: it ? it.name : '', spec: it ? it.spec : '', have: st.counts[slot][c], need: st.need[slot][c], full: slotFull(slot) });
+    vidNote({ ok:true, code:c, slot, key: canonicalDocKeyJS(s.key), company: s.company, name: it ? it.name : '', spec: it ? it.spec : '', have: st.counts[slot][c], need: st.need[slot][c], full: slotFull(slot), at: confirmed ? confirmed.at : 0, endAt: confirmed ? Date.now() : 0 });
     if(slotFull(slot)){
       announce(slot, true);
       big('done', slot, `${slot}번 완료 · ${s.company}`, directPrint ? '검수완료 기록 + 라벨 바로 인쇄' : '검수완료 기록 + 라벨 인쇄 대기열');
@@ -7909,8 +8002,8 @@ const videoRec = (function(){
       enqueueReplay(slot);
       scheduleSave(true);
     } else {
-      announce(slot, false);
-      big('', slot, s.company, `${c} ${it ? (it.name + ' ' + it.spec) : ''} · 이 칸 ${st.counts[slot][c]}/${st.need[slot][c]}`);
+      if(confirmed){ sortBeep('ok'); try{ ptl.off && ptl.off(); }catch(e){} big('done', '✔', `${slot}번 ${s.company}에 넣었어요`, `${c} · 이 업체 ${st.counts[slot][c]}/${st.need[slot][c]} · 다음 상품을 찍으세요`); }
+      else { announce(slot, false); big('', slot, s.company, `${c} ${it ? (it.name + ' ' + it.spec) : ''} · 이 칸 ${st.counts[slot][c]}/${st.need[slot][c]}`); }
       renderRun(slot);
       scheduleSave(false);
     }
@@ -8212,7 +8305,14 @@ const videoRec = (function(){
     const sb = t.match(/^SB\|(.+)$/i);
     if(sb){ onBatchQr(sb[1].trim().toUpperCase()); return; }
     try{ const cq = parseQtyCardQr(t); if(cq){ setSortQty(cq, true); return; } }catch(e2){} // 11/19: 1·5·10개 수량 카드
+    const slq = t.match(/^SLOT\s*[|:]?\s*(\d{1,2})$/i);
+    if(slq){ if(view !== 'run' || !active){ sortBeep('err'); say('묶음을 먼저 열어주세요'); return; } onConfirm(Number(slq[1])); return; }
     if(t.indexOf('/') !== -1){
+      if(view === 'run' && active){ // 11/19: 진행 화면에서 전표 QR = 넣은 칸 확인
+        const so = slotOfCanon(docKeyFromScan(t));
+        if(so){ onConfirm(so.slot); return; }
+        sortBeep('err'); big('err', '✕', '이 묶음 전표가 아니에요', t); say('이 묶음 전표가 아니에요'); return;
+      }
       if(view !== 'pick'){ sortBeep('err'); say('전표는 고르기 화면에서'); return; }
       const k = docKeyFromScan(t); toggleSel(k, true); return;
     }
