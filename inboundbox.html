@@ -42,6 +42,29 @@ td.c{font-family:Consolas,monospace;font-weight:600;white-space:nowrap}
 td.q{text-align:right;font-weight:700;width:16mm}
 .dense .big{height:75mm}.dense .fn{font-size:80pt}.dense .rg{font-size:72pt}.dense .rg small{font-size:44pt}
 .dense table{font-size:7.5pt}.dense td{padding:.4mm 2mm}.dense td.no{font-size:9pt}
+/* 11/22: 박스가 적은 쪽(1~4박스)은 여러 공장을 한 장에 모아 출력 */
+.mbig{border:3px solid #111;border-radius:3mm;height:105mm;display:grid;overflow:hidden}
+.mb2{grid-template-columns:1fr 1fr}.mb3{grid-template-columns:1fr 1fr 1fr}.mb4{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
+.mcell{display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1;border-right:2px solid #111;border-bottom:2px solid #111;padding:2mm}
+.mb2 .mcell:nth-child(2n),.mb3 .mcell:nth-child(3n),.mb4 .mcell:nth-child(2n){border-right:0}
+.mb2 .mcell,.mb3 .mcell,.mb4 .mcell:nth-child(n+3){border-bottom:0}
+.mfn{font-size:54pt;font-weight:900;letter-spacing:1mm}.mfn.long{font-size:36pt}
+.mrg{font-size:48pt;font-weight:900;margin-top:2mm}.mrg small{font-size:28pt;margin:0 2mm}
+.mb3 .mfn{font-size:40pt}.mb3 .mfn.long{font-size:26pt}.mb3 .mrg{font-size:36pt}
+.mb4 .mfn{font-size:44pt}.mb4 .mfn.long{font-size:30pt}.mb4 .mrg{font-size:36pt}
+tr.sec td{background:#e8ecf5;font-weight:800;font-size:10pt;border-top:1.5px solid #1f2d4d;padding:1.2mm 2mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.dense .mbig{height:75mm}
+/* 11/22: 표 글씨 크게 (품번 잘 보이게) — 넘치면 자동으로 한 단계씩 줄임 */
+table{font-size:11pt}th{font-size:10pt;padding:1.5mm 2mm}
+td{padding:1mm 2mm}td.c{font-size:13pt;font-weight:800;letter-spacing:.2mm}td.no{font-size:14pt;width:13mm}td.q{font-size:12pt;width:18mm}
+tr.sec td{font-size:11.5pt}
+.dense table{font-size:9.5pt}.dense td{padding:.5mm 2mm}.dense td.c{font-size:11pt}.dense td.no{font-size:12pt}.dense td.q{font-size:10.5pt}.dense tr.sec td{font-size:10pt}
+.tight .big,.tight .mbig{height:62mm}.tight .fn{font-size:66pt}.tight .fn.long{font-size:46pt}.tight .rg{font-size:60pt}.tight .rg small{font-size:36pt}
+.tight .mfn{font-size:34pt}.tight .mrg{font-size:30pt}
+.tight table{font-size:8.5pt}.tight td{padding:.3mm 2mm}.tight td.c{font-size:9.5pt}.tight td.no{font-size:10pt}.tight td.q{font-size:9pt}.tight tr.sec td{font-size:9pt}
+.xtight .big,.xtight .mbig{height:46mm}.xtight .fn{font-size:50pt}.xtight .fn.long{font-size:36pt}.xtight .rg{font-size:44pt}.xtight .rg small{font-size:28pt}
+.xtight .mfn{font-size:26pt}.xtight .mrg{font-size:24pt}.xtight .sub{margin:2mm 0 2mm}
+.xtight table{font-size:7.5pt}.xtight th{padding:.8mm 2mm}.xtight td{padding:.15mm 2mm}.xtight td.c{font-size:8.5pt}.xtight td.no{font-size:9pt}.xtight td.q{font-size:8pt}.xtight tr.sec td{font-size:8pt;padding:.5mm 2mm}
 @media screen{#pages{zoom:.62}}
 @media print{
   body{background:#fff}.bar,#panel,#drop,#msg{display:none!important}
@@ -59,6 +82,7 @@ td.q{text-align:right;font-weight:700;width:16mm}
     <label>NT 구분 접두어 <input type="text" id="ntp" value="NT-"></label>
     <label>NT 박스수/장 <input type="number" id="ntn" value="8" min="1"></label>
     <label>그 외 박스수/장 <input type="number" id="otn" value="12" min="1"></label>
+    <label>합치기 <input type="number" id="mgn" value="4" min="0" style="width:50px">박스 이하인 쪽은 한 장에 모으기 (0 = 안 합침)</label>
     <button id="all" style="border:1px solid #1f2d4d">전체 선택/해제</button>
   </div>
   <div class="facs" id="facs"></div><div class="warn" id="warn"></div>
@@ -134,8 +158,11 @@ function isNT(pk,prefix){
 function render(){
   if(!DATA) return;
   const prefix=$('ntp').value||'NT-', ntn=+$('ntn').value||8, otn=+$('otn').value||12;
-  let html='',pageCount=0,warn=[];
+  const mgn=Math.max(0,parseInt($('mgn').value,10)||0);
+  const warn=[], chunks=[];
+  // 공장별로 박스 n개씩 나눈 덩어리 (선택한 공장만)
   for(const [f,pk] of DATA.fac){
+    if(!SEL.has(f)) continue;
     const t=isNT(pk,prefix); if(t.mixed) warn.push(f+' (NT와 일반 제품이 섞여 있음 → '+(t.nt?'NT':'일반')+' 기준)');
     const n=t.nt?ntn:otn, mx=Math.max(...pk.keys());
     const ranges=[]; for(let s=1;s<=mx;s+=n){const e=Math.min(s+n-1,mx); if([...pk.keys()].some(k=>k>=s&&k<=e)) ranges.push([s,e]);}
@@ -149,19 +176,42 @@ function render(){
           `<td class="c">${esc(i.name)}</td><td>${esc(i.spec)}</td><td class="q">${i.qty.toLocaleString()}</td>`+
           (k?'':`<td class="q" rowspan="${its.length}">${bt.toLocaleString()}</td>`)+'</tr>';});
       }
-      const dense=lines>22?' dense':'';
-      html+=`<section class="page${dense}" data-fac="${esc(f)}"><div class="big"><div class="fn${f.length>4?' long':''}">${esc(f)}</div><div class="rg">${s}<small>~</small>${e}</div></div>`+
-      `<div class="sub">${esc(DATA.period)} &nbsp;|&nbsp; 박스 ${cnt}개 &nbsp;|&nbsp; 합계 ${tot.toLocaleString()}장 &nbsp;|&nbsp; ${idx+1}/${ranges.length}쪽</div>`+
-      `<table><thead><tr><th>박스</th><th>품목명</th><th>규격</th><th>수량</th><th>박스합계</th></tr></thead>${rows}</table></section>`;
+      chunks.push({f,s,e,rows,cnt,tot,lines,idx,of:ranges.length});
     });
   }
-  // only selected factories
-  const tmp=document.createElement('div'); tmp.innerHTML=html;
-  tmp.querySelectorAll('.page').forEach(p=>{ if(!SEL.has(p.dataset.fac)) p.remove(); else pageCount++; });
-  $('pages').innerHTML=tmp.innerHTML;
+  const head='<thead><tr><th>박스</th><th>품목명</th><th>규격</th><th>수량</th><th>박스합계</th></tr></thead>';
+  const one=c=>`<section class="page" data-fac="${esc(c.f)}"><div class="big"><div class="fn${c.f.length>4?' long':''}">${esc(c.f)}</div><div class="rg">${c.s}<small>~</small>${c.e}</div></div>`+
+    `<div class="sub">${esc(DATA.period)} &nbsp;|&nbsp; 박스 ${c.cnt}개 &nbsp;|&nbsp; 합계 ${c.tot.toLocaleString()}장 &nbsp;|&nbsp; ${c.idx+1}/${c.of}쪽</div><table>${head}${c.rows}</table></section>`;
+  // 박스가 mgn개 이하인 덩어리는 한 장에 모은다 (한 장 = 공장 4곳·박스 ${otn}개·줄 30줄까지)
+  const big=chunks.filter(c=>!(mgn&&c.cnt<=mgn)), small=chunks.filter(c=>mgn&&c.cnt<=mgn);
+  const groups=[]; let g=null;
+  for(const c of small){
+    if(!g||g.list.length>=4||g.cnt+c.cnt>otn||g.lines+c.lines+1>30){g={list:[],cnt:0,lines:0,tot:0};groups.push(g);}
+    g.list.push(c);g.cnt+=c.cnt;g.lines+=c.lines+1;g.tot+=c.tot;
+  }
+  let html=big.map(one).join('');
+  const mTotal=groups.filter(x=>x.list.length>1).length; let gi=-1;
+  groups.forEach(gr=>{
+    if(gr.list.length===1){html+=one(gr.list[0]);return;}
+    gi++;
+    const k=gr.list.length;
+    html+=`<section class="page"><div class="mbig mb${k}">`+
+      gr.list.map(c=>`<div class="mcell"><div class="mfn${c.f.length>4?' long':''}">${esc(c.f)}</div><div class="mrg">${c.s}<small>~</small>${c.e}</div></div>`).join('')+
+      `</div><div class="sub">${esc(DATA.period)} &nbsp;|&nbsp; 합본 ${gi+1}/${mTotal} · 공장 ${k}곳 &nbsp;|&nbsp; 박스 ${gr.cnt}개 &nbsp;|&nbsp; 합계 ${gr.tot.toLocaleString()}장</div>`+
+      `<table>${head}`+gr.list.map(c=>`<tr class="sec"><td colspan="5">■ ${esc(c.f)} &nbsp; ${c.s}~${c.e} &nbsp;·&nbsp; 박스 ${c.cnt}개 &nbsp;·&nbsp; 합계 ${c.tot.toLocaleString()}장</td></tr>${c.rows}`).join('')+`</table></section>`;
+  });
+  $('pages').innerHTML=html;
+  const pageCount=$('pages').querySelectorAll('.page').length;
+  const merged=groups.filter(x=>x.list.length>1);
   $('warn').textContent=warn.length?'⚠ '+warn.join(' / '):'';
-  $('info').textContent=`${DATA.period}  |  공장 ${SEL.size}/${DATA.fac.size}개  |  총 ${pageCount}쪽`;
+  $('info').textContent=`${DATA.period}  |  공장 ${SEL.size}/${DATA.fac.size}개  |  총 ${pageCount}쪽`+(merged.length?`  (박스 ${mgn}개 이하 ${merged.reduce((a,x)=>a+x.list.length,0)}쪽 → ${merged.length}장으로 합침)`:'');
   $('print').disabled=!pageCount;
+  // 넘치는 쪽은 글씨를 한 단계씩 줄여서 맞춘다 (기본 → dense → tight)
+  document.querySelectorAll('.page').forEach(p=>{
+    if(p.scrollHeight>p.clientHeight+2 && !p.classList.contains('dense')) p.classList.add('dense');
+    if(p.scrollHeight>p.clientHeight+2) p.classList.add('tight');
+    if(p.scrollHeight>p.clientHeight+2) p.classList.add('xtight');
+  });
   // overflow check
   const bad=[...document.querySelectorAll('.page')].filter(p=>p.scrollHeight>p.clientHeight+2);
   if(bad.length) $('warn').textContent+=' ⚠ 내용이 넘치는 페이지가 있습니다 (박스수/장을 줄여보세요)';
@@ -199,5 +249,5 @@ document.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)load(f
 $('reload').onclick=()=>{$('file').value='';$('file').click()};
 $('print').onclick=()=>window.print();
 $('all').onclick=()=>{if(!DATA)return;SEL=SEL.size===DATA.fac.size?new Set():new Set(DATA.fac.keys());facChips();render()};
-['ntp','ntn','otn'].forEach(i=>$(i).oninput=render);
+['ntp','ntn','otn','mgn'].forEach(i=>$(i).oninput=render);
 </script></body></html>
