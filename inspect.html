@@ -6839,6 +6839,11 @@ const videoRec = (function(){
         </div>
         <div class="s-big idle" id="sortBig"><div class="n" id="sortBigN">–</div><div class="t" id="sortBigT">묶음을 고르거나 묶음 QR을 찍어주세요</div><div class="d" id="sortBigD"></div></div>
         <div class="s-split" id="sortSplit" style="display:none;"></div>
+        <div id="sortLockBar" style="display:none; margin-top:10px; border:4px solid #7C3AED; background:#F5F3FF; border-radius:16px; padding:10px 14px; align-items:center; gap:12px; flex-wrap:wrap;">
+          <span style="font-size:22px; font-weight:900; color:#5B21B6;" id="sortLockText"></span>
+          <span class="muted" style="font-size:13px;">이 전표 상품만 찍으세요 · 다 차면 자동으로 분배로 돌아가요 · 같은 QR을 한 번 더 찍어도 끝</span>
+          <button class="btn b-line" id="sortLockOff" style="margin-left:auto; border-color:#7C3AED; color:#5B21B6;">🔓 분배로 돌아가기</button>
+        </div>
         <div class="cells" id="sortCells"></div>
       </div>
       <div class="s-card" id="sortLeftCard">
@@ -7625,7 +7630,7 @@ const videoRec = (function(){
   function openBatch(b){
     if(!b) return;
     if(active && active.id !== b.id) vidEnd('다른 묶음 열기');
-    pending = null;
+    pending = null; lockSlot = 0;
     active = b; st = emptyState(b);
     try{ localStorage.setItem('sortActiveId', b.id); }catch(e){}
     b.slots.forEach(s => { st.counts[s.slot] = st.counts[s.slot] || {}; st.seq[s.slot] = st.seq[s.slot] || []; st.ts[s.slot] = st.ts[s.slot] || []; st.ms[s.slot] = st.ms[s.slot] || 0; });
@@ -7646,6 +7651,7 @@ const videoRec = (function(){
     return active.status;
   }
   function renderRun(lastSlot){
+    try{ updLockBar(); }catch(e){}
     if(!active){ $('sortBatchTitle').textContent = '묶음 없음'; $('sortCells').innerHTML = ''; return; }
     $('sortBatchTitle').textContent = '묶음 ' + active.id;
     $('sortStage').textContent = stageText();
@@ -7898,12 +7904,58 @@ const videoRec = (function(){
     }
     renderRun(p.n);
   }
+  /* ---------- 11/22: 전표별 검수 ----------
+     E구역처럼 피킹하면서 이미 전표별로 나눠온 경우: 칸 전표 QR(또는 칸 번호 QR)을 찍으면 그 칸이 고정되고,
+     그다음 찍는 상품은 칸을 고르지 않고 전부 그 칸으로 들어간다. 다 차면 자동으로 분배 모드로 돌아온다.
+     묶음을 취소하지 않으니 피킹시간·분배 영상·검수기록 비고가 그대로 남는다. */
+  let lockSlot = 0, lastConfirm = null;
+  function updLockBar(){
+    const bar = $('sortLockBar'); if(!bar) return;
+    if(!lockSlot || !active || !st){ bar.style.display = 'none'; return; }
+    const so = slotObj(lockSlot);
+    bar.style.display = 'flex';
+    $('sortLockText').textContent = `📄 전표별 검수 중 — ${lockSlot}번 ${so.company} · ${slotSum(st.counts[lockSlot])}/${slotSum(st.need[lockSlot])}개`;
+  }
+  $('sortLockOff').onclick = () => { if(lockSlot) setLock(lockSlot); scan.focus(); };
+  function setLock(n){
+    if(!active || !st) return;
+    const so = slotObj(n);
+    if(lockSlot === n){ lockSlot = 0; sortBeep('ok'); big('idle', '↩', '전표별 검수 끝 — 분배 모드', '이제 상품을 찍으면 다시 칸을 골라줘요'); say('분배 모드'); try{ ptl.off && ptl.off(); }catch(e){} renderRun(); return; }
+    if(st.recorded[n] || slotFull(n)){ sortBeep('err'); big('idle', n, `${so.company}는 이미 끝난 전표예요`, '다른 전표 QR을 찍거나 상품을 찍어 분배하세요'); say('이미 끝난 전표예요'); return; }
+    lockSlot = n; sortBeep('ok');
+    big('', n, `${so.company} 전표별 검수`, `이 전표 상품만 찍으세요 · ${slotSum(st.counts[n])}/${slotSum(st.need[n])}개 · 다 차면 자동으로 분배로 돌아가요`);
+    stopAll(); speak(`${NUM_WORD[n]}번 ${so.company} 전표 검수`, 1);
+    try{ ptl.slot(n); }catch(e){}
+    logLine(`📄 ${n}번 ${so.company} 전표별 검수 시작`);
+    renderRun(n);
+  }
+  function onLockedScan(c, q){
+    const n = lockSlot, so = slotObj(n);
+    const need = st.need[n][c] || 0, left = need - (st.counts[n][c] || 0);
+    if(left <= 0){
+      const other = active.slots.map(x => x.slot).find(m => m !== n && !st.recorded[m] && ((st.need[m][c] || 0) - (st.counts[m][c] || 0)) > 0);
+      const msg = need ? '이 품번은 이미 다 찼어요' : '이 전표에 없는 품번이에요';
+      vidNote({ ok:false, code:c, msg:`${so.company} 전표 — ${msg}`, slot:n, key: canonicalDocKeyJS(so.key || ''), company: so.company });
+      sortBeep('err'); big('err', '✕', `${so.company}: ${msg}`, c + (other ? ` · 이 품번은 ${other}번 ${slotObj(other).company} 전표에 있어요` : ''));
+      say(need ? '다 찼어요' : '이 전표에 없어요'); logLine(`${c} ✕ ${n}번 ${so.company} 전표별 검수 — ${msg}`, true); renderRun(n); return;
+    }
+    if(q > left){
+      vidNote({ ok:false, code:c, msg:`${q}개 묶음 — ${so.company} 남은 ${left}개보다 많음`, slot:n, key: canonicalDocKeyJS(so.key || ''), company: so.company });
+      sortBeep('err'); big('err', '✕', `${q}개 묶음이 남은 수량보다 많아요`, `${c} — ${so.company} 전표에 남은 건 ${left}개예요 · 반영 안 했어요`); say(`남은 건 ${left}개예요`); renderRun(n); return;
+    }
+    if(q > 1){ const p = { n, q }; applyBundle(c, [p], q, Date.now()); }
+    else applySingle(c, n, { at: Date.now() });
+    if(st.recorded[n] || slotFull(n)){
+      lockSlot = 0;
+      setTimeout(() => { if(!lockSlot && active){ big('done', '✔', `${so.company} 전표 검수 끝`, '다음 전표 QR을 찍거나, 상품을 찍으면 분배 모드로 해요'); } }, 900);
+    }
+    renderRun(n);
+  }
   function onConfirm(n){
     if(!pending){
-      sortBeep('err');
-      if(sortConfirm){ big('idle', '–', '확인할 상품이 없어요', '상품을 먼저 찍고, 넣은 다음 그 칸 전표 QR을 찍어주세요'); say('상품을 먼저 찍어주세요'); }
-      else { big('idle', '–', '넣은 칸 확인이 꺼져 있어요', '위쪽 [☐ 넣은 칸 확인]을 켜면 전표 QR로 넣은 칸을 확인해요'); say('넣은 칸 확인이 꺼져 있어요'); }
-      return;
+      // 방금 넣은 칸 확인으로 찍은 같은 QR이 한 번 더 읽힌 것(2.5초 안)은 무시 — 실수로 전표별 검수로 바뀌지 않게
+      if(lastConfirm && lastConfirm.n === n && Date.now() - lastConfirm.at < 2500) return;
+      setLock(n); return; // 11/22: 확인할 상품이 없을 때 칸 QR = 그 전표만 검수 (전표별 검수)
     }
     const p = pending.plan[pending.idx];
     if(n !== p.n){
@@ -7918,6 +7970,7 @@ const videoRec = (function(){
       renderRun(); return;
     }
     const pd = pending;
+    lastConfirm = { n, at: Date.now() };
     pd.idx++;
     if(pd.idx >= pd.plan.length) pending = null;
     if(pd.bundle) applyBundle(pd.c, [p], p.q, pd.at, true);
@@ -8011,6 +8064,7 @@ const videoRec = (function(){
       if(codes.has(base)){ c = base; qty = parseInt(t.slice(11), 10) || 1; }
     }
     if(!c){ vidNote({ ok:false, code:t, msg:'이 묶음에 없는 품번' }); sortBeep('err'); big('err', '✕', '이 묶음에 없는 품번', t); say('없음'); logLine(`${t} ✕ 이 묶음에 없는 품번`, true); renderRun(); return; }
+    if(lockSlot){ onLockedScan(c, qty); return; } // 11/22: 전표별 검수 중
     if(qty > 1){ onBundleScan(c, qty); return; }
     const slot = active.slots.map(s => s.slot).sort((a, b) => a - b).find(n => !st.recorded[n] && (st.counts[n][c] || 0) < (st.need[n][c] || 0));
     if(!slot){ vidNote({ ok:false, code:c, msg:'필요 수량 다 참' }); sortBeep('err'); big('err', '✕', '이미 다 찼어요', `${c} — 필요한 수량을 다 찍었어요`); say('다 찼어요'); logLine(`${c} ✕ 필요 수량 다 참`, true); renderRun(); return; }
@@ -8137,6 +8191,7 @@ const videoRec = (function(){
     st.allDoneShown = true;
     try{ ptl.allDone(); }catch(e){}
     try{ setSortQty(1, false); }catch(e){} // 묶음 끝 → 다시 낱개
+    lockSlot = 0;
     try{ videoRec.sortBanner(`✔ 전체 완료 — ${active.slots.length}개 업체`, active.slots.map(x => x.company).join(' · '), 5000); }catch(e){}
     setTimeout(() => vidEnd('묶음 검수완료', active && active.id), 5000); // 완료 화면이 5초쯤 찍힌 뒤 저장
     try{ localStorage.removeItem('sortActiveId'); }catch(e){}
