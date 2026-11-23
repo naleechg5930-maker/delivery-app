@@ -176,19 +176,24 @@ function render(){
           `<td class="c">${esc(i.name)}</td><td>${esc(i.spec)}</td><td class="q">${i.qty.toLocaleString()}</td>`+
           (k?'':`<td class="q" rowspan="${its.length}">${bt.toLocaleString()}</td>`)+'</tr>';});
       }
-      chunks.push({f,s,e,rows,cnt,tot,lines,idx,of:ranges.length});
+      chunks.push({f,s,e,rows,cnt,tot,lines,idx,of:ranges.length,nt:t.nt});
     });
   }
   const head='<thead><tr><th>박스</th><th>품목명</th><th>규격</th><th>수량</th><th>박스합계</th></tr></thead>';
   const one=c=>`<section class="page" data-fac="${esc(c.f)}"><div class="big"><div class="fn${c.f.length>4?' long':''}">${esc(c.f)}</div><div class="rg">${c.s}<small>~</small>${c.e}</div></div>`+
     `<div class="sub">${esc(DATA.period)} &nbsp;|&nbsp; 박스 ${c.cnt}개 &nbsp;|&nbsp; 합계 ${c.tot.toLocaleString()}장 &nbsp;|&nbsp; ${c.idx+1}/${c.of}쪽</div><table>${head}${c.rows}</table></section>`;
-  // 박스가 mgn개 이하인 덩어리는 한 장에 모은다 (한 장 = 공장 4곳·박스 ${otn}개·줄 30줄까지)
+  // 박스가 mgn개 이하인 덩어리는 한 장에 모은다 — NT는 NT끼리(박스 ntn개까지), 일반은 일반끼리(박스 otn개까지)
+  // (한 장 = 공장 4곳·줄 30줄까지, NT와 일반은 절대 같은 장에 섞지 않음)
   const big=chunks.filter(c=>!(mgn&&c.cnt<=mgn)), small=chunks.filter(c=>mgn&&c.cnt<=mgn);
-  const groups=[]; let g=null;
-  for(const c of small){
-    if(!g||g.list.length>=4||g.cnt+c.cnt>otn||g.lines+c.lines+1>30){g={list:[],cnt:0,lines:0,tot:0};groups.push(g);}
-    g.list.push(c);g.cnt+=c.cnt;g.lines+=c.lines+1;g.tot+=c.tot;
-  }
+  const groups=[];
+  [true,false].forEach(isN=>{
+    const cap=isN?ntn:otn; let g=null;
+    for(const c of small){
+      if(c.nt!==isN) continue;
+      if(!g||g.list.length>=4||g.cnt+c.cnt>cap||g.lines+c.lines+1>30){g={list:[],cnt:0,lines:0,tot:0,nt:isN};groups.push(g);}
+      g.list.push(c);g.cnt+=c.cnt;g.lines+=c.lines+1;g.tot+=c.tot;
+    }
+  });
   let html=big.map(one).join('');
   const mTotal=groups.filter(x=>x.list.length>1).length; let gi=-1;
   groups.forEach(gr=>{
@@ -197,7 +202,7 @@ function render(){
     const k=gr.list.length;
     html+=`<section class="page"><div class="mbig mb${k}">`+
       gr.list.map(c=>`<div class="mcell"><div class="mfn${c.f.length>4?' long':''}">${esc(c.f)}</div><div class="mrg">${c.s}<small>~</small>${c.e}</div></div>`).join('')+
-      `</div><div class="sub">${esc(DATA.period)} &nbsp;|&nbsp; 합본 ${gi+1}/${mTotal} · 공장 ${k}곳 &nbsp;|&nbsp; 박스 ${gr.cnt}개 &nbsp;|&nbsp; 합계 ${gr.tot.toLocaleString()}장</div>`+
+      `</div><div class="sub">${esc(DATA.period)} &nbsp;|&nbsp; 합본 ${gi+1}/${mTotal} · ${gr.nt?'NT':'일반'} · 공장 ${k}곳 &nbsp;|&nbsp; 박스 ${gr.cnt}개 &nbsp;|&nbsp; 합계 ${gr.tot.toLocaleString()}장</div>`+
       `<table>${head}`+gr.list.map(c=>`<tr class="sec"><td colspan="5">■ ${esc(c.f)} &nbsp; ${c.s}~${c.e} &nbsp;·&nbsp; 박스 ${c.cnt}개 &nbsp;·&nbsp; 합계 ${c.tot.toLocaleString()}장</td></tr>${c.rows}`).join('')+`</table></section>`;
   });
   $('pages').innerHTML=html;
