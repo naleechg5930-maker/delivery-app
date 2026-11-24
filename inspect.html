@@ -7545,17 +7545,76 @@ const videoRec = (function(){
     for(const e of (locOrder || [])) if(up.indexOf(e.prefix) === 0) return e;
     return null;
   }
+  /* 11/24: 피킹지에 현재고 — 재고조회와 같은 숫자(getStockStatus의 e: 마감재고+기타이동+입고−피킹완료·검수중·검수완료).
+     분배 화면에 있는 동안 2분마다 미리 받아두고, 인쇄할 때 3분 넘게 묵었으면 새로 받는다 */
+  let sheetStock = null, sheetStockAt = 0, sheetStockBusy = null;
+  function refreshSheetStock(ms){
+    if(!gasWebhookUrl) return Promise.resolve(null);
+    if(sheetStockBusy) return sheetStockBusy;
+    sheetStockBusy = (async () => {
+      try{
+        const res = await fetchWithTimeout(gasWebhookUrl + '?action=getStockStatus', {}, ms || 20000);
+        const d = await res.json();
+        if(d && d.ok && d.items){ sheetStock = d; sheetStockAt = Date.now(); }
+      }catch(e){ console.warn('피킹지 현재고 받기 실패(이전 값 사용):', e); }
+      finally{ sheetStockBusy = null; }
+      return sheetStock;
+    })();
+    return sheetStockBusy;
+  }
+  setTimeout(() => refreshSheetStock(30000), 4000);
+  setInterval(() => { if(!document.hidden) refreshSheetStock(); }, 2 * 60 * 1000);
+  async function getSheetStock(){
+    if(sheetStock && Date.now() - sheetStockAt < 3 * 60 * 1000) return sheetStock;
+    await refreshSheetStock(10000);
+    return sheetStock; // 못 받았으면 예전 값(없으면 null → 현재고 칸에 '—')
+  }
+  function stockQtyOf(stk, code){
+    if(!stk || !stk.items) return null;
+    const it = stk.items[code] || stk.items[String(code).toUpperCase()];
+    if(!it) return null;
+    return it.e != null ? Number(it.e) : (Number(it.b) || 0) + (Number(it.r) || 0) + (Number(it.i) || 0) - (Number(it.k) || 0);
+  }
+  // 11/24: 최근 7일 입고 — getStockStatus의 inb(마감 이후 입고)+inh(마감에 포함된 지난 입고) [시각, 박스("YL 268"), 수량, 날짜]
+  // 날짜+공장별로 묶어서 "11/23 YL 266·268번 80개" 처럼 (최근 날짜 먼저, 3줄까지)
+  function recentInboundOf(stk, code){
+    if(!stk || !stk.items) return null;
+    const it = stk.items[code] || stk.items[String(code).toUpperCase()];
+    if(!it) return [];
+    const g = {}, order = [];
+    (it.inb || []).concat(it.inh || []).forEach(x => {
+      const d = String(x[3] || ''), label = String(x[1] || '').trim(), q = Number(x[2]) || 0;
+      const m = label.match(/^([^\d]+?)\s*(\d+)$/);
+      const f = m ? m[1].trim() : label, n = m ? Number(m[2]) : null;
+      const k = d + '|' + f;
+      if(!g[k]){ g[k] = { d, f, boxes: [], q: 0 }; order.push(k); }
+      if(n != null && g[k].boxes.indexOf(n) === -1) g[k].boxes.push(n);
+      g[k].q += q;
+    });
+    return order.map(k => g[k]).sort((a, b) => b.d.localeCompare(a.d) || a.f.localeCompare(b.f));
+  }
+  function recentInboundHtml(list){
+    if(list == null) return '—';
+    if(!list.length) return '<span class="none">없음</span>';
+    const md = d => { const m = String(d).match(/(\d{1,2})[-\/.](\d{1,2})$/); return m ? Number(m[1]) + '/' + Number(m[2]) : d; };
+    const line = x => `<div><b>${escapeHtml(md(x.d))}</b> ${escapeHtml(x.f || '입고')}${x.boxes.length ? ' ' + x.boxes.sort((a, b) => a - b).join('·') + '번' : ''} <span class="q">${x.q}개</span></div>`;
+    return list.slice(0, 3).map(line).join('') + (list.length > 3 ? `<div class="none">외 ${list.length - 3}건</div>` : '');
+  }
   async function printPickSheet(b, title){
     title = title || '묶음 피킹지';
-    await ensureLocOrder();
+    const [, stk] = await Promise.all([ensureLocOrder(), getSheetStock()]);
+    // 피킹 완료(분배중·완료)된 묶음은 서버가 이미 재고에서 뺐으므로 이 피킹지 수량만큼 되돌려서 '선반에 있던 수량'으로 보여준다
+    const pickedAlready = b.status === '분배중' || b.status === '완료';
     const agg = {};
     b.slots.forEach(s => s.items.forEach(it => {
       const a = agg[it.code] || (agg[it.code] = { code: it.code, name: it.name, spec: it.spec, total: 0, per: [] });
       a.total += it.qty; a.per.push(s.slot + ':' + it.qty);
     }));
-    const rows = Object.values(agg).map(a => { const l = locOf(a.code); let rp = 0; try{ const r = (repairStock.items || {})[a.code]; rp = r && r.l > 0 ? r.l : 0; }catch(e){} return Object.assign(a, { zone: l ? l.zone : '', seq: l ? l.seq : 9999, rp }); })
+    const rows = Object.values(agg).map(a => { const l = locOf(a.code); let rp = 0; try{ const r = (repairStock.items || {})[a.code]; rp = r && r.l > 0 ? r.l : 0; }catch(e){} let cur = stockQtyOf(stk, a.code); if(cur != null && pickedAlready) cur += a.total; return Object.assign(a, { zone: l ? l.zone : '', seq: l ? l.seq : 9999, rp, cur, short: cur != null && cur < a.total ? a.total - cur : 0, inb: recentInboundOf(stk, a.code) }); })
       .sort((x, y) => x.seq - y.seq || x.code.localeCompare(y.code));
     const total = rows.reduce((s, r) => s + r.total, 0);
+    const shortN = rows.filter(r => r.short).length;
+    const stockInfo = stk ? `재고 ${escapeHtml(String(stk.updatedAt || '').slice(0, 5) || new Date(sheetStockAt).toTimeString().slice(0, 5))} 기준` + (shortN ? ` · <b style="color:#DC2626">⚠ 재고 부족 ${shortN}품번</b>` : '') : '<span style="color:#B45309">현재고를 불러오지 못했어요 (—로 표시)</span>';
     let qr = ''; try{ qr = makeLocalQrDataUrl('SB|' + b.id); }catch(e){}
     const created = new Date(b.created || Date.now()).toLocaleString('ko-KR', { hour12:false });
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>${title} ${b.id}</title><style>
@@ -7565,12 +7624,15 @@ const videoRec = (function(){
       .slots{ margin:8px 0 10px; font-size:13.5px; } .slots span{ display:inline-block; margin-right:14px; } .slots b{ display:inline-block; border:2px solid #111; border-radius:4px; padding:0 6px; margin-right:4px; }
       table{ width:100%; border-collapse:collapse; font-size:13px; } th{ background:#e5e7eb; text-align:left; padding:6px; border-bottom:2px solid #111; }
       td{ padding:7px 6px; border-bottom:1px solid #cbd5e1; } td.n{ font-size:16px; font-weight:900; text-align:center; } td.c{ text-align:center; font-size:16px; }
+      td.s{ text-align:center; font-size:15px; font-weight:700; } td.s.low{ color:#DC2626; } td.s .w{ display:block; font-size:11.5px; font-weight:900; } tr.low td{ background:#FEF2F2; }
+      .stk{ font-size:12.5px; margin-top:2px; }
+      td.ib{ font-size:11.5px; line-height:1.35; } td.ib .q{ color:#334155; } td.ib .none{ color:#94a3b8; }
       .f{ margin-top:10px; font-size:12px; color:#334155; }
     </style></head><body>
-      <div class="h"><div><div class="t">${title} ${b.id}</div><div class="m">${created} · 피킹: ${escapeHtml(b.worker)} · ${b.slots.length}전표 · ${total}개 · ${title === '묶음 피킹지' ? '피킹 나갈 때 오른쪽 QR을 분배 화면에서 찍기' : '빠진 것만 — 가져와서 그대로 찍으면 돼요 (묶음 QR은 다시 안 찍어도 돼요)'}</div></div>${qr ? `<img class="qr" src="${qr}">` : ''}</div>
+      <div class="h"><div><div class="t">${title} ${b.id}</div><div class="m">${created} · 피킹: ${escapeHtml(b.worker)} · ${b.slots.length}전표 · ${total}개 · ${title === '묶음 피킹지' ? '피킹 나갈 때 오른쪽 QR을 분배 화면에서 찍기' : '빠진 것만 — 가져와서 그대로 찍으면 돼요 (묶음 QR은 다시 안 찍어도 돼요)'}</div><div class="stk">${stockInfo}</div></div>${qr ? `<img class="qr" src="${qr}">` : ''}</div>
       <div class="slots">${b.slots.map(s => `<span><b>${s.slot}</b>${escapeHtml(s.company)} (${escapeHtml(s.key)}) · ${s.qty}개</span>`).join('')}</div>
-      <table><thead><tr><th style="width:12%">위치</th><th style="width:18%">품번</th><th>품목 / 규격</th><th style="width:9%">합계</th><th style="width:22%">칸별</th><th style="width:6%">✓</th></tr></thead><tbody>
-      ${rows.map(r => `<tr><td>${escapeHtml(r.zone || '—')}</td><td>${escapeHtml(r.code)}</td><td>${escapeHtml(r.name)} ${escapeHtml(r.spec)}${r.seq === 9999 ? ' <span style="color:#94a3b8">(진열순서 없음)</span>' : ''}${r.rp ? ` <b style="color:#B45309">🧵 수선품 ${r.rp}개 먼저</b>` : ''}</td><td class="n">${r.total}</td><td>${r.per.join(' · ')}</td><td class="c">☐</td></tr>`).join('')}
+      <table><thead><tr><th style="width:9%">위치</th><th style="width:15%">품번</th><th>품목 / 규격</th><th style="width:7%">합계</th><th style="width:14%">칸별</th><th style="width:9%;text-align:center">현재고</th><th style="width:21%">최근 7일 입고</th></tr></thead><tbody>
+      ${rows.map(r => `<tr${r.short ? ' class="low"' : ''}><td>${escapeHtml(r.zone || '—')}</td><td>${escapeHtml(r.code)}</td><td>${escapeHtml(r.name)} ${escapeHtml(r.spec)}${r.seq === 9999 ? ' <span style="color:#94a3b8">(진열순서 없음)</span>' : ''}${r.rp ? ` <b style="color:#B45309">🧵 수선품 ${r.rp}개 먼저</b>` : ''}</td><td class="n">${r.total}</td><td>${r.per.join(' · ')}</td><td class="s${r.short ? ' low' : ''}">${r.cur == null ? '—' : r.cur}${r.short ? `<span class="w">⚠ 부족 ${r.short}</span>` : ''}</td><td class="ib">${recentInboundHtml(r.inb)}</td></tr>`).join('')}
       </tbody></table>
       <div class="f">${title === '묶음 피킹지' ? '진열순서 탭 순서대로 정렬 · 합계만 보고 한 바퀴 피킹 → 분배 자리에서 QR을 다시 찍으면 피킹 완료 → 상품을 하나씩 찍으면 칸 번호를 불러줘요' : '진열순서 탭 순서대로 정렬 · 빠진 상품만 가져와서 분배 화면에서 하나씩 찍으면 돼요'}</div>
     </body></html>`;
