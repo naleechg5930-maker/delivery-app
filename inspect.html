@@ -6775,6 +6775,7 @@ const videoRec = (function(){
     <table><tbody>
       <tr><td style="width:120px;font-weight:800;">민감도</td><td><select class="f" id="camSens"><option value="hi">높게 (얇은 상품도 잡음 · 오경고 늘 수 있음)</option><option value="mid">보통</option><option value="lo">낮게 (오경고 줄임 · 놓칠 수 있음)</option></select></td></tr>
       <tr><td style="font-weight:800;">지켜보는 시간</td><td>상품 찍고 <input type="text" id="camWin" style="width:44px" inputmode="numeric"> 초</td></tr>
+      <tr><td style="font-weight:800;">맞게 넣으면</td><td><label><input type="checkbox" id="camSayOk"> "정상"이라고 말하기 (끄면 확인음만)</label></td></tr>
       <tr><td style="font-weight:800;">시범 운영</td><td><label><input type="checkbox" id="camLogOnly"> 기록만 (경고음·경고 화면 없이 판단 결과만 남김)</label></td></tr>
     </tbody></table>
     <div class="s-row" style="margin-top:8px;"><button class="btn b-navy" id="camTest">🧪 테스트 — 아무 칸에 넣어보기</button><span id="camTestMsg" style="font-weight:800;"></span></div>
@@ -6882,7 +6883,7 @@ const videoRec = (function(){
         <div class="s-split" id="sortSplit" style="display:none;"></div>
         <div id="sortCamWarn" style="display:none; margin-top:10px; border:4px solid #DC2626; background:#FEF2F2; border-radius:16px; padding:10px 14px; align-items:center; gap:12px; flex-wrap:wrap;">
           <span style="font-size:20px; font-weight:900; color:#B91C1C;" id="sortCamWarnText"></span>
-          <span class="muted" style="font-size:13px;">카메라가 다른 칸에 넣은 걸 봤어요 · 수량은 맞는 칸에 들어가 있어요 — 상품만 옮기면 돼요</span>
+          <span class="muted" style="font-size:13px;">수량은 맞는 칸에 들어가 있어요 — 상품만 옮기면 카메라가 보고 자동으로 "정상" 처리해요 (안 되면 버튼)</span>
           <span style="margin-left:auto; display:flex; gap:8px;"><button class="btn b-green" id="sortCamFixed">✔ 옮겼어요</button><button class="btn b-line" id="sortCamFalse">감지 오류 (맞게 넣었어요)</button></span>
         </div>
         <div id="sortLockBar" style="display:none; margin-top:10px; border:4px solid #7C3AED; background:#F5F3FF; border-radius:16px; padding:10px 14px; align-items:center; gap:12px; flex-wrap:wrap;">
@@ -8292,7 +8293,7 @@ const videoRec = (function(){
     try{ await cam.video.play(); }catch(e){}
     cam.err = ''; cam.running = true; cam.prev = null; cam.maskSig = '';
     camStatus('카메라 켜짐'); camListDevices(); camPaintBtn();
-    clearInterval(cam.timer); cam.timer = setInterval(camTick, 100);
+    clearInterval(cam.timer); cam.timer = setInterval(camTick, 66); // 1초 15장
     return true;
   }
   function camStop(){
@@ -8362,13 +8363,22 @@ const videoRec = (function(){
 
   /* ----- 상품 찍을 때: 넣어야 할 칸들 지켜보기 시작 ----- */
   function camWatch(c, slots, test){
-    camHideWarn();
     if((!cam.cfg.on && !test) || !cam.running || !camSlots().length) return;
-    if(cam.watch && !cam.watch.done && !cam.watch.test){ camStat('none'); } // 판단 전에 다음 상품을 찍음 → 그 건은 넘어감
     const g = camGrab(); if(!g) return;
     camBuildMasks();
+    const S = CAM_SENS[cam.cfg.sens] || CAM_SENS.mid;
+    // 11/25: 판단 전에 다음 상품을 찍었으면 → 찍는 순간(손이 스캐너에 있어 선반이 잠잠함) 화면으로 앞 상품을 바로 판단
+    const pw = cam.watch;
+    if(pw && !pw.done && !pw.test){
+      const frac = {}; cam.masks.forEach(m => { frac[m.n] = camFrac(g, pw.ref, m, S.px); });
+      if(pw.active || Object.keys(frac).some(n => frac[n] > S.res)) camDecide(pw, frac, S, true, g);
+      else { pw.done = true; camStat('none'); }
+    }
     cam.watch = { c, exp: slots.slice(), rem: slots.slice(), ref: g, t0: Date.now(), cnt: {}, entered: {}, first: 0, active: false, settle: 0, done: false, peak: 0, peakFrac: {}, test: !!test, company: slots.length ? slotObj(slots[0]).company : '' };
   }
+  function camChime(){ try{ audioIn(); const t0 = sCtx.currentTime; toneAt(1568, t0, 0.08, 'sine', 0.5); toneAt(2093, t0 + 0.09, 0.12, 'sine', 0.5); }catch(e){} }
+  function camSpeakLater(text, ms){ setTimeout(() => { try{ const u = new SpeechSynthesisUtterance(text); u.lang = 'ko-KR'; u.rate = 1.15; try{ const v = pickKoreanFemaleVoice(); if(v) u.voice = v; }catch(e){} window.speechSynthesis.speak(u); }catch(e){} }, ms || 0); } // 앞 안내를 끊지 않고 뒤에 이어서
+  function camMask(n){ return cam.masks.find(m => m.n === n); }
   function camTick(){
     if(!cam.running) return;
     const g = camGrab(); if(!g){ camMini(); return; }
@@ -8400,18 +8410,30 @@ const videoRec = (function(){
       }
       if(w.active){
         w.settle = (!moving && !occluded) ? w.settle + 1 : 0;
-        // 손을 넣고 가만히 있는 동안은 판단하지 않음 → 팔이 빠진 뒤(움직이던 칸 수가 줄거나, 들어갔던 칸 변화가 확 줄어듦) 0.5초 잠잠하면 판단
-        const left = act.length < w.peak || Object.keys(w.entered).some(n => frac[n] < 0.7 * (w.peakFrac[n] || 0));
-        if((w.settle >= 5 && left) || w.settle >= 15) camDecide(w, frac, S);
+        // 손을 넣고 가만히 있는 동안은 판단하지 않음 → 팔이 빠진 뒤(바뀐 칸 수가 줄어듦) 0.3초 잠잠하면 판단
+        // 던져 넣은 경우(팔이 안 들어옴)는 0.7초 잠잠하면 판단. 옮겨 넣는 중(경고 뒤)에는 판단을 미룸
+        const left = act.length < w.peak;
+        if(!cam.fix && ((w.settle >= 5 && left) || w.settle >= 10)) camDecide(w, frac, S, false, g);
       }
-      if(!w.done && now - w.t0 > (Number(cam.cfg.win) || 8) * 1000){
-        if(w.active && !occluded) camDecide(w, frac, S);
+      if(!w.done && !cam.fix && now - w.t0 > (Number(cam.cfg.win) || 8) * 1000){
+        if(w.active && !occluded) camDecide(w, frac, S, false, g);
         else { w.done = true; camStat(w.active ? 'amb' : 'none'); if(w.test) camTestMsg(w.active ? '판단 못 함 (앞이 가려졌거나 움직임이 계속됨)' : '움직임 없음'); }
+      }
+    }
+    // 11/25: 경고 뒤 옮겨 넣는지 지켜봄 — 잘못 넣은 칸에서 빠지고(변화) 맞는 칸에 들어오면(변화) 자동으로 "정상"
+    const fx = cam.fix;
+    if(fx){
+      const mw = camMask(fx.wn), me = camMask(fx.en);
+      if(!mw || !me || now - fx.t0 > 60000) cam.fix = null;
+      else {
+        const fw = camFrac(g, fx.ref, mw, S.px), fe = camFrac(g, fx.ref, me, S.px);
+        fx.settle = (fw > S.res && fe > S.res && !moving) ? fx.settle + 1 : 0;
+        if(fx.settle >= 3) camFixed(true);
       }
     }
     camMini(); camEditorDraw();
   }
-  function camDecide(w, frac, S){
+  function camDecide(w, frac, S, early, g){
     const cand = Object.keys(frac).map(Number).filter(n => frac[n] > S.res).sort((a, b) => frac[b] - frac[a]);
     const exp = w.rem;
     const hit = cand.find(n => exp.indexOf(n) >= 0);
@@ -8425,12 +8447,20 @@ const videoRec = (function(){
     if(hit){
       camStat('ok'); cam.flash = { n: hit, ok: true, until: Date.now() + 1200 };
       w.rem = exp.filter(n => n !== hit);
-      if(w.rem.length && Date.now() - w.t0 < (Number(cam.cfg.win) || 8) * 1000 * 2){ // 묶음을 여러 칸에 나눠 넣는 중 → 남은 칸 계속 지켜봄
-        const g = camGrab(); if(g){ w.ref = g; w.cnt = {}; w.entered = {}; w.first = 0; w.active = false; w.settle = 0; w.peak = 0; w.peakFrac = {}; w.t0 = Date.now(); return; }
+      if(!early && w.rem.length && Date.now() - w.t0 < (Number(cam.cfg.win) || 8) * 1000 * 2){ // 묶음을 여러 칸에 나눠 넣는 중 → 남은 칸 계속 지켜봄
+        const g2 = camGrab(); if(g2){ w.ref = g2; w.cnt = {}; w.entered = {}; w.first = 0; w.active = false; w.settle = 0; w.peak = 0; w.peakFrac = {}; w.t0 = Date.now(); camChime(); return; }
       }
-      w.done = true; return;
+      w.done = true;
+      // 11/25: 맞게 넣으면 "정상" (다음 상품을 이미 찍었으면 소리만 짧게 — 다음 칸 안내를 끊지 않게)
+      camChime();
+      if(!early && !cam.cfg.logOnly){
+        if(cam.cfg.sayOk !== false){ stopAll(); speak('정상', 1); }
+        big('done', '✓', `정상 · ${hit}번 ${company(hit)}`, `${w.c} — 다음 상품을 찍으세요`);
+      }
+      return;
     }
-    const wrong = cand.filter(n => w.entered[n]);
+    // 잘못 넣은 칸: 남은 변화가 있는 칸 중 손이 들어갔던 칸 (던져 넣어 바로 다음을 찍은 경우는 변화가 뚜렷한 칸)
+    const wrong = cand.filter(n => w.entered[n] || (early && frac[n] > S.res * 1.5));
     if(cand.length >= 3 || !wrong.length){ w.done = true; camStat('amb'); logLine(`📷 ${w.c} — 카메라로 판단 못 함 (넘어감)`); return; }
     w.done = true;
     const wn = wrong[0], en = exp[0];
@@ -8439,24 +8469,42 @@ const videoRec = (function(){
     logLine(`📷 ${w.c} ⚠ 카메라: ${wn}번 ${company(wn)}에 넣은 것 같음 → 맞는 곳 ${en}번 ${es.company}`, true);
     try{ vidNote({ ok:false, code: w.c, msg: `카메라: ${wn}번 ${company(wn)}에 넣음 감지 (맞는 곳 ${en}번 ${es.company})`, key: canonicalDocKeyJS(es.key || ''), slot: en, company: es.company }); }catch(e){}
     if(cam.cfg.logOnly){ renderRun(); return; } // 시범: 기록만
-    cam.warn = { c: w.c, wn, en, at: Date.now() };
+    cam.warn = { c: w.c, wn, en, at: Date.now(), early: !!early };
+    cam.fix = { wn, en, ref: g || camGrab(), t0: Date.now(), settle: 0 }; // 옮겨 넣는지 지켜봄
     sortBeep('err');
-    big('err', en, `⚠ ${wn}번 칸(${company(wn)})에 넣었어요!`, `${w.c} 는 ${en}번 ${es.company} 칸이에요 — 꺼내서 ${en}번에 넣고 [옮겼어요]를 눌러주세요`);
-    stopAll(); speak(`${NUM_WORD[wn] || wn}번에 넣었어요. ${NUM_WORD[en] || en}번이에요`, 1);
     const bar = $('sortCamWarn');
-    if(bar){ $('sortCamWarnText').textContent = `📷 ${wn}번 → ${en}번 ${es.company}`; bar.style.display = 'flex'; }
+    if(early){
+      // 다음 상품을 이미 찍은 상태 → 큰 화면은 지금 상품 안내를 그대로 두고, 경고 줄 + 소리로 앞 상품을 알려줌
+      if(bar){ $('sortCamWarnText').textContent = `⚠ 앞 상품 ${w.c}: ${wn}번(${company(wn)})에 들어감 → ${en}번 ${es.company}`; bar.style.display = 'flex'; }
+      camSpeakLater(`앞 상품, ${wn}번에 들어갔어요. ${en}번이에요`, 900);
+    } else {
+      big('err', en, `⚠ ${wn}번 칸(${company(wn)})에 넣었어요!`, `${w.c} 는 ${en}번 ${es.company} 칸이에요 — 꺼내서 ${en}번에 넣으면 자동으로 확인돼요`);
+      stopAll(); speak(`${wn}번에 넣었어요. ${en}번이에요`, 1);
+      if(bar){ $('sortCamWarnText').textContent = `📷 ${wn}번 → ${en}번 ${es.company}`; bar.style.display = 'flex'; }
+    }
     renderRun(en);
   }
-  function camHideWarn(){ cam.warn = null; const bar = $('sortCamWarn'); if(bar) bar.style.display = 'none'; }
-  $('sortCamFixed').onclick = () => {
-    if(cam.warn){ camStat('fixed'); if(st) st.wrongPut = (st.wrongPut || 0) + 1; logLine(`📷 ${cam.warn.c} ${cam.warn.wn}번 → ${cam.warn.en}번으로 옮김`); big('done', '✔', '옮겼어요', '다음 상품을 찍으세요'); }
-    camHideWarn(); try{ ptl.off && ptl.off(); }catch(e){} renderRun(); scan.focus();
-  };
+  function camHideWarn(){ cam.warn = null; cam.fix = null; const bar = $('sortCamWarn'); if(bar) bar.style.display = 'none'; }
+  // 옮겨 넣은 상품이 지금 상품으로 잘못 잡히지 않게, 지켜보던 상품은 지금 화면을 새 기준으로 다시 시작
+  function camRebase(){ const w = cam.watch; if(!w || w.done || w.test) return; const g = camGrab(); if(!g) return; w.ref = g; w.cnt = {}; w.entered = {}; w.first = 0; w.active = false; w.settle = 0; w.peak = 0; w.peakFrac = {}; w.t0 = Date.now(); }
+  function camFixed(auto){
+    const wv = cam.warn; if(!wv){ camHideWarn(); return; }
+    camStat('fixed'); if(st) st.wrongPut = (st.wrongPut || 0) + 1;
+    logLine(`📷 ${wv.c} ${wv.wn}번 → ${wv.en}번으로 옮김` + (auto ? ' (카메라로 확인)' : ''));
+    cam.flash = { n: wv.en, ok: true, until: Date.now() + 1500 };
+    const newer = cam.watch && cam.watch.t0 > wv.at && !cam.watch.done; // 그사이 다음 상품을 찍었는지
+    camHideWarn(); try{ ptl.off && ptl.off(); }catch(e){}
+    camRebase();
+    camChime();
+    if(auto){ if(newer) camSpeakLater('앞 상품 정상', 0); else { stopAll(); speak('정상, 옮겼어요', 1); } }
+    if(!newer) big('done', '✔', auto ? `정상 — ${wv.en}번으로 옮긴 것 확인했어요` : '옮겼어요', '다음 상품을 찍으세요');
+    renderRun();
+  }
+  $('sortCamFixed').onclick = () => { camFixed(false); scan.focus(); };
   $('sortCamFalse').onclick = () => {
     if(cam.warn){ camStat('falseAlarm'); logLine(`📷 ${cam.warn.c} 감지 오류로 표시 (실제로는 맞게 넣음)`); big('idle', '✔', '감지 오류로 기록했어요', '다음 상품을 찍으세요'); }
-    camHideWarn(); try{ ptl.off && ptl.off(); }catch(e){} scan.focus();
+    camHideWarn(); camRebase(); try{ ptl.off && ptl.off(); }catch(e){} scan.focus();
   };
-
   /* ----- 화면: 오른쪽 아래 작은 카메라 화면 (칸 테두리 + 지켜보는 칸/움직이는 칸/경고 칸 색) ----- */
   function camDrawOverlay(ctx, W, H, opt){
     const v = cam.video;
@@ -8493,7 +8541,7 @@ const videoRec = (function(){
     if(cv.width !== W || cv.height !== H){ cv.width = W; cv.height = H; }
     camDrawOverlay(cv.getContext('2d'), W, H, {});
     const w = cam.watch, el = $('sortCamMiniTxt');
-    el.textContent = cam.err ? '⚠ ' + cam.err : !camSlots().length ? '⚠ 칸 위치를 지정해주세요 (📷 버튼)' : (w && !w.done) ? (w.occluded ? '👀 앞이 가려졌어요' : `👁 ${w.rem.join('·')}번 칸 지켜보는 중`) : (cam.cfg.logOnly ? '시범 — 기록만 (경고 안 울림)' : '대기 중 — 상품을 찍으세요');
+    el.textContent = cam.err ? '⚠ ' + cam.err : !camSlots().length ? '⚠ 칸 위치를 지정해주세요 (📷 버튼)' : cam.fix ? `🔁 ${cam.fix.wn}번 → ${cam.fix.en}번 옮기는지 보는 중` : (w && !w.done) ? (w.occluded ? '👀 앞이 가려졌어요' : `👁 ${w.rem.join('·')}번 칸 지켜보는 중`) : (cam.cfg.logOnly ? '시범 — 기록만 (경고 안 울림)' : '대기 중 — 상품을 찍으세요');
   }
   $('sortCamMiniSize').onclick = () => { $('sortCamMini').classList.toggle('lg'); camMini(); };
 
@@ -8512,9 +8560,10 @@ const videoRec = (function(){
   $('camReconnect').onclick = async () => { camStop(); await camStart(); camFillPanel(); };
   $('camSens').onchange = () => { cam.cfg.sens = $('camSens').value; camSave(); };
   $('camLogOnly').onchange = () => { cam.cfg.logOnly = $('camLogOnly').checked; camSave(); };
+  $('camSayOk').onchange = () => { cam.cfg.sayOk = $('camSayOk').checked; camSave(); };
   $('camWin').onchange = () => { cam.cfg.win = Math.max(3, Math.min(20, Number($('camWin').value) || 8)); camSave(); };
   function camFillPanel(){
-    $('camSens').value = cam.cfg.sens; $('camLogOnly').checked = !!cam.cfg.logOnly; $('camWin').value = cam.cfg.win;
+    $('camSens').value = cam.cfg.sens; $('camLogOnly').checked = !!cam.cfg.logOnly; $('camSayOk').checked = cam.cfg.sayOk !== false; $('camWin').value = cam.cfg.win;
     $('camCols').value = cam.cfg.cols; $('camRows').value = cam.cfg.rows;
     const names = Object.keys(cam.cfg.layouts || {});
     $('camPreset').innerHTML = (names.length ? names : ['']).map(n => `<option value="${escapeHtml(n)}"${n === cam.cfg.cur ? ' selected' : ''}>${escapeHtml(n || '(저장된 배치 없음)')}</option>`).join('');
