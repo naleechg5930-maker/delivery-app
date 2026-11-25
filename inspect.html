@@ -6716,6 +6716,7 @@ const videoRec = (function(){
 #sortApp .ab .co{ font-size:12.5px; color:#64748b; margin-top:4px; }
 #sortApp .ab table{ margin-top:8px; } #sortApp .ab td.okc{ color:#16A34A; font-weight:900; } #sortApp .ab td.warnc{ color:#B45309; font-weight:900; } #sortApp .ab td.badc{ color:#DC2626; font-weight:900; }
 @media (max-width:900px){ #sortApp .cells{ grid-template-columns:repeat(3,1fr); } }
+#sortApp .camTool.on{ background:#161D65; color:#fff; }
 </style>
 <div id="sortApp">
   <div id="sortDone"><div><div class="big">✅ 검수완료</div><div class="sub" id="sortDoneSub"></div><div class="list" id="sortDoneList"></div><button id="sortDoneNext">다음 묶음 고르기 ▶</button><div style="font-size:13px; margin-top:10px; opacity:.85;">화면을 누르면 닫혀요</div></div></div>
@@ -6728,6 +6729,7 @@ const videoRec = (function(){
     <select id="sortWorker"></select>
     <button class="s-tab" id="sortLightBtn" title="칸마다 LED 불빛 + 부저 (USB로 연결한 아두이노)">💡 불빛 <span id="sortLightDot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#94a3b8;margin-left:3px;"></span></button>
     <button class="s-tab" id="sortConfirmBtn" title="상품을 칸에 넣은 다음 그 칸 전표 QR(또는 칸 번호 QR)을 찍어야 수량이 들어가요 — 잘못 넣는 걸 막아줘요">☐ 넣은 칸 확인 OFF</button>
+    <button class="s-tab" id="sortCamBtn" title="선반을 비추는 카메라로 어느 칸에 넣었는지 확인해요 — 켜면 전표 QR 안 찍어도 되고, 다른 칸에 넣으면 경고"><span id="sortCamBtnTxt">📷 카메라 확인 OFF</span> <span id="sortCamDot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#94a3b8;margin-left:3px;"></span></button>
     <button class="s-tab" id="sortPrintBtn" title="칸이 끝날 때마다 라벨을 이 컴퓨터 프린터로 바로 출력 (끄면 인쇄 대기열로)">🖨 바로 인쇄</button>
     <button class="s-tab" id="sortSoundBtn">🔊 소리</button>
     <button class="s-link" id="sortToInspect" title="검수 화면으로">검수 화면으로 ↗</button>
@@ -6752,6 +6754,36 @@ const videoRec = (function(){
     <div class="muted" style="margin-bottom:8px;">알림음·녹음 소리만 커져요. 컴퓨터 목소리는 윈도우 볼륨이 최대라서, 더 크게 하려면 아래에서 직접 녹음하세요 (녹음한 번호는 녹음 소리로 나와요).</div>
     <table><tbody id="sndRows"></tbody></table>
     <div class="s-row" style="margin-top:10px;"><button class="btn b-navy" id="sndTest">▶ 하나~열둘 들어보기</button><span class="muted" id="sndMsg"></span></div>
+  </div>
+  <div id="sortCamPanel" style="display:none; position:absolute; right:18px; top:58px; z-index:7; width:min(760px, calc(100vw - 32px)); max-height:calc(100vh - 80px); overflow:auto; background:#fff; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.25); padding:14px 16px;">
+    <div class="s-row" style="justify-content:space-between; margin-bottom:8px;"><b style="font-size:16px;">📷 카메라 확인 (넣은 칸을 카메라로)</b><button class="btn b-line" id="camClose" style="padding:4px 10px;">닫기</button></div>
+    <div class="s-row" style="margin-bottom:8px;"><button class="btn b-line" id="camOnBtn">☐ 카메라 확인 꺼짐 (누르면 켜기)</button><span class="muted">켜면 넣은 칸 확인(QR)은 꺼지고, 전표 QR 없이 상품만 찍고 넣으면 돼요</span></div>
+    <div class="s-row" style="margin-bottom:8px;"><b style="font-size:13.5px;">카메라</b><select class="f" id="camDev" style="max-width:300px;"></select><button class="btn b-line" id="camReconnect">🔌 카메라 연결</button><span id="camStatus" class="muted"></span></div>
+    <canvas id="camEditor" style="width:100%; border-radius:10px; background:#1e293b; touch-action:none; cursor:crosshair; display:block;"></canvas>
+    <div class="s-row" style="margin:8px 0 4px; gap:6px;">
+      <b style="font-size:13.5px;">칸 지정</b>
+      <button class="s-kind camTool" data-tool="corner">📐 네 모서리 찍기</button>
+      <span style="font-size:13px; font-weight:800;">가로 <input type="text" id="camCols" style="width:38px" inputmode="numeric"> × 세로 <input type="text" id="camRows" style="width:38px" inputmode="numeric"></span>
+      <button class="s-kind camTool" data-tool="draw">✏ 직접 그리기</button>
+      <button class="s-kind camTool" data-tool="edit">🔧 꼭짓점 조정</button>
+      <button class="s-kind camTool" data-tool="move">✋ 전체 옮기기</button>
+      <button class="btn b-line" id="camUndo" style="padding:5px 10px;">↶ 마지막 칸 지우기</button>
+      <button class="btn b-line" id="camClear" style="padding:5px 10px;">전체 지우기</button>
+    </div>
+    <div class="muted" id="camTip" style="margin-bottom:8px;"></div>
+    <div class="s-row" style="margin-bottom:8px;"><b style="font-size:13.5px;">배치</b><select class="f" id="camPreset" style="max-width:220px;"></select><button class="btn b-line" id="camSaveAs" style="padding:5px 10px;">💾 다른 이름으로 저장</button><button class="btn b-line" id="camDelPreset" style="padding:5px 10px;">🗑 배치 삭제</button><span class="muted">엘카·카트별로 저장해두고 골라 써요 (칸 번호 = 분배 칸 번호)</span></div>
+    <table><tbody>
+      <tr><td style="width:120px;font-weight:800;">민감도</td><td><select class="f" id="camSens"><option value="hi">높게 (얇은 상품도 잡음 · 오경고 늘 수 있음)</option><option value="mid">보통</option><option value="lo">낮게 (오경고 줄임 · 놓칠 수 있음)</option></select></td></tr>
+      <tr><td style="font-weight:800;">지켜보는 시간</td><td>상품 찍고 <input type="text" id="camWin" style="width:44px" inputmode="numeric"> 초</td></tr>
+      <tr><td style="font-weight:800;">시범 운영</td><td><label><input type="checkbox" id="camLogOnly"> 기록만 (경고음·경고 화면 없이 판단 결과만 남김)</label></td></tr>
+    </tbody></table>
+    <div class="s-row" style="margin-top:8px;"><button class="btn b-navy" id="camTest">🧪 테스트 — 아무 칸에 넣어보기</button><span id="camTestMsg" style="font-weight:800;"></span></div>
+    <div class="muted" id="camStats" style="margin-top:8px;"></div>
+    <div class="muted" style="margin-top:6px;">카메라는 작업자 뒤쪽 위(2m 이상)에서 선반을 비스듬히 내려다보게 단단히 고정하세요. 카메라나 선반이 움직이면 [✋ 전체 옮기기]로 맞추면 돼요.</div>
+  </div>
+  <div id="sortCamMini" style="display:none; position:fixed; right:14px; bottom:14px; z-index:8; background:#0f172a; border-radius:12px; padding:6px; box-shadow:0 8px 24px rgba(0,0,0,.35);">
+    <canvas id="sortCamMiniCv" style="display:block; border-radius:8px;"></canvas>
+    <div style="display:flex; align-items:center; gap:6px; margin-top:4px;"><span id="sortCamMiniTxt" style="color:#e2e8f0; font-size:12.5px; font-weight:800; flex:1;"></span><button id="sortCamMiniSize" style="font-size:12px; border:0; border-radius:6px; padding:2px 8px; cursor:pointer;">크게/작게</button></div>
   </div>
   <div class="s-body">
     <input type="text" id="sortScan" class="s-scan" placeholder="여기에 찍으세요 — 전표 QR(고르기) · 묶음 QR(피킹 시작/완료) · 상품 바코드(분배)" autocomplete="off">
@@ -6848,6 +6880,11 @@ const videoRec = (function(){
         </div>
         <div class="s-big idle" id="sortBig"><div class="n" id="sortBigN">–</div><div class="t" id="sortBigT">묶음을 고르거나 묶음 QR을 찍어주세요</div><div class="d" id="sortBigD"></div></div>
         <div class="s-split" id="sortSplit" style="display:none;"></div>
+        <div id="sortCamWarn" style="display:none; margin-top:10px; border:4px solid #DC2626; background:#FEF2F2; border-radius:16px; padding:10px 14px; align-items:center; gap:12px; flex-wrap:wrap;">
+          <span style="font-size:20px; font-weight:900; color:#B91C1C;" id="sortCamWarnText"></span>
+          <span class="muted" style="font-size:13px;">카메라가 다른 칸에 넣은 걸 봤어요 · 수량은 맞는 칸에 들어가 있어요 — 상품만 옮기면 돼요</span>
+          <span style="margin-left:auto; display:flex; gap:8px;"><button class="btn b-green" id="sortCamFixed">✔ 옮겼어요</button><button class="btn b-line" id="sortCamFalse">감지 오류 (맞게 넣었어요)</button></span>
+        </div>
         <div id="sortLockBar" style="display:none; margin-top:10px; border:4px solid #7C3AED; background:#F5F3FF; border-radius:16px; padding:10px 14px; align-items:center; gap:12px; flex-wrap:wrap;">
           <span style="font-size:22px; font-weight:900; color:#5B21B6;" id="sortLockText"></span>
           <span class="muted" style="font-size:13px;">이 전표 상품만 찍으세요 · 다 차면 자동으로 분배로 돌아가요 · 같은 QR을 한 번 더 찍어도 끝</span>
@@ -7980,6 +8017,7 @@ const videoRec = (function(){
   $('sortConfirmBtn').onclick = () => {
     if(pending){ sortBeep('err'); say('확인 중인 상품부터 끝내주세요'); return; }
     sortConfirm = !sortConfirm; try{ localStorage.setItem('sortConfirm', sortConfirm ? '1' : '0'); }catch(e){}
+    if(sortConfirm && cam.cfg.on){ cam.cfg.on = false; camSave(); camStop(); camHideWarn(); } // 11/25: QR 확인을 켜면 카메라 확인은 꺼짐
     paintConfirmBtn();
     big('idle', sortConfirm ? '✅' : '–', sortConfirm ? '넣은 칸 확인 켜짐' : '넣은 칸 확인 꺼짐', sortConfirm ? '상품을 칸에 넣은 다음 그 칸 전표 QR(또는 칸 번호 QR)을 찍어야 수량이 들어가요' : '상품을 찍으면 바로 수량이 들어가요');
     scan.focus();
@@ -8038,6 +8076,7 @@ const videoRec = (function(){
       vidNote({ ok:false, code:c, msg:`${q}개 묶음 — ${so.company} 남은 ${left}개보다 많음`, slot:n, key: canonicalDocKeyJS(so.key || ''), company: so.company });
       sortBeep('err'); big('err', '✕', `${q}개 묶음이 남은 수량보다 많아요`, `${c} — ${so.company} 전표에 남은 건 ${left}개예요 · 반영 안 했어요`); say(`남은 건 ${left}개예요`); renderRun(n); return;
     }
+    camWatch(c, [n]); // 11/25: 카메라 확인
     if(q > 1){ const p = { n, q }; applyBundle(c, [p], q, Date.now()); }
     else applySingle(c, n, { at: Date.now() });
     if(st.recorded[n] || slotFull(n)){
@@ -8091,6 +8130,7 @@ const videoRec = (function(){
       sortBeep('err'); big('err', '✕', `${q}개 묶음이 남은 수량보다 많아요`, `${c} — 이 묶음에 남은 건 ${total}개예요 · 반영 안 했어요 (뜯어서 낱개로 찍어주세요)`);
       say(total ? `남은 건 ${total}개예요` : '다 찼어요'); logLine(`${c} ×${q} ✕ 남은 ${total}개보다 많음`, true); renderRun(); return;
     }
+    camWatch(c, plan.map(p => p.n)); // 11/25: 카메라 확인 (여러 칸이면 차례로)
     applyBundle(c, plan, q, 0);
   }
   function applyBundle(c, plan, q, confirmedAt){ // confirmedAt = 넣은 칸 확인 때 상품 찍은 시각
@@ -8164,6 +8204,7 @@ const videoRec = (function(){
     const slot = active.slots.map(s => s.slot).sort((a, b) => a - b).find(n => !st.recorded[n] && (st.counts[n][c] || 0) < (st.need[n][c] || 0));
     if(!slot){ vidNote({ ok:false, code:c, msg:'필요 수량 다 참' }); sortBeep('err'); big('err', '✕', '이미 다 찼어요', `${c} — 필요한 수량을 다 찍었어요`); say('다 찼어요'); logLine(`${c} ✕ 필요 수량 다 참`, true); renderRun(); return; }
     if(sortConfirm){ setPending({ c, plan: [{ n: slot, q: 1 }], idx: 0, bundle: false, at: Date.now() }); return; }
+    camWatch(c, [slot]); // 11/25: 카메라 확인 — 찍는 순간 화면을 기준으로 지켜봄
     applySingle(c, slot, null);
   }
   // 상품 1개를 그 칸 수량에 넣는다 (confirmed = 넣은 칸 확인으로 들어온 것 { at: 상품 찍은 시각 })
@@ -8192,6 +8233,383 @@ const videoRec = (function(){
       scheduleSave(false);
     }
   }
+
+  /* ---------- 11/25: 📷 카메라 확인 (넣은 칸 확인을 QR 대신 카메라로) ----------
+     선반을 비추는 카메라 화면에 칸 위치를 지정해 두면, 상품을 찍은 순간 화면을 "기준"으로 저장하고
+     ① 어느 칸에 손이 들어갔는지(칸 면적의 일정 % 이상이 0.3초 넘게 바뀜) ② 손이 빠진 뒤에도 변화가 남은 칸(= 물건이 놓인 칸)
+     두 가지로 판단한다. 넣어야 할 칸이 아닌 다른 칸에 확실히 남았을 때만 경고, 애매하면 조용히 넘어감.
+     켜져 있으면 QR 확인은 꺼지고(전표 QR 안 찍어도 됨) 수량은 찍는 순간 바로 들어간다. 경고가 나면 옮기고 [옮겼어요]. */
+  const CAM_KEY = 'sortCam';
+  const CAM_SENS = { hi: { px: 18, enter: 0.10, res: 0.035, label: '높게' }, mid: { px: 26, enter: 0.16, res: 0.05, label: '보통' }, lo: { px: 34, enter: 0.24, res: 0.08, label: '낮게' } };
+  const cam = { cfg: { on: false, dev: '', sens: 'mid', logOnly: false, win: 8, cols: 5, rows: 4, layouts: {}, cur: '' },
+    stream: null, video: null, running: false, timer: null, aw: 160, ah: 90, actx: null, prev: null, masks: [], maskSig: '',
+    fps: 0, fpsN: 0, fpsAt: 0, watch: null, flash: null, lastAct: {}, warn: null, err: '', tool: 'corner', corners: [], drag: null, test: false };
+  try{ Object.assign(cam.cfg, JSON.parse(localStorage.getItem(CAM_KEY) || '{}')); }catch(e){}
+  function camSave(){ try{ localStorage.setItem(CAM_KEY, JSON.stringify(cam.cfg)); }catch(e){} }
+  function camLayout(){ return (cam.cfg.layouts || {})[cam.cfg.cur] || null; }
+  function camSlots(){ const l = camLayout(); return l && Array.isArray(l.slots) ? l.slots : []; }
+  function camToday(){ return new Date().toLocaleDateString('sv-SE'); }
+  function camStat(k){
+    let s = {}; try{ s = JSON.parse(localStorage.getItem('sortCamStats') || '{}'); }catch(e){}
+    if(s.date !== camToday()) s = { date: camToday(), ok: 0, warn: 0, fixed: 0, falseAlarm: 0, none: 0, amb: 0 };
+    if(k){ s[k] = (s[k] || 0) + 1; try{ localStorage.setItem('sortCamStats', JSON.stringify(s)); }catch(e){} }
+    return s;
+  }
+  function camPaintBtn(){
+    const b = $('sortCamBtn'); if(!b) return;
+    b.classList.toggle('on', !!cam.cfg.on);
+    $('sortCamBtnTxt').textContent = cam.cfg.on ? '📷 카메라 확인 ON' : '📷 카메라 확인 OFF';
+    const dot = $('sortCamDot');
+    dot.style.background = !cam.cfg.on ? '#94a3b8' : cam.err ? '#DC2626' : cam.running ? '#22C55E' : '#F59E0B';
+    const t = $('camOnBtn'); if(t){ t.textContent = cam.cfg.on ? '✅ 카메라 확인 켜짐 (누르면 끄기)' : '☐ 카메라 확인 꺼짐 (누르면 켜기)'; t.className = 'btn ' + (cam.cfg.on ? 'b-green' : 'b-line'); }
+  }
+  function camStatus(msg, bad){ const el = $('camStatus'); if(el){ el.textContent = msg; el.style.color = bad ? '#DC2626' : '#475569'; } }
+
+  async function camListDevices(){
+    const sel = $('camDev'); if(!sel || !navigator.mediaDevices) return;
+    let devs = [];
+    try{ devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); }catch(e){}
+    sel.innerHTML = devs.map((d, i) => `<option value="${escapeHtml(d.deviceId)}"${d.deviceId === cam.cfg.dev ? ' selected' : ''}>${escapeHtml(d.label || ('카메라 ' + (i + 1)))}</option>`).join('') || '<option value="">카메라 없음</option>';
+  }
+  async function camStart(){
+    if(cam.stream) return true;
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ cam.err = '이 브라우저에서는 카메라를 쓸 수 없어요'; camStatus(cam.err, true); camPaintBtn(); return false; }
+    try{
+      const v = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 15 } };
+      if(cam.cfg.dev) v.deviceId = { exact: cam.cfg.dev };
+      cam.stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false });
+    }catch(e){
+      try{ cam.stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); }
+      catch(e2){ cam.err = '카메라를 켤 수 없어요 (' + (e2.name === 'NotAllowedError' ? '카메라 허용이 필요해요' : (e2.message || e2.name || e2)) + ')'; camStatus(cam.err, true); camPaintBtn(); return false; }
+    }
+    const tr = cam.stream.getVideoTracks()[0];
+    try{ const id = tr.getSettings().deviceId; if(id && !cam.cfg.dev){ cam.cfg.dev = id; camSave(); } }catch(e){}
+    tr.addEventListener('ended', () => camLost('카메라 연결이 끊겼어요'));
+    if(!cam.video){ cam.video = document.createElement('video'); cam.video.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none;'; document.body.appendChild(cam.video); } // 화면에 붙여둬야 브라우저가 멈추지 않음
+    cam.video.muted = true; cam.video.playsInline = true; cam.video.srcObject = cam.stream;
+    try{ await cam.video.play(); }catch(e){}
+    cam.err = ''; cam.running = true; cam.prev = null; cam.maskSig = '';
+    camStatus('카메라 켜짐'); camListDevices(); camPaintBtn();
+    clearInterval(cam.timer); cam.timer = setInterval(camTick, 100);
+    return true;
+  }
+  function camStop(){
+    clearInterval(cam.timer); cam.timer = null; cam.running = false; cam.watch = null;
+    if(cam.stream){ try{ cam.stream.getTracks().forEach(t => t.stop()); }catch(e){} cam.stream = null; }
+    if(cam.video) cam.video.srcObject = null;
+    camMini(); camPaintBtn();
+  }
+  function camLost(msg){
+    // 카메라가 빠지거나 멈추면 감지만 꺼지고 분배는 그대로 (켜짐 설정은 기억 → 다시 연결하면 이어서)
+    camStop(); cam.err = msg; camStatus(msg + ' — 분배는 그대로 계속돼요. 다시 꽂고 [카메라 연결]을 눌러주세요', true); camPaintBtn();
+    try{ logLine('📷 ' + msg + ' — 카메라 확인 잠시 꺼짐', true); renderRun(); }catch(e){}
+  }
+  async function camSetOn(on){
+    if(on && pending){ sortBeep('err'); say('확인 중인 상품부터 끝내주세요'); return; }
+    cam.cfg.on = !!on; camSave();
+    if(on){
+      if(sortConfirm){ sortConfirm = false; try{ localStorage.setItem('sortConfirm', '0'); }catch(e){} paintConfirmBtn(); }
+      const ok = await camStart();
+      big('idle', '📷', ok ? '카메라 확인 켜짐' : '카메라를 켜지 못했어요', ok ? (camSlots().length ? '상품을 찍고 칸에 넣기만 하면 돼요 — 전표 QR 안 찍어도 돼요. 다른 칸에 넣으면 경고가 나요' : '📷 버튼 → 칸 위치를 먼저 지정해주세요') : cam.err);
+    } else {
+      camStop(); camHideWarn();
+      big('idle', '–', '카메라 확인 꺼짐', '상품을 찍으면 바로 수량이 들어가요');
+    }
+    camPaintBtn(); scan.focus();
+  }
+
+  /* ----- 칸 모양(정규화 좌표 0~1 사각형 4점) → 분석 화면(160×90 정도) 픽셀 목록 ----- */
+  function camPointIn(pts, x, y){
+    let inside = false;
+    for(let i = 0, j = pts.length - 1; i < pts.length; j = i++){
+      const xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1];
+      if(((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-9) + xi)) inside = !inside;
+    }
+    return inside;
+  }
+  function camBuildMasks(){
+    const slots = camSlots();
+    const sig = cam.aw + 'x' + cam.ah + '|' + JSON.stringify(slots);
+    if(sig === cam.maskSig) return;
+    cam.maskSig = sig;
+    cam.masks = slots.map(s => {
+      // 칸 테두리(옆 칸과 붙은 곳)는 빼고 안쪽 85%만 — 옆 칸을 스치는 팔에 덜 흔들리게
+      const cx = s.pts.reduce((a, p) => a + p[0], 0) / 4, cy = s.pts.reduce((a, p) => a + p[1], 0) / 4;
+      const pts = s.pts.map(p => [cx + (p[0] - cx) * 0.85, cy + (p[1] - cy) * 0.85]);
+      const idx = [];
+      for(let y = 0; y < cam.ah; y++) for(let x = 0; x < cam.aw; x++){ if(camPointIn(pts, (x + 0.5) / cam.aw, (y + 0.5) / cam.ah)) idx.push(y * cam.aw + x); }
+      return { n: s.n, idx: Uint32Array.from(idx) };
+    }).filter(m => m.idx.length >= 4);
+  }
+  function camGrab(){
+    const v = cam.video;
+    if(!v || v.readyState < 2 || !v.videoWidth) return null;
+    const ah = Math.max(30, Math.round(160 * v.videoHeight / v.videoWidth));
+    if(!cam.actx || cam.ah !== ah){ const c = document.createElement('canvas'); c.width = 160; c.height = ah; cam.actx = c.getContext('2d', { willReadFrequently: true }); cam.aw = 160; cam.ah = ah; cam.prev = null; cam.maskSig = ''; }
+    cam.actx.drawImage(v, 0, 0, cam.aw, cam.ah);
+    // 색까지 비교 (밝기만 보면 초록 옷 ↔ 갈색 칸처럼 밝기가 비슷한 건 안 보임)
+    const d = cam.actx.getImageData(0, 0, cam.aw, cam.ah).data, g = new Uint8Array(cam.aw * cam.ah * 3);
+    for(let i = 0, j = 0; i < d.length; i += 4, j += 3){ g[j] = d[i]; g[j + 1] = d[i + 1]; g[j + 2] = d[i + 2]; }
+    return g;
+  }
+  function camFrac(g, ref, m, px){
+    const a = m.idx, thr = px * 2; let c = 0;
+    for(let k = 0; k < a.length; k++){ const i = a[k] * 3; if(Math.abs(g[i] - ref[i]) + Math.abs(g[i + 1] - ref[i + 1]) + Math.abs(g[i + 2] - ref[i + 2]) > thr) c++; }
+    return c / a.length;
+  }
+
+  /* ----- 상품 찍을 때: 넣어야 할 칸들 지켜보기 시작 ----- */
+  function camWatch(c, slots, test){
+    camHideWarn();
+    if((!cam.cfg.on && !test) || !cam.running || !camSlots().length) return;
+    if(cam.watch && !cam.watch.done && !cam.watch.test){ camStat('none'); } // 판단 전에 다음 상품을 찍음 → 그 건은 넘어감
+    const g = camGrab(); if(!g) return;
+    camBuildMasks();
+    cam.watch = { c, exp: slots.slice(), rem: slots.slice(), ref: g, t0: Date.now(), cnt: {}, entered: {}, first: 0, active: false, settle: 0, done: false, peak: 0, peakFrac: {}, test: !!test, company: slots.length ? slotObj(slots[0]).company : '' };
+  }
+  function camTick(){
+    if(!cam.running) return;
+    const g = camGrab(); if(!g){ camMini(); return; }
+    // 1초에 몇 장 분석하는지 (느려지는지 확인용)
+    cam.fpsN++; const now = Date.now(); if(now - cam.fpsAt >= 1000){ cam.fps = Math.round(cam.fpsN * 1000 / (now - cam.fpsAt)); cam.fpsN = 0; cam.fpsAt = now; }
+    camBuildMasks();
+    const S = CAM_SENS[cam.cfg.sens] || CAM_SENS.mid;
+    // 지금 움직이는 칸 (화면 표시용, 바로 앞 장면과 비교)
+    cam.lastAct = {};
+    let movePix = 0, allPix = 0;
+    if(cam.prev && cam.prev.length === g.length){
+      cam.masks.forEach(m => { const f = camFrac(g, cam.prev, m, S.px); allPix += m.idx.length; movePix += f * m.idx.length; if(f > S.enter * 0.6) cam.lastAct[m.n] = f; });
+    }
+    const moving = allPix ? (movePix / allPix) > 0.012 : true;
+    cam.prev = g;
+    const w = cam.watch;
+    if(w && !w.done){
+      const frac = {}; let act = [];
+      cam.masks.forEach(m => { frac[m.n] = camFrac(g, w.ref, m, S.px); if(frac[m.n] > S.enter) act.push(m.n); });
+      const occluded = act.length > Math.max(3, Math.ceil(cam.masks.length * 0.5)); // 사람이 앞을 지나감 → 이번 장면은 판단 안 함
+      w.frac = frac; w.occluded = occluded;
+      if(!occluded){
+        if(act.length > w.peak) w.peak = act.length;
+        act.forEach(n => { if(frac[n] > (w.peakFrac[n] || 0)) w.peakFrac[n] = frac[n]; });
+        cam.masks.forEach(m => {
+          if(act.indexOf(m.n) >= 0){ w.cnt[m.n] = (w.cnt[m.n] || 0) + 1; if(w.cnt[m.n] >= 3 && !w.entered[m.n]){ w.entered[m.n] = now; if(!w.first) w.first = m.n; w.active = true; } }
+          else w.cnt[m.n] = 0;
+        });
+      }
+      if(w.active){
+        w.settle = (!moving && !occluded) ? w.settle + 1 : 0;
+        // 손을 넣고 가만히 있는 동안은 판단하지 않음 → 팔이 빠진 뒤(움직이던 칸 수가 줄거나, 들어갔던 칸 변화가 확 줄어듦) 0.5초 잠잠하면 판단
+        const left = act.length < w.peak || Object.keys(w.entered).some(n => frac[n] < 0.7 * (w.peakFrac[n] || 0));
+        if((w.settle >= 5 && left) || w.settle >= 15) camDecide(w, frac, S);
+      }
+      if(!w.done && now - w.t0 > (Number(cam.cfg.win) || 8) * 1000){
+        if(w.active && !occluded) camDecide(w, frac, S);
+        else { w.done = true; camStat(w.active ? 'amb' : 'none'); if(w.test) camTestMsg(w.active ? '판단 못 함 (앞이 가려졌거나 움직임이 계속됨)' : '움직임 없음'); }
+      }
+    }
+    camMini(); camEditorDraw();
+  }
+  function camDecide(w, frac, S){
+    const cand = Object.keys(frac).map(Number).filter(n => frac[n] > S.res).sort((a, b) => frac[b] - frac[a]);
+    const exp = w.rem;
+    const hit = cand.find(n => exp.indexOf(n) >= 0);
+    const company = n => slotObj(n).company || '';
+    if(w.test){ // 설정 화면 테스트: 어느 칸으로 봤는지만 알려줌
+      w.done = true;
+      camTestMsg(cand.length ? `${cand[0]}번 칸으로 감지 (남은 변화 ${Math.round(frac[cand[0]] * 100)}%)` + (cand.length > 1 ? ` · 다음 ${cand[1]}번 ${Math.round(frac[cand[1]] * 100)}%` : '') : '들어간 건 봤는데 남은 변화가 없어요 (민감도를 높여보세요)');
+      cam.flash = { n: cand[0] || w.first, ok: true, until: Date.now() + 1500 };
+      return;
+    }
+    if(hit){
+      camStat('ok'); cam.flash = { n: hit, ok: true, until: Date.now() + 1200 };
+      w.rem = exp.filter(n => n !== hit);
+      if(w.rem.length && Date.now() - w.t0 < (Number(cam.cfg.win) || 8) * 1000 * 2){ // 묶음을 여러 칸에 나눠 넣는 중 → 남은 칸 계속 지켜봄
+        const g = camGrab(); if(g){ w.ref = g; w.cnt = {}; w.entered = {}; w.first = 0; w.active = false; w.settle = 0; w.peak = 0; w.peakFrac = {}; w.t0 = Date.now(); return; }
+      }
+      w.done = true; return;
+    }
+    const wrong = cand.filter(n => w.entered[n]);
+    if(cand.length >= 3 || !wrong.length){ w.done = true; camStat('amb'); logLine(`📷 ${w.c} — 카메라로 판단 못 함 (넘어감)`); return; }
+    w.done = true;
+    const wn = wrong[0], en = exp[0];
+    camStat('warn'); cam.flash = { n: wn, ok: false, until: Date.now() + 4000, exp: en };
+    const es = slotObj(en);
+    logLine(`📷 ${w.c} ⚠ 카메라: ${wn}번 ${company(wn)}에 넣은 것 같음 → 맞는 곳 ${en}번 ${es.company}`, true);
+    try{ vidNote({ ok:false, code: w.c, msg: `카메라: ${wn}번 ${company(wn)}에 넣음 감지 (맞는 곳 ${en}번 ${es.company})`, key: canonicalDocKeyJS(es.key || ''), slot: en, company: es.company }); }catch(e){}
+    if(cam.cfg.logOnly){ renderRun(); return; } // 시범: 기록만
+    cam.warn = { c: w.c, wn, en, at: Date.now() };
+    sortBeep('err');
+    big('err', en, `⚠ ${wn}번 칸(${company(wn)})에 넣었어요!`, `${w.c} 는 ${en}번 ${es.company} 칸이에요 — 꺼내서 ${en}번에 넣고 [옮겼어요]를 눌러주세요`);
+    stopAll(); speak(`${NUM_WORD[wn] || wn}번에 넣었어요. ${NUM_WORD[en] || en}번이에요`, 1);
+    const bar = $('sortCamWarn');
+    if(bar){ $('sortCamWarnText').textContent = `📷 ${wn}번 → ${en}번 ${es.company}`; bar.style.display = 'flex'; }
+    renderRun(en);
+  }
+  function camHideWarn(){ cam.warn = null; const bar = $('sortCamWarn'); if(bar) bar.style.display = 'none'; }
+  $('sortCamFixed').onclick = () => {
+    if(cam.warn){ camStat('fixed'); if(st) st.wrongPut = (st.wrongPut || 0) + 1; logLine(`📷 ${cam.warn.c} ${cam.warn.wn}번 → ${cam.warn.en}번으로 옮김`); big('done', '✔', '옮겼어요', '다음 상품을 찍으세요'); }
+    camHideWarn(); try{ ptl.off && ptl.off(); }catch(e){} renderRun(); scan.focus();
+  };
+  $('sortCamFalse').onclick = () => {
+    if(cam.warn){ camStat('falseAlarm'); logLine(`📷 ${cam.warn.c} 감지 오류로 표시 (실제로는 맞게 넣음)`); big('idle', '✔', '감지 오류로 기록했어요', '다음 상품을 찍으세요'); }
+    camHideWarn(); try{ ptl.off && ptl.off(); }catch(e){} scan.focus();
+  };
+
+  /* ----- 화면: 오른쪽 아래 작은 카메라 화면 (칸 테두리 + 지켜보는 칸/움직이는 칸/경고 칸 색) ----- */
+  function camDrawOverlay(ctx, W, H, opt){
+    const v = cam.video;
+    if(v && v.readyState >= 2) { try{ ctx.drawImage(v, 0, 0, W, H); }catch(e){} }
+    else { ctx.fillStyle = '#1e293b'; ctx.fillRect(0, 0, W, H); ctx.fillStyle = '#cbd5e1'; ctx.font = 'bold 14px sans-serif'; ctx.fillText(cam.err || '카메라 꺼짐', 10, 24); }
+    const now = Date.now(), w = cam.watch, blink = Math.floor(now / 350) % 2 === 0;
+    camSlots().forEach(s => {
+      let stroke = 'rgba(255,255,255,.55)', fill = '', lw = 1.5;
+      const exp = w && !w.done && w.rem.indexOf(s.n) >= 0;
+      if(exp){ stroke = '#22C55E'; lw = 4; if(blink) fill = 'rgba(34,197,94,.25)'; }
+      if(cam.lastAct[s.n] && !opt.editing){ stroke = '#FACC15'; lw = 4; fill = 'rgba(250,204,21,.25)'; }
+      if(cam.flash && cam.flash.until > now){
+        if(cam.flash.n === s.n){ stroke = cam.flash.ok ? '#22C55E' : '#EF4444'; lw = 5; fill = cam.flash.ok ? 'rgba(34,197,94,.45)' : 'rgba(239,68,68,.45)'; }
+        else if(!cam.flash.ok && cam.flash.exp === s.n){ stroke = '#22C55E'; lw = 4; if(blink) fill = 'rgba(34,197,94,.3)'; }
+      }
+      ctx.beginPath(); s.pts.forEach((p, i) => { const x = p[0] * W, y = p[1] * H; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath();
+      if(fill){ ctx.fillStyle = fill; ctx.fill(); }
+      ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke();
+      const x0 = Math.min.apply(null, s.pts.map(p => p[0])) * W, y0 = Math.min.apply(null, s.pts.map(p => p[1])) * H;
+      ctx.fillStyle = 'rgba(15,23,42,.75)'; ctx.fillRect(x0 + 3, y0 + 3, 22, 17);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif'; ctx.fillText(String(s.n), x0 + 6, y0 + 16);
+      if(opt.editing){ ctx.fillStyle = '#38BDF8'; s.pts.forEach(p => { ctx.fillRect(p[0] * W - 3, p[1] * H - 3, 6, 6); }); }
+    });
+    ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(W - 92, H - 20, 92, 20);
+    ctx.fillStyle = cam.fps && cam.fps < 5 ? '#FCA5A5' : '#BBF7D0'; ctx.font = 'bold 12px sans-serif'; ctx.fillText(`감지 ${cam.fps || 0}fps`, W - 86, H - 6);
+  }
+  function camMini(){
+    const box = $('sortCamMini'); if(!box) return;
+    const show = cam.cfg.on && $('sortViewRun').style.display !== 'none';
+    box.style.display = show ? '' : 'none';
+    if(!show) return;
+    const cv = $('sortCamMiniCv'), v = cam.video;
+    const W = box.classList.contains('lg') ? 640 : 340, H = Math.round(W * ((v && v.videoWidth) ? v.videoHeight / v.videoWidth : 9 / 16));
+    if(cv.width !== W || cv.height !== H){ cv.width = W; cv.height = H; }
+    camDrawOverlay(cv.getContext('2d'), W, H, {});
+    const w = cam.watch, el = $('sortCamMiniTxt');
+    el.textContent = cam.err ? '⚠ ' + cam.err : !camSlots().length ? '⚠ 칸 위치를 지정해주세요 (📷 버튼)' : (w && !w.done) ? (w.occluded ? '👀 앞이 가려졌어요' : `👁 ${w.rem.join('·')}번 칸 지켜보는 중`) : (cam.cfg.logOnly ? '시범 — 기록만 (경고 안 울림)' : '대기 중 — 상품을 찍으세요');
+  }
+  $('sortCamMiniSize').onclick = () => { $('sortCamMini').classList.toggle('lg'); camMini(); };
+
+  /* ----- 설정 패널: 카메라 고르기 · 칸 위치 지정(네 모서리→가로×세로 / 직접 그리기 / 꼭짓점 조정 / 전체 옮기기) · 저장 ----- */
+  const camPanel = $('sortCamPanel');
+  $('sortCamBtn').onclick = () => {
+    const open = camPanel.style.display === 'none';
+    camPanel.style.display = open ? 'block' : 'none';
+    try{ $('sortSoundPanel').style.display = 'none'; $('sortLightPanel').style.display = 'none'; }catch(e){}
+    if(open){ camFillPanel(); camListDevices(); if(!cam.running) camStart().then(camFillPanel); }
+    else if(!cam.cfg.on) camStop();
+  };
+  $('camClose').onclick = () => { camPanel.style.display = 'none'; if(!cam.cfg.on) camStop(); scan.focus(); };
+  $('camOnBtn').onclick = () => camSetOn(!cam.cfg.on);
+  $('camDev').onchange = async () => { cam.cfg.dev = $('camDev').value; camSave(); camStop(); await camStart(); camFillPanel(); };
+  $('camReconnect').onclick = async () => { camStop(); await camStart(); camFillPanel(); };
+  $('camSens').onchange = () => { cam.cfg.sens = $('camSens').value; camSave(); };
+  $('camLogOnly').onchange = () => { cam.cfg.logOnly = $('camLogOnly').checked; camSave(); };
+  $('camWin').onchange = () => { cam.cfg.win = Math.max(3, Math.min(20, Number($('camWin').value) || 8)); camSave(); };
+  function camFillPanel(){
+    $('camSens').value = cam.cfg.sens; $('camLogOnly').checked = !!cam.cfg.logOnly; $('camWin').value = cam.cfg.win;
+    $('camCols').value = cam.cfg.cols; $('camRows').value = cam.cfg.rows;
+    const names = Object.keys(cam.cfg.layouts || {});
+    $('camPreset').innerHTML = (names.length ? names : ['']).map(n => `<option value="${escapeHtml(n)}"${n === cam.cfg.cur ? ' selected' : ''}>${escapeHtml(n || '(저장된 배치 없음)')}</option>`).join('');
+    const s = camStat();
+    $('camStats').textContent = `오늘: 맞게 넣음 ${s.ok} · 경고 ${s.warn} (옮김 ${s.fixed} · 감지 오류 ${s.falseAlarm}) · 판단 못 함 ${s.amb} · 움직임 없음 ${s.none}`;
+    camToolPaint(); camPaintBtn(); camEditorDraw();
+  }
+  function camEnsureLayout(){
+    if(!cam.cfg.cur){ cam.cfg.cur = '분배 선반 1'; }
+    cam.cfg.layouts = cam.cfg.layouts || {};
+    if(!cam.cfg.layouts[cam.cfg.cur]){ cam.cfg.layouts[cam.cfg.cur] = { slots: [] }; camSave(); setTimeout(camFillPanel, 0); } // 새 배치 → 배치 목록에도 보이게
+    return cam.cfg.layouts[cam.cfg.cur];
+  }
+  function camToolPaint(){
+    document.querySelectorAll('#sortCamPanel .camTool').forEach(b => b.classList.toggle('on', b.getAttribute('data-tool') === cam.tool));
+    const tip = { corner: `선반 네 모서리를 차례로 누르세요: ① 왼쪽 위 → ② 오른쪽 위 → ③ 오른쪽 아래 → ④ 왼쪽 아래 (${cam.corners.length}/4) — 가로×세로 칸으로 자동으로 나눠요`,
+      draw: '칸 하나를 끌어서 네모로 그리면 다음 번호가 붙어요 (칸이 불규칙할 때 · 엘카 PP박스 등)',
+      edit: '칸 꼭짓점(파란 점)을 끌어서 모양을 맞추세요', move: '화면을 끌면 칸 전체가 같이 움직여요 (엘카·카트 위치가 조금 바뀌었을 때)' };
+    $('camTip').textContent = tip[cam.tool] || '';
+  }
+  document.querySelectorAll('#sortCamPanel .camTool').forEach(b => b.onclick = () => { cam.tool = b.getAttribute('data-tool'); cam.corners = []; camToolPaint(); camEditorDraw(); });
+  $('camCols').onchange = $('camRows').onchange = () => { cam.cfg.cols = Math.max(1, Math.min(12, Number($('camCols').value) || 5)); cam.cfg.rows = Math.max(1, Math.min(12, Number($('camRows').value) || 4)); camSave(); };
+  $('camUndo').onclick = () => { const l = camEnsureLayout(); if(l.slots.length){ const mx = Math.max.apply(null, l.slots.map(s => s.n)); l.slots = l.slots.filter(s => s.n !== mx); camSave(); camEditorDraw(); } };
+  $('camClear').onclick = () => { if(!confirm('이 배치의 칸을 모두 지울까요?')) return; camEnsureLayout().slots = []; cam.corners = []; camSave(); camEditorDraw(); };
+  $('camSaveAs').onclick = () => {
+    const nm = (prompt('이 배치 이름 (예: 엘카 1번, 분배 선반)', cam.cfg.cur || '분배 선반 1') || '').trim(); if(!nm) return;
+    const cur = camLayout(); cam.cfg.layouts[nm] = { slots: JSON.parse(JSON.stringify(cur ? cur.slots : [])) }; cam.cfg.cur = nm; camSave(); camFillPanel();
+  };
+  $('camPreset').onchange = () => { cam.cfg.cur = $('camPreset').value; camSave(); cam.maskSig = ''; camFillPanel(); };
+  $('camDelPreset').onclick = () => { if(!cam.cfg.cur || !confirm(`"${cam.cfg.cur}" 배치를 지울까요?`)) return; delete cam.cfg.layouts[cam.cfg.cur]; cam.cfg.cur = Object.keys(cam.cfg.layouts)[0] || ''; camSave(); camFillPanel(); };
+  $('camTest').onclick = () => { if(!cam.running){ camTestMsg('카메라가 꺼져 있어요'); return; } if(!camSlots().length){ camTestMsg('칸을 먼저 지정해주세요'); return; } camTestMsg('지금부터 8초 — 아무 칸에 물건을 넣었다 손을 빼보세요'); camWatch('테스트', [], true); };
+  function camTestMsg(m){ const el = $('camTestMsg'); if(el) el.textContent = '🧪 ' + m; }
+  function camGridFromCorners(c){
+    // 네 모서리 → 가로 cols × 세로 rows (원근 보정: 양 변을 같은 비율로 나눔), 번호는 왼쪽 위부터 가로 순서
+    const cols = cam.cfg.cols, rows = cam.cfg.rows, lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    const at = (u, v) => lerp(lerp(c[0], c[1], u), lerp(c[3], c[2], u), v);
+    const slots = []; let n = 1;
+    for(let r = 0; r < rows; r++) for(let k = 0; k < cols; k++){
+      slots.push({ n: n++, pts: [at(k / cols, r / rows), at((k + 1) / cols, r / rows), at((k + 1) / cols, (r + 1) / rows), at(k / cols, (r + 1) / rows)] });
+    }
+    return slots;
+  }
+  function camEditorDraw(){
+    if(camPanel.style.display === 'none') return;
+    const cv = $('camEditor'), v = cam.video;
+    const W = Math.min(720, Math.max(320, camPanel.clientWidth - 32)), H = Math.round(W * ((v && v.videoWidth) ? v.videoHeight / v.videoWidth : 9 / 16));
+    if(cv.width !== W || cv.height !== H){ cv.width = W; cv.height = H; }
+    const ctx = cv.getContext('2d');
+    camDrawOverlay(ctx, W, H, { editing: true });
+    if(cam.tool === 'corner' && cam.corners.length){
+      ctx.strokeStyle = '#F472B6'; ctx.lineWidth = 2; ctx.beginPath();
+      cam.corners.forEach((p, i) => { const x = p[0] * W, y = p[1] * H; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+      cam.corners.forEach((p, i) => { ctx.fillStyle = '#F472B6'; ctx.beginPath(); ctx.arc(p[0] * W, p[1] * H, 6, 0, 7); ctx.fill(); ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif'; ctx.fillText(String(i + 1), p[0] * W + 8, p[1] * H - 6); });
+    }
+    if(cam.drag && cam.drag.kind === 'draw'){ const d = cam.drag; ctx.strokeStyle = '#38BDF8'; ctx.setLineDash([6, 4]); ctx.lineWidth = 2; ctx.strokeRect(d.x0 * W, d.y0 * H, (d.x1 - d.x0) * W, (d.y1 - d.y0) * H); ctx.setLineDash([]); }
+  }
+  (function camEditorEvents(){
+    const cv = $('camEditor');
+    const pos = e => { const r = cv.getBoundingClientRect(); return [Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), Math.max(0, Math.min(1, (e.clientY - r.top) / r.height))]; };
+    cv.addEventListener('pointerdown', e => {
+      const p = pos(e), l = camEnsureLayout();
+      try{ cv.setPointerCapture(e.pointerId); }catch(err){}
+      if(cam.tool === 'corner'){
+        cam.corners.push(p);
+        if(cam.corners.length === 4){ l.slots = camGridFromCorners(cam.corners); cam.corners = []; camSave(); cam.maskSig = ''; }
+        camToolPaint(); camEditorDraw(); return;
+      }
+      if(cam.tool === 'draw'){ cam.drag = { kind: 'draw', x0: p[0], y0: p[1], x1: p[0], y1: p[1] }; return; }
+      if(cam.tool === 'move'){ cam.drag = { kind: 'move', last: p }; return; }
+      if(cam.tool === 'edit'){
+        const r = cv.getBoundingClientRect(); let best = null, bd = 14;
+        l.slots.forEach(s => s.pts.forEach((q, i) => { const d = Math.hypot((q[0] - p[0]) * r.width, (q[1] - p[1]) * r.height); if(d < bd){ bd = d; best = { s, i }; } }));
+        if(best) cam.drag = { kind: 'edit', s: best.s, i: best.i };
+      }
+    });
+    cv.addEventListener('pointermove', e => {
+      if(!cam.drag) return;
+      const p = pos(e), d = cam.drag;
+      if(d.kind === 'draw'){ d.x1 = p[0]; d.y1 = p[1]; }
+      else if(d.kind === 'move'){ const dx = p[0] - d.last[0], dy = p[1] - d.last[1]; d.last = p; camEnsureLayout().slots.forEach(s => s.pts.forEach(q => { q[0] += dx; q[1] += dy; })); }
+      else if(d.kind === 'edit'){ d.s.pts[d.i] = p; }
+      camEditorDraw();
+    });
+    const end = () => {
+      const d = cam.drag; cam.drag = null; if(!d) return;
+      const l = camEnsureLayout();
+      if(d.kind === 'draw'){
+        const x0 = Math.min(d.x0, d.x1), x1 = Math.max(d.x0, d.x1), y0 = Math.min(d.y0, d.y1), y1 = Math.max(d.y0, d.y1);
+        if(x1 - x0 > 0.015 && y1 - y0 > 0.015){ const n = l.slots.length ? Math.max.apply(null, l.slots.map(s => s.n)) + 1 : 1; l.slots.push({ n, pts: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]] }); }
+      }
+      cam.maskSig = ''; camSave(); camEditorDraw();
+    };
+    cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+  })();
+  camPaintBtn();
+  if(cam.cfg.on){ if(sortConfirm){ sortConfirm = false; try{ localStorage.setItem('sortConfirm', '0'); }catch(e){} paintConfirmBtn(); } setTimeout(() => camStart(), 1500); }
+  window.__sortCam = cam; // 테스트·점검용
 
   /* ---------- 칸 완료 → 검수 엔진으로 넘겨 평소 검수완료와 똑같이 기록 ----------
      11/15: 검수기록 저장이 늦어도 바로 "실패"로 띄우지 않는다.
