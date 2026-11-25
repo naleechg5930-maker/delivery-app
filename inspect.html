@@ -7693,7 +7693,9 @@ const videoRec = (function(){
       .slots{ margin:4px 0 5px; font-size:13px; line-height:1.5; } .slots span{ display:inline-block; margin-right:14px; } .slots b{ display:inline-block; border:2px solid #111; border-radius:4px; padding:0 6px; margin-right:4px; }
       table{ width:100%; border-collapse:collapse; font-size:13px; } th{ background:#e5e7eb; text-align:left; padding:3px 5px; border-bottom:2px solid #111; }
       td{ padding:2px 5px; border-bottom:1px solid #cbd5e1; line-height:1.25; } td.n{ font-size:16px; font-weight:900; text-align:center; } td.c{ text-align:center; font-size:16px; }
-      td.s{ text-align:center; font-size:15px; font-weight:700; } td.s.low{ color:#DC2626; } td.s .w{ display:block; font-size:11px; font-weight:900; line-height:1.1; }
+      td.s{ text-align:center; font-size:14px; font-weight:600; color:#94A3B8; background:#F1F5F9; border-left:1px solid #cbd5e1; } td.s.low{ color:#DC2626; font-weight:800; }
+      th.s{ text-align:center; color:#64748B; background:#EEF2F6; border-left:1px solid #cbd5e1; }
+      td.n, th.n{ border-right:2px solid #111; } td.s .w{ display:block; font-size:11px; font-weight:900; line-height:1.1; }
       td.per{ font-size:12.5px; } tr.low td{ background:#FEF2F2; }
       .stk{ font-size:12px; margin-top:1px; }
       td.ib{ font-size:11px; line-height:1.2; } td.ib .mv{ color:#0F766E; } td.ib .mv .q{ color:#0F766E; font-weight:800; } td.ib .rt{ color:#64748B; } td.ib .q{ color:#334155; } td.ib .none{ color:#94a3b8; }
@@ -7701,8 +7703,8 @@ const videoRec = (function(){
     </style></head><body>
       <div class="h"><div><div class="t">${title} ${b.id}</div><div class="m">${created} · 피킹: ${escapeHtml(b.worker)} · ${b.slots.length}전표 · ${total}개 · ${title === '묶음 피킹지' ? '피킹 나갈 때 오른쪽 QR을 분배 화면에서 찍기' : '빠진 것만 — 가져와서 그대로 찍으면 돼요 (묶음 QR은 다시 안 찍어도 돼요)'}</div><div class="stk">${stockInfo}</div></div>${qr ? `<img class="qr" src="${qr}">` : ''}</div>
       <div class="slots">${b.slots.map(s => `<span><b>${s.slot}</b>${escapeHtml(s.company)} (${escapeHtml(s.key)}) · ${s.qty}개</span>`).join('')}</div>
-      <table><thead><tr><th style="width:8%">위치</th><th>품목 / 규격</th><th style="width:6%;text-align:center">합계</th><th style="width:11%">칸별</th><th style="width:9%;text-align:center">현재고</th><th style="width:26%">금일 이동 · 최근 입고</th></tr></thead><tbody>
-      ${rows.map(r => `<tr${r.short ? ' class="low"' : ''}><td>${escapeHtml(r.zone || '—')}</td><td>${escapeHtml(r.name)} ${escapeHtml(r.spec)}${r.seq === 9999 ? ' <span style="color:#94a3b8">(진열순서 없음)</span>' : ''}${r.rp ? ` <b style="color:#B45309">🧵 수선품 ${r.rp}개 먼저</b>` : ''}</td><td class="n">${r.total}</td><td class="per">${r.per.join(' ')}</td><td class="s${r.short ? ' low' : ''}">${r.cur == null ? '—' : r.cur}${r.short ? `<span class="w">⚠ 부족 ${r.short}</span>` : ''}</td><td class="ib">${recentMovesHtml(r.mv, stk && stk.today)}${r.mv && r.mv.length && r.inb && !r.inb.length ? '' : recentInboundHtml(r.inb)}</td></tr>`).join('')}
+      <table><thead><tr><th style="width:8%">위치</th><th>품목 / 규격</th><th class="n" style="width:6%;text-align:center">합계</th><th style="width:11%">칸별</th><th style="width:26%">금일 이동 · 최근 입고</th><th class="s" style="width:8%">현재고</th></tr></thead><tbody>
+      ${rows.map(r => `<tr${r.short ? ' class="low"' : ''}><td>${escapeHtml(r.zone || '—')}</td><td>${escapeHtml(r.name)} ${escapeHtml(r.spec)}${r.seq === 9999 ? ' <span style="color:#94a3b8">(진열순서 없음)</span>' : ''}${r.rp ? ` <b style="color:#B45309">🧵 수선품 ${r.rp}개 먼저</b>` : ''}</td><td class="n">${r.total}</td><td class="per">${r.per.join(' ')}</td><td class="ib">${recentMovesHtml(r.mv, stk && stk.today)}${r.mv && r.mv.length && r.inb && !r.inb.length ? '' : recentInboundHtml(r.inb)}</td><td class="s${r.short ? ' low' : ''}">${r.cur == null ? '—' : r.cur}${r.short ? `<span class="w">⚠ 부족 ${r.short}</span>` : ''}</td></tr>`).join('')}
       </tbody></table>
       <div class="f">${title === '묶음 피킹지' ? '진열순서 탭 순서대로 정렬 · 합계만 보고 한 바퀴 피킹 → 분배 자리에서 QR을 다시 찍으면 피킹 완료 → 상품을 하나씩 찍으면 칸 번호를 불러줘요' : '진열순서 탭 순서대로 정렬 · 빠진 상품만 가져와서 분배 화면에서 하나씩 찍으면 돼요'}</div>
     </body></html>`;
