@@ -4083,6 +4083,7 @@ async function processDocumentLookup(raw){
     try{ checkExclusiveOnLoad(data.company, data.key || raw); }catch(e){ console.warn('완전분배 확인 실패(무시):', e); }
     try{ checkRepairOnLoad(data.key || raw, data.company); }catch(e){ console.warn('수선품 확인 실패(무시):', e); }
     try{ preloadBoxCandidates(); }catch(e){ console.warn('박스 목록 받기 실패(무시):', e); }
+    try{ if(window.coOnDocLoaded) window.coOnDocLoaded(); }catch(e){ console.warn('같이 검수 확인 실패(무시):', e); } // 11/25: 같이 검수
 
     if(fromCache){
       // 캐시로 찾은 경우엔 서버가 피킹카운터를 못 건드렸으니, 여기서 별도로(백그라운드로) 반영 요청을 보낸다.
@@ -4160,6 +4161,7 @@ async function autoCaptureAndSave(companyName, stamp, meta){
         rapidCount: (meta && meta.rapidCount) || 0,
         repairUse: repairUse,
         boxOutbound: buildBoxOutboundPayload(),
+        coWorkers: (window.__coRecord && meta && canonicalDocKeyJS(window.__coRecord.key) === canonicalDocKeyJS(meta.documentKey)) ? window.__coRecord.workers : null, // 11/25: 같이 검수
       })
     });
     console.log('구글시트 업로드 완료');
@@ -7616,6 +7618,23 @@ const videoRec = (function(){
     await refreshSheetStock(10000);
     return sheetStock; // 못 받았으면 예전 값(없으면 null → 현재고 칸에 '—')
   }
+  // 11/25: 오늘 ⚡미스캔 제외로 덜 나간 품번 (현재고 대비 실물이 없다는 뜻) — 피킹지 현재고 칸에 표시. 당일 것만.
+  let todayShort = null, todayShortAt = 0;
+  async function getTodayShort(){
+    if(todayShort && Date.now() - todayShortAt < 60 * 1000) return todayShort;
+    if(!gasWebhookUrl) return todayShort;
+    try{
+      const res = await fetchWithTimeout(gasWebhookUrl + '?action=getTodayShortages', {}, 8000);
+      const d = await res.json();
+      if(d && d.ok && d.map){ todayShort = d.map; todayShortAt = Date.now(); }
+    }catch(e){ console.warn('오늘 미스캔 제외 받기 실패(표시 안 함):', e); }
+    return todayShort;
+  }
+  function todayShortOf(ts, code){
+    const list = ts && (ts[code] || ts[String(code).toUpperCase()]);
+    if(!list || !list.length) return null;
+    return { short: list.reduce((a, x) => a + (Number(x.short) || 0), 0), n: list.length, last: list[list.length - 1] };
+  }
   function stockQtyOf(stk, code){
     if(!stk || !stk.items) return null;
     const it = stk.items[code] || stk.items[String(code).toUpperCase()];
@@ -7672,7 +7691,7 @@ const videoRec = (function(){
   }
   async function printPickSheet(b, title){
     title = title || '묶음 피킹지';
-    const [, stk] = await Promise.all([ensureLocOrder(), getSheetStock()]);
+    const [, stk, tsh] = await Promise.all([ensureLocOrder(), getSheetStock(), getTodayShort()]);
     // 피킹 완료(분배중·완료)된 묶음은 서버가 이미 재고에서 뺐으므로 이 피킹지 수량만큼 되돌려서 '선반에 있던 수량'으로 보여준다
     const pickedAlready = b.status === '분배중' || b.status === '완료';
     const agg = {};
@@ -7680,11 +7699,11 @@ const videoRec = (function(){
       const a = agg[it.code] || (agg[it.code] = { code: it.code, name: it.name, spec: it.spec, total: 0, per: [] });
       a.total += it.qty; a.per.push(s.slot + ':' + it.qty);
     }));
-    const rows = Object.values(agg).map(a => { const l = locOf(a.code); let rp = 0; try{ const r = (repairStock.items || {})[a.code]; rp = r && r.l > 0 ? r.l : 0; }catch(e){} let cur = stockQtyOf(stk, a.code); if(cur != null && pickedAlready) cur += a.total; return Object.assign(a, { zone: l ? l.zone : '', seq: l ? l.seq : 9999, rp, cur, short: cur != null && cur < a.total ? a.total - cur : 0, inb: recentInboundOf(stk, a.code), mv: recentMovesOf(stk, a.code) }); })
+    const rows = Object.values(agg).map(a => { const l = locOf(a.code); let rp = 0; try{ const r = (repairStock.items || {})[a.code]; rp = r && r.l > 0 ? r.l : 0; }catch(e){} let cur = stockQtyOf(stk, a.code); if(cur != null && pickedAlready) cur += a.total; return Object.assign(a, { zone: l ? l.zone : '', seq: l ? l.seq : 9999, rp, cur, short: cur != null && cur < a.total ? a.total - cur : 0, inb: recentInboundOf(stk, a.code), mv: recentMovesOf(stk, a.code), ms: todayShortOf(tsh, a.code) }); })
       .sort((x, y) => x.seq - y.seq || x.code.localeCompare(y.code));
     const total = rows.reduce((s, r) => s + r.total, 0);
-    const shortN = rows.filter(r => r.short).length;
-    const stockInfo = stk ? `재고 ${escapeHtml(String(stk.updatedAt || '').slice(0, 5) || new Date(sheetStockAt).toTimeString().slice(0, 5))} 기준` + (shortN ? ` · <b style="color:#DC2626">⚠ 재고 부족 ${shortN}품번</b>` : '') : '<span style="color:#B45309">현재고를 불러오지 못했어요 (—로 표시)</span>';
+    const shortN = rows.filter(r => r.short).length, msN = rows.filter(r => r.ms).length;
+    const stockInfo = stk ? `재고 ${escapeHtml(String(stk.updatedAt || '').slice(0, 5) || new Date(sheetStockAt).toTimeString().slice(0, 5))} 기준` + (shortN ? ` · <b style="color:#DC2626">⚠ 재고 부족 ${shortN}품번</b>` : '') + (msN ? ` · <b style="color:#B45309">오늘 미스캔 제외 ${msN}품번</b>` : '') : '<span style="color:#B45309">현재고를 불러오지 못했어요 (—로 표시)</span>';
     let qr = ''; try{ qr = makeLocalQrDataUrl('SB|' + b.id); }catch(e){}
     const created = new Date(b.created || Date.now()).toLocaleString('ko-KR', { hour12:false });
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>${title} ${b.id}</title><style>
@@ -7696,7 +7715,8 @@ const videoRec = (function(){
       td{ padding:2px 5px; border-bottom:1px solid #cbd5e1; line-height:1.25; } td.n{ font-size:16px; font-weight:900; text-align:center; } td.c{ text-align:center; font-size:16px; }
       td.s{ text-align:center; font-size:14px; font-weight:600; color:#94A3B8; background:#F1F5F9; border-left:1px solid #cbd5e1; } td.s.low{ color:#DC2626; font-weight:800; }
       th.s{ text-align:center; color:#64748B; background:#EEF2F6; border-left:1px solid #cbd5e1; }
-      td.n, th.n{ border-right:2px solid #111; } td.s .w{ display:block; font-size:11px; font-weight:900; line-height:1.1; }
+      td.n, th.n{ border-right:2px solid #111; }
+      td.s .ms{ display:block; font-size:10.5px; font-weight:900; color:#B45309; line-height:1.15; white-space:nowrap; } td.s .w{ display:block; font-size:11px; font-weight:900; line-height:1.1; }
       td.per{ font-size:12.5px; } tr.low td{ background:#FEF2F2; }
       .stk{ font-size:12px; margin-top:1px; }
       td.ib{ font-size:11px; line-height:1.2; } td.ib .mv{ color:#0F766E; } td.ib .mv .q{ color:#0F766E; font-weight:800; } td.ib .rt{ color:#64748B; } td.ib .q{ color:#334155; } td.ib .none{ color:#94a3b8; }
@@ -7705,7 +7725,7 @@ const videoRec = (function(){
       <div class="h"><div><div class="t">${title} ${b.id}</div><div class="m">${created} · 피킹: ${escapeHtml(b.worker)} · ${b.slots.length}전표 · ${total}개 · ${title === '묶음 피킹지' ? '피킹 나갈 때 오른쪽 QR을 분배 화면에서 찍기' : '빠진 것만 — 가져와서 그대로 찍으면 돼요 (묶음 QR은 다시 안 찍어도 돼요)'}</div><div class="stk">${stockInfo}</div></div>${qr ? `<img class="qr" src="${qr}">` : ''}</div>
       <div class="slots">${b.slots.map(s => `<span><b>${s.slot}</b>${escapeHtml(s.company)} (${escapeHtml(s.key)}) · ${s.qty}개</span>`).join('')}</div>
       <table><thead><tr><th style="width:8%">위치</th><th>품목 / 규격</th><th class="n" style="width:6%;text-align:center">합계</th><th style="width:11%">칸별</th><th style="width:26%">금일 이동 · 최근 입고</th><th class="s" style="width:8%">현재고</th></tr></thead><tbody>
-      ${rows.map(r => `<tr${r.short ? ' class="low"' : ''}><td>${escapeHtml(r.zone || '—')}</td><td>${escapeHtml(r.name)} ${escapeHtml(r.spec)}${r.seq === 9999 ? ' <span style="color:#94a3b8">(진열순서 없음)</span>' : ''}${r.rp ? ` <b style="color:#B45309">🧵 수선품 ${r.rp}개 먼저</b>` : ''}</td><td class="n">${r.total}</td><td class="per">${r.per.join(' ')}</td><td class="ib">${recentMovesHtml(r.mv, stk && stk.today)}${r.mv && r.mv.length && r.inb && !r.inb.length ? '' : recentInboundHtml(r.inb)}</td><td class="s${r.short ? ' low' : ''}">${r.cur == null ? '—' : r.cur}${r.short ? `<span class="w">⚠ 부족 ${r.short}</span>` : ''}</td></tr>`).join('')}
+      ${rows.map(r => `<tr${r.short ? ' class="low"' : ''}><td>${escapeHtml(r.zone || '—')}</td><td>${escapeHtml(r.name)} ${escapeHtml(r.spec)}${r.seq === 9999 ? ' <span style="color:#94a3b8">(진열순서 없음)</span>' : ''}${r.rp ? ` <b style="color:#B45309">🧵 수선품 ${r.rp}개 먼저</b>` : ''}</td><td class="n">${r.total}</td><td class="per">${r.per.join(' ')}</td><td class="ib">${recentMovesHtml(r.mv, stk && stk.today)}${r.mv && r.mv.length && r.inb && !r.inb.length ? '' : recentInboundHtml(r.inb)}</td><td class="s${r.short ? ' low' : ''}">${r.cur == null ? '—' : r.cur}${r.short ? `<span class="w">⚠ 부족 ${r.short}</span>` : ''}${r.ms ? `<span class="ms" title="${escapeHtml(r.ms.last.company + ' ' + r.ms.last.time)}">⚠ 오늘 미스캔 −${r.ms.short}${r.ms.n > 1 ? ` (${r.ms.n}건)` : ''}</span>` : ''}</td></tr>`).join('')}
       </tbody></table>
       <div class="f">${title === '묶음 피킹지' ? '진열순서 탭 순서대로 정렬 · 합계만 보고 한 바퀴 피킹 → 분배 자리에서 QR을 다시 찍으면 피킹 완료 → 상품을 하나씩 찍으면 칸 번호를 불러줘요' : '진열순서 탭 순서대로 정렬 · 빠진 상품만 가져와서 분배 화면에서 하나씩 찍으면 돼요'}</div>
     </body></html>`;
@@ -9037,6 +9057,7 @@ const videoRec = (function(){
   }
   function save(force){
     if(!decided || resuming) return;
+    if(window.__coActive && window.__coActive()) return; // 11/25: 같이 검수 중에는 서버가 합친 수량을 갖고 있음
     try{
       if(!inProgress()){
         // 검수완료(기록 보냄)·전표 비움·다른 전표로 넘어감 → 저장분 지움
@@ -9260,5 +9281,344 @@ const videoRec = (function(){
   window.__appUpdate = { check, isIdle, state: () => ({ baseHash, updatePending }) }; // 확인용
 })();
 </script>
+<script>
+/* ===================== 11/25: 👥 같이 검수 (한 전표를 노트북 여러 대가 나눠 찍기) — 1단계 =====================
+   · 전표를 불러오면 서버에 "이 노트북이 검수 시작"을 알린다. 이미 다른 노트북이 검수 중이면 [같이 하기]를 묻는다.
+   · 같이 하는 동안 각 노트북은 "내가 찍은 누적 수량"을 1초마다 서버에 보내고, 다른 노트북 수량을 받아 화면에 합친다.
+     (화면의 수량 = 나 + 다른 노트북. 내 수량 = 화면 수량 − 다른 노트북 → 스캔·묶음·박스·±버튼 어떤 방식으로 찍어도 맞게 잡힘)
+   · 두 노트북이 동시에 마지막 것을 찍으면 서버가 늦은 쪽을 깎고 → 늦은 쪽에 "초과 — 빼주세요"
+   · 다 차면 서버가 한 노트북에만 완료를 허락 → 그 노트북이 다른 노트북의 봉투·박스·오피킹까지 합쳐 라벨·검수기록
+     (작업자 "정진재+이시안", 비고 "👥 같이 검수 정진재 68 / 이시안 52", 작업시간은 사람별로)
+   · 미스캔 제외·초기화는 시작한 노트북만. 연결이 5초 넘게 끊기면 스캔을 막는다. 분배·태블릿은 1단계에서 제외. */
+(function(){
+  const CO_ID = (function(){ try{ let v = sessionStorage.getItem('coInspId'); if(!v){ v = 'L' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); sessionStorage.setItem('coInspId', v); } return v; }catch(e){ return 'L' + Math.random().toString(36).slice(2, 10); } })();
+  let co = null;           // 지금 전표의 같이 검수 상태
+  let joinAsk = null;      // [같이 하기] 묻는 중 { key, view }
+  window.__co = () => co;  // 점검용
+
+  const $ = id => document.getElementById(id);
+  const ck = k => canonicalDocKeyJS(k || '');
+  const nowMs = () => Date.now();
+
+  // ----- 화면 -----
+  const st = document.createElement('style');
+  st.textContent = `
+  #coBar{ display:none; margin:0 0 14px; border:2px solid #6366F1; background:#EEF2FF; border-radius:14px; padding:8px 12px; }
+  #coBar .row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  #coBar .t{ font-weight:900; color:#3730A3; font-size:15px; }
+  #coBar .chip{ border-radius:999px; padding:2px 10px; font-size:13px; font-weight:800; color:#fff; background:#F59E0B; }
+  #coBar .chip.me{ background:#161D65; } #coBar .chip.off{ background:#94A3B8; }
+  #coBar .feed{ font-size:12.5px; color:#475569; margin-top:4px; line-height:1.5; }
+  #coBar button{ border:1px solid #6366F1; background:#fff; color:#3730A3; border-radius:8px; padding:4px 10px; font-weight:800; cursor:pointer; }
+  #coBar .off-warn{ display:none; margin-top:6px; background:#DC2626; color:#fff; border-radius:10px; padding:8px 12px; font-weight:900; font-size:16px; }
+  .co-mine{ display:block; font-size:11px; font-weight:800; color:#4F46E5; }
+  #coJoin{ display:none; position:fixed; inset:0; z-index:2600; background:rgba(15,23,42,.55); align-items:center; justify-content:center; }
+  #coJoin .box{ background:#fff; border-radius:18px; border:3px solid #6366F1; padding:22px 26px; width:min(520px, 92vw); text-align:center; box-shadow:0 20px 50px rgba(0,0,0,.35); }
+  #coJoin .b{ display:inline-block; border-radius:12px; padding:12px 20px; font-weight:900; font-size:17px; cursor:pointer; border:0; margin:6px; }
+  #coDone{ display:none; position:fixed; inset:0; z-index:2600; background:rgba(15,23,42,.55); align-items:center; justify-content:center; }
+  #coDone .box{ background:#fff; border-radius:18px; border:4px solid #16A34A; padding:24px 28px; width:min(520px, 92vw); text-align:center; }`;
+  document.head.appendChild(st);
+  const bar = document.createElement('div'); bar.id = 'coBar';
+  bar.innerHTML = `<div class="row"><span class="t">👥 같이 검수 중</span><span id="coChips" class="row"></span><span id="coSum" style="margin-left:auto;font-weight:900;color:#334155;"></span><button id="coLeave" title="이 노트북만 빠져요 (찍은 수량은 남아요)">나가기</button></div>
+    <div class="feed" id="coFeed"></div><div class="off-warn" id="coOff">📡 연결 끊김 — 같이 검수 멈춤 (스캔이 막혀요). 다시 연결되면 이어서 돼요</div>`;
+  { const oi = $('orderInfo'); if(oi && oi.parentNode) oi.parentNode.insertBefore(bar, oi.nextSibling); else { const sb = $('statusBanner'); if(sb && sb.parentNode) sb.parentNode.insertBefore(bar, sb); } } // 전표 정보 바로 아래 (화면 위쪽)
+  const jm = document.createElement('div'); jm.id = 'coJoin';
+  jm.innerHTML = `<div class="box"><div style="font-size:40px">👥</div><div style="font-size:20px;font-weight:900;margin:6px 0" id="coJoinTitle"></div>
+    <div style="font-size:14px;color:#475569;margin-bottom:12px" id="coJoinSub"></div>
+    <button class="b" id="coJoinYes" style="background:#4F46E5;color:#fff">👥 같이 하기</button><button class="b" id="coJoinNo" style="background:#F1F5F9;border:1px solid #CBD5E1">취소</button>
+    <div style="font-size:12.5px;color:#64748B;margin-top:8px">같이 하면 두 노트북 수량이 합쳐져요 · 각자 다른 품목·구역을 찍으세요<br>같이 하기 후 <b>내 이름 QR</b>을 찍어주세요</div></div>`;
+  document.body.appendChild(jm);
+  const dm = document.createElement('div'); dm.id = 'coDone';
+  dm.innerHTML = `<div class="box"><div style="font-size:42px" id="coDoneIcon">✅</div><div style="font-size:21px;font-weight:900;margin:6px 0" id="coDoneTitle"></div><div style="font-size:14px;color:#334155" id="coDoneSub"></div>
+    <button class="b" id="coDoneOk" style="margin-top:14px;background:#16A34A;color:#fff;border:0;border-radius:12px;padding:10px 22px;font-weight:900;font-size:16px;cursor:pointer">확인</button></div>`;
+  document.body.appendChild(dm);
+  $('coDoneOk').onclick = () => { dm.style.display = 'none'; try{ focusInput(); }catch(e){} };
+
+  function others(code){ return co && co.others ? (Number(co.others[String(code).toUpperCase()]) || 0) : 0; }
+  function mineMap(){ const m = {}; items.forEach(it => { m[it.code.toUpperCase()] = Math.max(0, it.scannedQty - others(it.code)); }); return m; }
+  function mineTotal(){ const m = mineMap(); return Object.keys(m).reduce((a, k) => a + m[k], 0); }
+  function withPeers(){ return !!(co && co.members && co.members.filter(m => !m.left).length >= 2); }
+  function hadPeers(){ return !!(co && co.members && co.members.length >= 2); } // 한 번이라도 같이 한 사람이 있었음 (나갔어도 그 수량은 합쳐야 함)
+  function renderBar(){
+    if(!co || !hadPeers()){ bar.style.display = 'none'; return; }
+    bar.style.display = 'block';
+    $('coChips').innerHTML = co.members.map(m => `<span class="chip${m.id === CO_ID ? ' me' : ''}${(!m.alive || m.left) ? ' off' : ''}">${m.host ? '★ ' : ''}${escapeHtml(m.worker || '이름 대기')}${m.id === CO_ID ? '(나)' : ''} ${m.id === CO_ID ? mineTotal() : m.total}개${m.left ? ' · 나감' : (!m.alive ? ' · 끊김' : '')}</span>`).join('');
+    const need = items.reduce((a, it) => a + it.orderQty, 0), have = items.reduce((a, it) => a + Math.min(it.scannedQty, it.orderQty), 0);
+    $('coSum').textContent = `${have} / ${need}개`;
+    $('coFeed').innerHTML = (co.feed || []).slice(-3).reverse().map(f => {
+      const ago = Math.max(0, Math.round((nowMs() - (co.serverSkew || 0) - f.t) / 1000));
+      return f.j ? `➕ ${escapeHtml(f.w)}님이 같이 하기로 들어왔어요` : f.l ? `➖ ${escapeHtml(f.w)}님이 나갔어요` : `• ${escapeHtml(f.w || '')} · ${escapeHtml(f.c)} +${f.q} (${ago}초 전)`;
+    }).join('<br>');
+    $('coLeave').style.display = co.role === 'host' ? 'none' : '';
+    $('coOff').style.display = co.offline ? 'block' : 'none';
+  }
+  // 품목 줄에 "나 n" 표시
+  const origRowHtml = rowHtml;
+  rowHtml = function(it){
+    let h = origRowHtml(it);
+    if(co && withPeers()){
+      const mine = Math.max(0, it.scannedQty - others(it.code));
+      h = h.replace(/(<td class="qty-cell"[^>]*>)([^<]*)(<\/td>\s*<td style="text-align:center;">)/, `$1$2<span class="co-mine">나 ${mine}</span>$3`);
+    }
+    return h;
+  };
+
+  async function post(body, ms){
+    const res = await fetchWithTimeout(gasWebhookUrl, { method: 'POST', body: JSON.stringify(Object.assign({ type: 'coInsp', id: CO_ID }, body)) }, ms || 8000);
+    return res.json();
+  }
+
+  // ----- 전표를 불러왔을 때 -----
+  window.coOnDocLoaded = function(){
+    if(window.__sortMode || (typeof sortReplaying !== 'undefined' && sortReplaying)) return;
+    stopCo();
+    const key = currentDocumentKey; if(!key || !gasWebhookUrl) return;
+    const myItems = items.map(it => ({ c: it.code, q: it.orderQty }));
+    co = { key, role: 'host', members: [], others: {}, feed: [], status: 'active', lastOk: nowMs(), sentMine: '', sentSeqLen: -1, sentBoxLen: -1, feedIdx: scanLogBuffer.length, joinedAt: nowMs(), starting: true };
+    post({ op: 'start', documentKey: key, worker: currentWorker, items: myItems }).then(v => {
+      if(!co || ck(co.key) !== ck(key) || ck(currentDocumentKey) !== ck(key)) return;
+      co.starting = false;
+      if(v && v.exists){ askJoin(key, v); return; }
+      if(v && v.ok) applyView(v);
+      schedule();
+    }).catch(() => { if(co && ck(co.key) === ck(key)){ co.starting = false; schedule(); } });
+  };
+  function askJoin(key, v){
+    joinAsk = { key, v };
+    const anyScanned = items.some(it => it.scannedQty > 0);
+    $('coJoinTitle').innerHTML = `이 전표는 지금<br><span style="color:#B45309">${escapeHtml(v.hostWorker || '다른 노트북')}</span>님이 검수 중이에요`;
+    $('coJoinSub').innerHTML = `${escapeHtml(document.getElementById('companyNameInput').value || '')} · ${v.need || ''}개 중 <b>${v.total || 0}개</b> 찍음` + (anyScanned ? '<br><b style="color:#DC2626">이 노트북에서 찍은 수량은 같이 하기 하면 0부터 다시 시작해요</b>' : '');
+    jm.style.display = 'flex';
+    try{ playErrSound(); speakKorean('다른 노트북에서 검수 중이에요'); }catch(e){}
+  }
+  $('coJoinYes').onclick = async () => {
+    const a = joinAsk; if(!a) return;
+    $('coJoinYes').disabled = true;
+    try{
+      const v = await post({ op: 'join', documentKey: a.key, worker: '' });
+      if(!v || !v.ok){ alert(v && v.closed ? '그 사이 검수가 끝났어요' : '같이 하기에 실패했어요 — 다시 찍어주세요'); clearDoc(); return; }
+      // 시작한 노트북의 품목·주문수량을 그대로 씀
+      const order = {}; (v.items || []).forEach(x => order[String(x.c).toUpperCase()] = Number(x.q) || 0);
+      items.forEach(it => { const q = order[it.code.toUpperCase()]; if(q != null) it.orderQty = q; it.scannedQty = 0; it.overShown = 0; });
+      scanSequence = []; boxScanEvents = []; okCount = 0; errCount = 0; errorSkuDetails = []; errLogEntries = [];
+      try{ resetLiveBagState(); resetScanLogBuffer(); }catch(e){}
+      co.role = 'member'; co.joinedAt = nowMs(); co.feedIdx = scanLogBuffer.length; co.status = 'active';
+      currentWorker = ''; // 같이 하는 사람은 자기 이름 QR을 따로 찍는다 (전표에 기억된 이름은 시작한 사람 것)
+      inspectionStartTime = new Date();
+      applyView(v);
+      try{ showWorkerReminderBanner(); }catch(e){}
+      showBanner('ok', '👥 같이 하기 시작', a.key, `${v.hostWorker || ''}님과 같이 검수해요 — 내 이름 QR을 찍고 시작하세요`, '👥');
+      try{ speakKorean('같이 하기. 이름을 찍어주세요'); }catch(e){}
+      schedule(true);
+    }catch(e){ alert('같이 하기 실패 — 인터넷 연결을 확인하고 다시 찍어주세요'); clearDoc(); }
+    finally{ $('coJoinYes').disabled = false; joinAsk = null; jm.style.display = 'none'; try{ focusInput(); }catch(e){} }
+  };
+  $('coJoinNo').onclick = () => { joinAsk = null; jm.style.display = 'none'; clearDoc(); showBanner('idle', '불러오지 않았어요', '', '다른 노트북에서 검수 중인 전표예요', '✋'); try{ focusInput(); }catch(e){} };
+
+  function clearDoc(){
+    stopCo();
+    try{ loadItems([]); }catch(e){ items = []; }
+    currentDocumentKey = ''; currentWorker = '';
+    try{ document.getElementById('companyNameInput').value = ''; document.getElementById('workerBlockOverlay').style.display = 'none'; hideWorkerReminderBanner(); }catch(e){}
+    try{ renderTable(); updateProgress(); }catch(e){}
+  }
+  function stopCo(){ if(co){ clearTimeout(co.timer); co.stopped = true; } co = null; renderBar(); }
+
+  // ----- 주고받기 -----
+  function schedule(now){
+    if(!co || co.stopped) return;
+    clearTimeout(co.timer);
+    const fast = withPeers() || co.claiming;
+    co.timer = setTimeout(sync, now ? 50 : (fast ? 1000 : 5000)); // 혼자면 5초마다(살아있음만), 같이면 1초마다
+  }
+  function packSeq(){ return scanSequence.map(s => s.bagClose ? { bagClose: true } : { code: s.code, qty: s.qty }); }
+  async function sync(extra){
+    if(!co || co.stopped || co.busy) { schedule(); return null; }
+    if(ck(currentDocumentKey) !== ck(co.key)){ stopCo(); return null; }
+    co.busy = true;
+    const mine = mineMap(), mineSig = JSON.stringify(mine);
+    const body = { op: 'sync', documentKey: co.key, worker: currentWorker, mine, ms: nowMs() - (co.role === 'host' && inspectionStartTime ? new Date(inspectionStartTime).getTime() : co.joinedAt) };
+    if(scanSequence.length !== co.sentSeqLen) body.seq = packSeq();
+    if(boxScanEvents.length !== co.sentBoxLen) body.box = boxScanEvents.map(b => ({ code: b.code, name: b.name, spec: b.spec, qty: b.qty, items: b.items || null }));
+    body.err = { n: errCount, d: errorSkuDetails.slice(-50) };
+    const fresh = scanLogBuffer.slice(co.feedIdx).filter(e => e.ok && !e.skip).map(e => ({ c: e.code, q: e.qty || 1 }));
+    if(fresh.length && withPeers()) body.feed = fresh;
+    Object.assign(body, extra || {});
+    const seqLen = scanSequence.length, boxLen = boxScanEvents.length, feedTo = scanLogBuffer.length;
+    let v = null;
+    try{ v = await post(body, 8000); }catch(e){ v = null; }
+    if(!co || co.stopped){ return v; }
+    co.busy = false;
+    if(v && (v.ok || v.notMember || v.gone)){
+      co.lastOk = nowMs(); if(co.offline){ co.offline = false; showBanner('ok', '📡 다시 연결됐어요', co.key, '같이 검수 이어서 해요', '👥'); }
+      if(v.gone || v.notMember){ stopCo(); return v; }
+      if(body.seq) co.sentSeqLen = seqLen; if(body.box) co.sentBoxLen = boxLen; co.feedIdx = feedTo; co.sentMine = mineSig;
+      applyView(v, mine);
+    } else if(nowMs() - co.lastOk > 5000 && withPeers()){
+      co.offline = true; renderBar();
+    }
+    schedule();
+    return v;
+  }
+  function applyView(v, sentMine){
+    if(!co) return;
+    const wasPeers = withPeers();
+    const before = mineMap();
+    const prevIds = (co.members || []).map(m => m.id);
+    co.members = v.members || co.members;
+    if(prevIds.length && co.role === 'host'){
+      (co.members || []).filter(m => prevIds.indexOf(m.id) < 0 && m.id !== CO_ID).forEach(m => {
+        showBanner('ok', '👥 같이 하기로 들어왔어요', co.key, `다른 노트북${m.worker ? ' (' + m.worker + ')' : ''}이 같이 찍어요 — 품목·구역을 나눠서 찍으세요`, '👥');
+        try{ playOkSound(); speakKorean('같이 검수 시작'); }catch(e){}
+      });
+    } co.feed = v.feed || co.feed; co.status = v.status || co.status;
+    co.role = v.role || co.role;
+    if(v.tookOver){ showBanner('warn', '★ 이 노트북이 이어받았어요', co.key, `${v.hostWorker ? '' : ''}시작한 노트북 연결이 끊겨서 이제 이 노트북에서 마무리할 수 있어요`, '👥'); }
+    // 다른 노트북 수량 반영: 화면 수량 = 내 수량 + 다른 노트북
+    co.others = {}; Object.keys(v.others || {}).forEach(k => co.others[String(k).toUpperCase()] = Number(v.others[k]) || 0);
+    let changed = false;
+    items.forEach(it => {
+      const c = it.code.toUpperCase();
+      let mine = before[c] || 0;
+      // 서버가 깎은 경우(다른 노트북이 먼저 채움) → 초과분 빼달라고
+      if(v.capped && v.capped[c] != null && sentMine && Number(v.capped[c]) < (sentMine[c] || 0)){
+        const allowed = Number(v.capped[c]), over = (sentMine[c] || 0) - allowed;
+        mine = Math.max(0, mine - over);
+        trimSeq(it.code, over);
+        errCount += over; errorSkuDetails.push({ code: it.code, qty: over, type: '초과스캔(같이 검수 동시)' });
+        const who = (co.members.find(m => m.id !== CO_ID && !m.left) || {}).worker || '다른 노트북';
+        setTimeout(() => {
+          showMispickOverlay('초과 — 빼주세요', it.code, `${it.name} / ${it.spec} — ${who}님이 먼저 마지막 것을 찍었어요. 방금 찍은 ${over}개를 빼주세요`, it, over);
+          try{ playErrSound(); speakKorean(`${over}개 과송. 빼주세요`); }catch(e){}
+        }, 0);
+      }
+      const nq = mine + (co.others[c] || 0);
+      if(nq !== it.scannedQty){ it.scannedQty = nq; changed = true; }
+    });
+    if(changed || wasPeers !== withPeers()){ try{ renderTable(); updateProgress(); updateMiniStats(); }catch(e){} }
+    renderBar();
+    // 다른 노트북이 완료 / 취소
+    if(co.status === 'done' && v.doneBy && v.doneBy !== CO_ID && !co.claimed){ doneByOther(v); return; }
+    if(co.status === 'ended' && !co.ending){ endedByOther(v); return; }
+    if(changed) setTimeout(() => { try{ checkAllComplete(); }catch(e){} }, 0);
+  }
+  function trimSeq(code, n){
+    for(let i = scanSequence.length - 1; i >= 0 && n > 0; i--){
+      const s = scanSequence[i]; if(s.bagClose || String(s.code).toUpperCase() !== String(code).toUpperCase()) continue;
+      const take = Math.min(n, s.qty); s.qty -= take; n -= take; if(s.qty <= 0) scanSequence.splice(i, 1);
+    }
+  }
+  function doneByOther(v){
+    const key = co.key;
+    try{ markDocProcessedLocally(key, v.doneWorker || ''); }catch(e){}
+    try{ if(typeof videoRec !== 'undefined' && videoRec.onComplete){ items.forEach(it => { it.scannedQty = Math.max(it.scannedQty, it.orderQty); }); videoRec.onComplete(); } }catch(e){}
+    stopCo();
+    $('coDoneIcon').textContent = '✅';
+    $('coDoneTitle').textContent = `${v.doneWorker || '다른'} 노트북에서 검수완료 기록됨`;
+    $('coDoneSub').innerHTML = `${escapeHtml(key)} · ${v.partial ? '미스캔 제외로 마무리 · ' : ''}라벨도 그 노트북에서 나와요<br>다음 전표를 찍어주세요`;
+    dm.style.display = 'flex';
+    try{ playCompleteSound(); speakKorean('같이 검수 완료'); }catch(e){}
+    setTimeout(() => { try{ loadItems([]); currentDocumentKey = ''; document.getElementById('companyNameInput').value = ''; renderTable(); updateProgress(); }catch(e){} }, 300);
+  }
+  function endedByOther(v){
+    const key = co.key;
+    try{ if(typeof videoRec !== 'undefined' && videoRec.stop) videoRec.stop('같이 검수 취소'); }catch(e){}
+    stopCo();
+    $('coDoneIcon').textContent = '↺';
+    $('coDoneTitle').textContent = `${v.endedWorker || '시작한'} 노트북에서 검수를 초기화했어요`;
+    $('coDoneSub').innerHTML = `${escapeHtml(key)} · 같이 검수가 끝났어요. 다시 하려면 전표를 다시 찍어주세요`;
+    dm.style.display = 'flex';
+    try{ playErrSound(); }catch(e){}
+    clearDoc();
+  }
+
+  // ----- 완료: 서버가 한 노트북에만 허락 -----
+  const origCheckAll = checkAllComplete;
+  checkAllComplete = function(){
+    if(!co || co.stopped || co.claimed || !items.length || ck(currentDocumentKey) !== ck(co.key)) return origCheckAll.apply(this, arguments);
+    const allDone = items.every(it => it.scannedQty >= it.orderQty);
+    if(!allDone) return origCheckAll.apply(this, arguments);
+    const partial = !!partialCompleteInfo;
+    if(!hadPeers()){
+      // 혼자 검수: 기다리지 않고 바로 완료, 서버에는 끝났다고만 알림
+      co.claimed = true; const k = co.key;
+      post({ op: 'sync', documentKey: k, worker: currentWorker, mine: mineMap(), claim: true, partial }).catch(() => {});
+      stopCo();
+      return origCheckAll.apply(this, arguments);
+    }
+    if(co.claiming) return;
+    co.claiming = true;
+    showBanner('idle', '👥 완료 확인 중…', co.key, '다른 노트북과 수량을 맞춰보는 중이에요', '⏳');
+    (async () => {
+      let v = null;
+      for(let i = 0; i < 4 && !v; i++){ v = await sync({ claim: true, partial }); if(!v || !v.ok) { v = null; await new Promise(r => setTimeout(r, 800)); } }
+      if(!co) return; // 그 사이 다른 노트북이 완료(doneByOther)
+      co.claiming = false;
+      if(!v){ showBanner('err', '📡 연결이 안 돼서 완료를 못 했어요', co.key, '연결되면 자동으로 다시 시도해요', '⚠️'); schedule(); return; }
+      if(!v.granted){ if(v.status === 'done') doneByOther(v); else { showBanner('warn', '아직 덜 찼어요', co.key, '다른 노트북 수량을 맞추는 중 — 계속 찍어주세요', '👥'); } return; }
+      // 허락 받음 → 다른 노트북의 봉투·박스·오피킹을 합쳐서 내 노트북에서 라벨·기록
+      co.claimed = true;
+      const parts = v.parts || [];
+      parts.forEach(p => {
+        (p.seq || []).forEach(s => scanSequence.push(s.bagClose ? { bagClose: true } : { code: s.code, qty: Number(s.qty) || 0 }));
+        (p.box || []).forEach(b => boxScanEvents.push(b));
+        if(p.err){ errCount += Number(p.err.n) || 0; (p.err.d || []).forEach(d => errorSkuDetails.push(d)); }
+      });
+      const me = { worker: currentWorker || '미지정', qty: mineTotal(), sku: Object.keys(mineMap()).filter(k => mineMap()[k] > 0).length,
+        ms: nowMs() - (co.role === 'host' && inspectionStartTime ? new Date(inspectionStartTime).getTime() : co.joinedAt) };
+      const ws = [me].concat(parts.filter(p => Object.keys(p.mine || {}).some(k => p.mine[k] > 0)).map(p => ({ worker: p.worker || '미지정', qty: Object.keys(p.mine || {}).reduce((a, k) => a + (Number(p.mine[k]) || 0), 0), sku: Object.keys(p.mine || {}).filter(k => p.mine[k] > 0).length, ms: Number(p.ms) || 0 })));
+      window.__coRecord = { key: co.key, workers: ws };
+      try{ addScreenOnlyLog('👥 같이 검수', ws.map(w => `${w.worker} ${w.qty}개`).join(' / ') + ' — 이 노트북에서 라벨·검수기록', '👥'); }catch(e){}
+      const k = co.key; stopCo();
+      origCheckAll();
+    })();
+  };
+
+  // ----- 스캔 막기: 같이 하기 묻는 중 / 연결 끊김 / 완료 확인 중 -----
+  const origProcessScan = processScan;
+  processScan = function(raw){
+    if(joinAsk){ showBanner('warn', '먼저 [같이 하기] 또는 [취소]를 눌러주세요', raw, '', '👥'); try{ playErrSound(); }catch(e){} return; }
+    if(co && co.offline && withPeers()){ showBanner('err', '📡 연결 끊김 — 같이 검수 멈춤', raw, '연결되면 다시 찍어주세요 (방금 찍은 건 반영 안 됨)', '⚠️'); try{ playErrSound(); }catch(e){} return; }
+    if(co && co.claiming){ showBanner('warn', '👥 완료 확인 중이에요', raw, '잠깐만 기다려주세요', '⏳'); return; }
+    const r = origProcessScan.apply(this, arguments);
+    if(co && withPeers()) schedule(true); // 찍자마자 바로 보냄
+    else if(co) soonSolo();
+    return r;
+  };
+  // 혼자 검수 중에도 찍은 수량·이름은 조금 뒤 서버에 알려둠 (다른 노트북이 [같이 하기]를 물을 때 보여주려고)
+  function soonSolo(){ if(!co || co.stopped || co.soon) return; co.soon = setTimeout(() => { if(co){ co.soon = null; schedule(true); } }, 1500); }
+  const origHandleScanRaw = handleScanRaw;
+  handleScanRaw = function(raw){ const r = origHandleScanRaw.apply(this, arguments); try{ if(co && /^WK/i.test(String(raw || '').trim())) (withPeers() ? schedule(true) : soonSolo()); }catch(e){} return r; };
+
+  // ----- 미스캔 제외·초기화는 시작한 노트북만 -----
+  function guard(btnId, what, onHost){
+    const b = $(btnId); if(!b) return;
+    b.addEventListener('click', e => {
+      if(!co || !withPeers()) return;
+      if(co.role !== 'host'){ e.stopImmediatePropagation(); e.preventDefault(); alert(`👥 같이 검수 중에는 ${what}을(를) 시작한 노트북(★)에서만 할 수 있어요`); return; }
+      if(onHost && onHost(e) === false){ e.stopImmediatePropagation(); e.preventDefault(); }
+    }, true);
+  }
+  guard('partialCompleteBtn', '미스캔 제외 강제완료');
+  guard('resetBtn', '검수 초기화', () => {
+    if(!confirm('👥 같이 검수 중이에요. 초기화하면 같이 검수가 끝나고 다른 노트북도 전표가 닫혀요. 계속할까요?')) return false;
+    const k = co.key; co.ending = true; post({ op: 'sync', documentKey: k, worker: currentWorker, end: true }).catch(() => {}); stopCo();
+    return true;
+  });
+  $('coLeave').onclick = () => {
+    if(!co) return;
+    if(!confirm('이 노트북만 같이 검수에서 빠질까요? (지금까지 찍은 수량은 그대로 남아요)')) return;
+    const k = co.key;
+    // 남은 내 수량을 마지막으로 보내고 나감
+    post({ op: 'sync', documentKey: k, worker: currentWorker, mine: mineMap(), seq: packSeq(), box: boxScanEvents, err: { n: errCount, d: errorSkuDetails }, leave: true }).catch(() => {});
+    try{ if(typeof videoRec !== 'undefined' && videoRec.stop) videoRec.stop('같이 검수 나가기'); }catch(e){}
+    clearDoc();
+    showBanner('idle', '같이 검수에서 나왔어요', k, '찍은 수량은 남아 있어요 — 다음 전표를 찍어주세요', '👥');
+  };
+  // 같이 하는 중에는 이 노트북 임시저장(화면 꺼짐 복구)을 쓰지 않음 — 서버가 합친 수량을 갖고 있음
+  window.__coActive = () => !!(co && withPeers());
+})();
+</script>
+
 </body>
 </html>
