@@ -257,20 +257,81 @@ const snapReady = snapGet().then(sn => {
   else if(initialCode){ const c0 = initialCode; initialCode = ''; lookup(c0); }
 });
 
-async function loadStock(force){
-  if(!fromSnap) $('metaText').textContent = stock ? $('metaText').textContent : '불러오는 중...';
+/* 11/26-2: "한 번 받아두기" — 마감재고(품목·규격·마감수량·지난 입고)는 하루 한 번만 받아서 이 기기에 저장해 두고,
+   그 뒤로는 오늘 바뀐 것(이동·입고·판매/피킹/검수)만 받아서 합친다. 저장본은 1개만 덮어써서 쌓이지 않음. */
+async function baseGet(){
+  try{ const db = await snapDb(); return await new Promise(res => { const q = db.transaction(SNAP_STORE).objectStore(SNAP_STORE).get('base'); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); }); }
+  catch(e){ return null; }
+}
+async function basePut(v){ try{ const db = await snapDb(); db.transaction(SNAP_STORE, 'readwrite').objectStore(SNAP_STORE).put(v, 'base'); }catch(e){} }
+let baseMem = null;
+const baseReady = baseGet().then(b => { if(b && b.items) baseMem = b; });
+async function getJsonT(params, ms){
+  const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const t = ac ? setTimeout(() => ac.abort(), ms) : null;
+  try{ const res = await fetch(gasUrl + '?' + params, ac ? { signal: ac.signal } : {}); return await res.json(); }
+  catch(e){ if(e && e.name === 'AbortError') throw new Error('서버 응답이 너무 늦어요 (' + Math.round(ms / 1000) + '초)'); throw e; }
+  finally{ if(t) clearTimeout(t); }
+}
+function mergeStock(base, d){
+  const items = {};
+  const codes = new Set(Object.keys(base || {}).concat(Object.keys(d || {})));
+  codes.forEach(code => {
+    const b = (base && base[code]) || {}, x = (d && d[code]) || {};
+    const it = { n: b.n || x.n || '', s: b.n ? b.s : (x.s || b.s || ''), b: b.b || 0, r: x.r || 0, i: x.i || 0, k: x.k || 0 };
+    if(b.inh) it.inh = b.inh;
+    if(x.inb) it.inb = x.inb;
+    if(x.mv) it.mv = x.mv;
+    if(x.st) it.st = x.st;
+    it.e = it.b + it.r + it.i - it.k;
+    if(!it.b && !it.r && !it.i && !it.k && !it.st){ items[code] = it.inh ? { n: it.n, s: it.s, inh: it.inh } : { n: it.n, s: it.s }; return; }
+    ['r', 'i', 'k'].forEach(f => { if(!it[f]) delete it[f]; });
+    items[code] = it;
+  });
+  return items;
+}
+let stockBusy = null, loadErrShown = false;
+function loadStock(force){
+  if(stockBusy){ if(!force) return stockBusy; return stockBusy.then(() => loadStock(true)); }
+  stockBusy = loadStockRun(force).finally(() => { stockBusy = null; });
+  return stockBusy;
+}
+async function loadStockRun(force){
+  if(!fromSnap && !stock) $('metaText').textContent = '불러오는 중...';
   try{
-    const data = await getJson('action=getStockStatus' + (force ? '&force=1' : ''));
-    if(!data.ok) throw new Error(data.error || '알 수 없는 오류');
+    await baseReady;
+    let data = null;
+    const have = baseMem && baseMem.ver ? baseMem.ver : '';
+    if(!have && !stock && !fromSnap) $('metaText').innerHTML = '오늘 처음이라 마감재고를 받는 중…<br><span style="color:#64748B">하루 한 번만 받아요</span>';
+    let r = null;
+    try{ r = await getJsonT('action=getStockDelta&have=' + encodeURIComponent(have) + (force ? '&force=1' : ''), have ? 45000 : 90000); }
+    catch(e){ r = { netErr: e }; }
+    if(r && r.ok && r.d){
+      let base = baseMem;
+      if(r.base){ base = { ver: r.ver, baseDate: r.baseDate, items: r.base }; baseMem = base; basePut(base); }
+      if(!base || base.ver !== r.ver) throw new Error('마감재고 버전이 안 맞아요 — 새로고침을 눌러주세요');
+      data = { ok: true, mode: 'manual', baseDate: r.baseDate, baseCount: r.baseCount, today: r.today, updatedAt: r.updatedAt, items: mergeStock(base.items, r.d) };
+    } else if(r && r.netErr){
+      throw r.netErr;
+    } else if(r && r.ok === false && /재고현황/.test(String(r.error || ''))){
+      throw new Error(r.error);
+    } else {
+      // 서버가 아직 예전 버전이거나 새 방식이 실패하면 예전 방식(통째로)으로
+      const old = await getJsonT('action=getStockStatus' + (force ? '&force=1' : ''), 90000);
+      if(!old.ok) throw new Error(old.error || (r && r.netErr ? r.netErr.message : '알 수 없는 오류'));
+      data = old;
+    }
     await snapReady; // 저장본이 늦게 읽혀서 새 재고를 덮어쓰지 않게
     stock = data; fromSnap = false;
     $('metaText').innerHTML = `${esc(md(data.baseDate))} 마감 기준<br>조회 ${esc(String(data.updatedAt || '').slice(0, 5))}`;
+    if(loadErrShown){ setStatus('findStatus', '', ''); loadErrShown = false; }
     if(lastCode) showItem(lastCode, true);
     else if(initialCode){ const c0 = initialCode; initialCode = ''; lookup(c0); }
     snapPut({ day: businessToday(), at: Date.now(), data });
   }catch(err){
-    if(fromSnap && stock){ setStatus('findStatus', 'err', '새 재고를 못 받아서 저장본으로 보여주는 중이에요: ' + err.message); }
-    else { $('metaText').textContent = '불러오기 실패'; setStatus('findStatus', 'err', '재고 정보를 불러오지 못했어요: ' + err.message); }
+    loadErrShown = true;
+    if(stock){ setStatus('findStatus', 'err', '새 재고를 못 받아서 ' + (fromSnap ? '저장본' : '마지막으로 받은 재고') + '로 보여주는 중이에요: ' + err.message); }
+    else { $('metaText').textContent = '불러오기 실패'; setStatus('findStatus', 'err', '재고 정보를 불러오지 못했어요: ' + err.message + ' — 오른쪽 위 새로고침을 눌러주세요'); }
   }
 }
 loadStock(false);
