@@ -1262,8 +1262,8 @@ async function refreshSortLocks(){
   if(!gasWebhookUrl) return;
   try{ const r = await fetch(gasWebhookUrl + '?action=getSortLocks'); const d = await r.json(); if(d && d.ok && d.map) sortLockMap = d.map; }catch(e){}
 }
-setTimeout(refreshSortLocks, 6000);
-setInterval(refreshSortLocks, 60000);
+setTimeout(refreshSortLocks, 1500);
+setInterval(refreshSortLocks, 20000); // 11/26: 20초마다 (방금 만든 분배 묶음 전표를 검수 화면에서 찍으면 분배 화면으로 넘기려고)
 function salesQtyFromCache(raw){
   try{
     const d = findInSalesCache(raw);
@@ -2115,6 +2115,12 @@ function handleScanRaw(raw){
   {
     raw = String(raw || '').trim();
     if(!raw) return;
+    // 11/26: 묶음 QR(SB|묶음번호)을 찍으면 분배 화면으로 넘어가서 그 묶음을 바로 연다
+    if(!window.__sortMode){
+      let r2 = raw; try{ if(containsHangul(r2)) r2 = hangulToEnglish(r2); }catch(e){}
+      const sbm = r2.match(/^SB\|(.+)$/i);
+      if(sbm){ goSortScreen(sbm[1].trim().toUpperCase(), '묶음 QR을 찍었어요'); return; }
+    }
 
     // 작업자 QR("WK:숫자")은 스캐너가 한글을 직접 보내면 깨지는 문제가 있어서, 숫자 코드로만 받고
     // 실제 이름은 여기(WORKER_CODE_MAP)에서 찾아온다.
@@ -3911,6 +3917,15 @@ async function processDocumentLookup(raw){
   }
   // 이미 검수완료된 전표면 불러오지 않는다 (지금 하던 작업도 그대로 유지됨)
   const scannedDocKey = docKeyFromScan(raw);
+  if(scannedDocKey && !sortReplaying && !window.__sortMode && sortLockMap[scannedDocKey]){
+    await refreshSortLocks(); // 그 사이 끝난 묶음일 수 있으니 한 번 더 확인
+  }
+  if(scannedDocKey && !sortReplaying && !window.__sortMode && sortLockMap[scannedDocKey]){ // 11/26: 묶음 전표 → 분배 화면으로
+    const lk = sortLockMap[scannedDocKey];
+    try{ addScreenOnlyLog(raw, `분배 묶음 ${lk.id} ${lk.slot}번 칸 전표 → 분배 화면으로`, '📦'); }catch(e){}
+    goSortScreen(lk.id, `분배 묶음 ${lk.id}에 들어간 전표예요`);
+    return;
+  }
   if(scannedDocKey && !sortReplaying && sortLockMap[scannedDocKey]){
     const lk = sortLockMap[scannedDocKey];
     showBanner('err', '분배 중인 전표예요', raw, `${lk.id} 묶음 ${lk.slot}번 칸 · ${lk.worker} — 분배 화면에서 처리돼요`, '📦');
@@ -5352,6 +5367,17 @@ function printReprintLabels(companyName, zoneValue, totalBags, spTag, documentKe
   setTimeout(()=>{ waitForImagesThenPrint(container, 3000); }, 100);
 }
 
+// 11/26: 검수 화면 → 분배 화면 (묶음 QR·묶음에 들어간 전표를 찍었을 때). 검수 중이면 먼저 물어봄
+function goSortScreen(batchId, why){
+  if(isInspectionInProgress() && !confirm(`${why || '묶음 QR을 찍었어요'} → 분배 화면으로 넘어가요.\n\n검수 중인 전표가 있어요. 찍은 내용은 저장돼 있어서, 검수 화면으로 돌아오면 [이어서 검수]로 이어갈 수 있어요.\n넘어갈까요?`)){
+    showBanner('ok', '이어서 검수', currentDocumentKey, '분배 화면으로 넘어가지 않았어요 — 지금 전표를 계속 찍어주세요', '✋');
+    focusInput(); return;
+  }
+  showBanner('idle', '분배 화면으로 넘어가는 중…', batchId || '', '잠깐만요', '📦');
+  try{ speakKorean('분배 화면으로'); }catch(e){}
+  window.__skipLeaveWarn = true;
+  location.href = location.pathname + '?mode=sort' + (batchId ? '&sb=' + encodeURIComponent(batchId) : '');
+}
 document.getElementById('goSortBtn').addEventListener('click', ()=>{ // 11/15 분배 화면으로
   if(isInspectionInProgress() && !confirm('검수 중인 전표가 있어요. 찍은 내용은 저장돼 있어서, 검수 화면으로 돌아오면 [이어서 검수]로 이어갈 수 있어요.\n분배 화면으로 넘어갈까요?')) return;
   window.__skipLeaveWarn = true; location.href = location.pathname + '?mode=sort';
@@ -6719,6 +6745,7 @@ const videoRec = (function(){
 #sortApp .ab table{ margin-top:8px; } #sortApp .ab td.okc{ color:#16A34A; font-weight:900; } #sortApp .ab td.warnc{ color:#B45309; font-weight:900; } #sortApp .ab td.badc{ color:#DC2626; font-weight:900; }
 @media (max-width:900px){ #sortApp .cells{ grid-template-columns:repeat(3,1fr); } }
 #sortApp .camTool.on{ background:#161D65; color:#fff; }
+#sortApp .s-scan.s-scan-hide{ position:absolute !important; left:-9999px !important; width:10px !important; height:10px !important; opacity:0 !important; }
 </style>
 <div id="sortApp">
   <div id="sortDone"><div><div class="big">✅ 검수완료</div><div class="sub" id="sortDoneSub"></div><div class="list" id="sortDoneList"></div><button id="sortDoneNext">다음 묶음 고르기 ▶</button><div style="font-size:13px; margin-top:10px; opacity:.85;">화면을 누르면 닫혀요</div></div></div>
@@ -6734,6 +6761,7 @@ const videoRec = (function(){
     <button class="s-tab" id="sortCamBtn" title="선반을 비추는 카메라로 어느 칸에 넣었는지 확인해요 — 켜면 전표 QR 안 찍어도 되고, 다른 칸에 넣으면 경고"><span id="sortCamBtnTxt">📷 카메라 확인 OFF</span> <span id="sortCamDot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#94a3b8;margin-left:3px;"></span></button>
     <button class="s-tab" id="sortPrintBtn" title="칸이 끝날 때마다 라벨을 이 컴퓨터 프린터로 바로 출력 (끄면 인쇄 대기열로)">🖨 바로 인쇄</button>
     <button class="s-tab" id="sortSoundBtn">🔊 소리</button>
+    <span id="sortScanWait" style="display:none; font-size:12.5px; font-weight:800; color:#C7D2FE; padding:4px 10px; border:1px solid rgba(199,210,254,.5); border-radius:999px;" title="①에서는 바코드 칸을 숨겼어요 — 스캐너로 찍으면 그대로 들어가요">🔫 스캐너 대기 중 · 묶음 QR → 분배 · 일반 전표 → 검수</span>
     <button class="s-link" id="sortToInspect" title="검수 화면으로">검수 화면으로 ↗</button>
   </div>
   <div id="sortLightPanel" style="display:none; position:absolute; right:18px; top:58px; z-index:6; width:min(500px, calc(100vw - 32px)); background:#fff; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.25); padding:14px 16px;">
@@ -6921,6 +6949,10 @@ const videoRec = (function(){
   window.__sortMode = true;
   const $ = id => document.getElementById(id);
   const app = $('sortApp'), scan = $('sortScan');
+  // 11/26: 어디를 눌러도 스캐너 입력칸에 커서를 다시 넣는데, 그때 화면이 맨 위로 튀지 않게
+  scan.focus = function(){ try{ HTMLElement.prototype.focus.call(scan, { preventScroll: true }); }catch(e){ HTMLElement.prototype.focus.call(scan); } };
+  // 검수 화면 쪽 입력칸(분배 화면 뒤에 숨어 있음)에 커서가 갔다가 넘어올 때도 화면이 튀지 않게
+  try{ scanInput.focus = function(){ try{ HTMLElement.prototype.focus.call(scanInput, { preventScroll: true }); }catch(e){} }; }catch(e){}
   app.style.display = 'flex';
   document.title = '분배 · 다건 전표 일괄 피킹';
 
@@ -7196,11 +7228,14 @@ const videoRec = (function(){
     view = v;
     $('sortViewPick').style.display = v === 'pick' ? '' : 'none';
     $('sortViewRun').style.display = v === 'run' ? '' : 'none';
+    scan.classList.toggle('s-scan-hide', v === 'pick'); // 11/26: ①에서는 칸을 숨기고 스캐너 입력만 받음
+    const sw = $('sortScanWait'); if(sw) sw.style.display = v === 'pick' ? '' : 'none';
     $('sortTabPick').classList.toggle('on', v === 'pick'); $('sortTabRun').classList.toggle('on', v === 'run');
     scan.focus();
   }
   $('sortTabPick').onclick = () => { setView('pick'); renderCandidates(); loadBatches(); };
   $('sortTabRun').onclick = () => setView('run');
+  setView(view); // 11/26: 처음 켤 때도 ①이면 바코드 칸 숨김
   $('sortToInspect').onclick = () => { if(confirm('분배 화면을 닫고 검수 화면으로 갈까요?')) location.href = location.pathname; };
 
   async function post(body, timeoutMs){
@@ -7579,8 +7614,13 @@ const videoRec = (function(){
       if(!d.ok){ sortBeep('err'); alert(d.error || '묶음을 만들지 못했어요'); await refreshSortLocks(); renderCandidates(); return; }
       selected = [];
       await refreshSortLocks();
-      openBatch(d.batch);
+      // 11/26: 묶음을 만들어도 ① 전표 고르기에 그대로 (연달아 만들 수 있게). 분배 중인 묶음이 없으면 이 묶음을 ②에 걸어둠
+      const busyNow = active && st && !st.allDoneShown && (active.status === '피킹중' || active.status === '분배중') && active.id !== d.batch.id;
+      if(!busyNow) openBatch(d.batch, true);
       printPickSheet(d.batch);
+      renderCandidates(); loadBatches();
+      sortBeep('ok'); say('묶음 만들었어요');
+      showToast(`📦 ${d.batch.id} 묶음 만들었어요 · 칸 ${d.batch.slots.length}개 · 피킹지 출력` + (busyNow ? ` (지금 분배 중인 ${active.id}은 그대로)` : '') + ' — 피킹 나갈 때 묶음 QR을 찍으세요');
     }catch(e){ alert('통신 오류: ' + e.message); }
     finally{ btn.textContent = '칸 배정 + 피킹지 출력 ▶'; updateSelInfo(); }
   };
@@ -7782,7 +7822,7 @@ const videoRec = (function(){
     const p = expandProgress(b, b.progress || {});
     return { need, counts: p.counts || {}, seq: p.seq || {}, ts: p.ts || {}, ms: p.ms || {}, recorded: p.recorded || {}, failed: p.failed || {}, labeled: p.labeled || {}, partial: p.partial || {}, inspector: p.inspector || '', lastScanAt: p.lastScanAt || 0, log: [] };
   }
-  function openBatch(b){
+  function openBatch(b, stay){
     if(!b) return;
     if(active && active.id !== b.id) vidEnd('다른 묶음 열기');
     pending = null; lockSlot = 0;
@@ -7790,7 +7830,8 @@ const videoRec = (function(){
     try{ localStorage.setItem('sortActiveId', b.id); }catch(e){}
     b.slots.forEach(s => { st.counts[s.slot] = st.counts[s.slot] || {}; st.seq[s.slot] = st.seq[s.slot] || []; st.ts[s.slot] = st.ts[s.slot] || []; st.ms[s.slot] = st.ms[s.slot] || 0; });
     leftFilter = 0;
-    setView('run'); renderRun();
+    if(!stay) setView('run');
+    renderRun();
     setTimeout(() => { if(active === b) verifyAll(false); }, 1500);
     ensureLocOrder().then(() => { if(active === b) renderRun(); }); // 남은 상품 목록을 진열순서대로
     // 다 찼는데 아직 기록 안 된 칸이 있으면 다시 넘긴다 (화면을 껐다 켠 경우)
@@ -8983,18 +9024,39 @@ const videoRec = (function(){
     const slq = t.match(/^SLOT\s*[|:]?\s*(\d{1,2})$/i);
     if(slq){ if(view !== 'run' || !active){ sortBeep('err'); say('묶음을 먼저 열어주세요'); return; } onConfirm(Number(slq[1])); return; }
     if(t.indexOf('/') !== -1){
-      if(view === 'run' && active){ // 11/19: 진행 화면에서 전표 QR = 넣은 칸 확인
-        const so = slotOfCanon(docKeyFromScan(t));
-        if(so){ onConfirm(so.slot); return; }
-        sortBeep('err'); big('err', '✕', '이 묶음 전표가 아니에요', t); say('이 묶음 전표가 아니에요'); return;
+      const k = docKeyFromScan(t);
+      if(active && slotOfCanon(k)){
+        if(view === 'run'){ onConfirm(slotOfCanon(k).slot); return; } // 11/19: 진행 화면에서 이 묶음 전표 QR = 넣은 칸 확인
+        setView('run'); sortBeep('ok'); say('분배 이어서'); big('idle', '–', `묶음 ${active.id} — 상품을 찍어주세요`); return; // ①에서 지금 묶음 전표 → ②로
       }
-      if(view !== 'pick'){ sortBeep('err'); say('전표는 고르기 화면에서'); return; }
-      const k = docKeyFromScan(t); toggleSel(k, true); return;
+      // 11/26: 다른 분배 묶음에 들어간 전표 → 그 묶음 열기 (묶음 QR 찍은 것과 같음)
+      const lk = k && sortLockMap[k];
+      if(lk && lk.id && !(active && active.id === lk.id)){ onBatchQr(String(lk.id).toUpperCase()); return; }
+      // 11/26: 묶음에 없는 일반 전표 → 검수 화면으로 넘어가서 그 전표를 바로 불러옴
+      goInspectScreen(t);
+      return;
     }
     if(view !== 'run') setView('run');
     onProductScan(t);
   });
 
+  function showToast(msg){
+    let el = $('sortToast');
+    if(!el){ el = document.createElement('div'); el.id = 'sortToast'; el.style.cssText = 'position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:60;background:#161D65;color:#fff;padding:12px 18px;border-radius:12px;font-weight:800;font-size:15px;box-shadow:0 10px 30px rgba(0,0,0,.3);max-width:90vw;text-align:center;'; app.appendChild(el); }
+    el.textContent = msg; el.style.display = 'block';
+    clearTimeout(el._t); el._t = setTimeout(() => { el.style.display = 'none'; }, 7000);
+  }
+  function goInspectScreen(raw){
+    if(window.__sortBusy && window.__sortBusy()){ sortBeep('err'); big('err', '⏳', '검수기록 저장 중이에요', '몇 초 뒤에 다시 찍어주세요'); say('저장 중이에요. 잠깐 뒤에 다시'); return; }
+    const inRun = active && st && !st.allDoneShown && active.status === '분배중' && Object.keys(st.counts || {}).some(n => Object.values(st.counts[n] || {}).some(v => v > 0));
+    if(inRun && !confirm(`일반 전표를 찍었어요 → 검수 화면으로 넘어가요.\n\n지금 분배 중인 묶음 ${active.id}은 그대로 남아 있어서, 분배 화면으로 돌아오면(묶음 QR) 이어서 할 수 있어요.\n넘어갈까요?`)){
+      big('idle', '–', '분배 이어서 — 상품을 찍어주세요', '검수 화면으로 넘어가지 않았어요'); scan.focus(); return;
+    }
+    big('idle', '🔍', '검수 화면으로 넘어가는 중…', raw); say('검수 화면으로');
+    try{ vidEnd('검수 화면으로 이동'); }catch(e){}
+    window.__skipLeaveWarn = true;
+    setTimeout(() => { location.href = location.pathname + '?doc=' + encodeURIComponent(raw); }, 250);
+  }
   /* ---------- 시작 ---------- */
   (async function boot(){
     for(let i = 0; i < 40 && !gasWebhookUrl; i++) await new Promise(r => setTimeout(r, 250));
@@ -9002,7 +9064,11 @@ const videoRec = (function(){
     await ensureLocOrder(); // 진열 구역 추천에 필요해서 먼저 받는다
     await refreshAll();
     // 새로고침(자동 업데이트 포함) 뒤에도 하던 묶음을 바로 이어서
-    try{ const id = localStorage.getItem('sortActiveId'); const b = id && batches.find(x => x.id === id); if(b) openBatch(b); else if(id) localStorage.removeItem('sortActiveId'); }catch(e){}
+    // 11/26: 검수 화면에서 묶음 QR·묶음 전표를 찍고 넘어온 경우 → 그 묶음을 바로 (묶음 QR 찍은 것과 같음)
+    let sbParam = ''; try{ sbParam = (new URLSearchParams(location.search).get('sb') || '').trim().toUpperCase(); }catch(e){}
+    if(sbParam){ try{ history.replaceState(null, '', location.pathname + '?mode=sort'); }catch(e){} }
+    try{ const id = localStorage.getItem('sortActiveId'); const b = id && batches.find(x => x.id === id); if(b && b.id !== sbParam) openBatch(b, !!sbParam); else if(id && !b) localStorage.removeItem('sortActiveId'); }catch(e){}
+    if(sbParam) await onBatchQr(sbParam);
   })();
   setInterval(() => { if(view === 'pick' && document.activeElement !== $('sortSearch')) { refreshSortLocks().then(renderCandidates); } }, 60000);
   window.__sortBusy = () => sortReplaying || !!saveTimer || (st && active && active.slots.some(s => (slotFull(s.slot) || (st.partial && st.partial[s.slot])) && !st.recorded[s.slot] && !st.failed[s.slot])) || Object.values(sv).some(o => o.inflight || o.checking);
@@ -9620,5 +9686,25 @@ const videoRec = (function(){
 })();
 </script>
 
+<script>
+/* 11/26: 분배 화면에서 일반 전표를 찍고 넘어온 경우(?doc=전표) → 검수 화면에서 그 전표를 바로 불러옴 */
+(function(){
+  if(window.__sortMode) return;
+  let doc = ''; try{ doc = new URLSearchParams(location.search).get('doc') || ''; }catch(e){}
+  if(!doc) return;
+  try{ history.replaceState(null, '', location.pathname); }catch(e){}
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  (async () => {
+    for(let i = 0; i < 80 && !gasWebhookUrl; i++) await sleep(250);
+    await sleep(600);
+    // 화면 꺼짐 복구 창(검수하던 전표가 있어요)이 떠 있으면 고를 때까지 기다림
+    for(let i = 0; i < 600; i++){ const o = document.getElementById('draftOverlay'); if(!o || o.style.display !== 'flex') break; await sleep(500); }
+    if(isInspectionInProgress()){ showBanner('warn', '검수하던 전표를 이어서 해요', doc, '분배 화면에서 찍은 전표는 지금 전표를 끝낸 뒤 다시 찍어주세요', '✋'); return; }
+    try{ if(!salesCache) await refreshSalesCache(); }catch(e){}
+    try{ addScreenOnlyLog(doc, '분배 화면에서 찍은 일반 전표 → 검수 화면에서 불러옴', '🔍'); }catch(e){}
+    processDocumentLookup(doc);
+  })();
+})();
+</script>
 </body>
 </html>
